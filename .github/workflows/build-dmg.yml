@@ -63,6 +63,21 @@ jobs:
         run: |
           xcodegen generate
 
+      - name: Resolve SPM Dependencies & Patch swift-sdk
+        run: |
+          echo "Resolving package dependencies..."
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project Starcat.xcodeproj \
+            -scheme StarcatDirect \
+            -derivedDataPath build/DerivedData
+
+          echo "Applying Swift 6 compatibility patch to swift-sdk..."
+          find build/DerivedData ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm -name "HTTPClientTransport.swift" 2>/dev/null | while read -r file; do
+            echo "Patching $file..."
+            sed -i '' 's/withThrowingTaskGroup {/withThrowingTaskGroup(of: Void.self) {/g' "$file"
+          done
+
       - name: Build StarcatDirect
         run: |
           xcodebuild \
@@ -75,7 +90,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             STARCAT_DISTRIBUTION=direct \
-            clean build
+            build
 
       - name: Sign App with Ad-hoc Identity
         run: |
