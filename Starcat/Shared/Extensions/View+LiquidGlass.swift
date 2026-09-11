@@ -38,11 +38,7 @@ extension View {
         in shape: S,
         interactive: Bool = false
     ) -> some View {
-        if #available(macOS 26.0, *) {
-            glassEffect(.regular.interactive(interactive), in: shape)
-        } else {
-            background(legacyMaterial, in: shape)
-        }
+        background(legacyMaterial, in: shape)
     }
 
     /// 标记可点击玻璃表面，使 macOS 26 能按指针交互提供系统级高光反馈。

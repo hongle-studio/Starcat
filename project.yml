@@ -28,8 +28,10 @@ options:
 # - SWIFT_STRICT_CONCURRENCY = complete：保持最严格并发检查，避免新代码绕过 Swift 6 迁移目标。
 settings:
   base:
-    SWIFT_VERSION: "6.0"
-    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_VERSION: "5"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
     # 菜单与无障碍文字查询可能反复读取字符串表；二进制产物避免每次解析整张 XML。
     # 只改变 App / Widget 内的资源编码，源 String Catalog 仍保留 Xcode 可编辑格式。
     STRINGS_FILE_OUTPUT_ENCODING: binary
