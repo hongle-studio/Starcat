@@ -1,0 +1,40 @@
+name: Sync Upstream & Rebuild
+
+on:
+  schedule:
+    # 每周一上午 8 点自动检查上游更新
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    # 允许在 GitHub 网页上一键手动点击同步上游
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Sync with starcat-app/Starcat
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch and Merge Upstream
+        run: |
+          git remote add upstream https://github.com/starcat-app/Starcat.git
+          git fetch upstream main
+          # 尝试以ours策略合并或rebase，保持自定义修改
+          git merge upstream/main -m "chore: sync upstream starcat-app/Starcat changes" || {
+            echo "Conflict detected, aborting auto merge. Please resolve manually."
+            git merge --abort
+            exit 1
+          }
+          git push origin main

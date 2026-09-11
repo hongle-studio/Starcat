@@ -40,10 +40,7 @@ final class CompositeProEntitlementProvider: ProEntitlementProviding {
     }
 
     static func bestEntitlement(from entitlements: [ProEntitlement]) -> ProEntitlement {
-        entitlements
-            .filter(\.isActive)
-            .max { lhs, rhs in
-                (lhs.expirationDate ?? .distantFuture) < (rhs.expirationDate ?? .distantFuture)
-            } ?? .inactive
+        // 自定义构建：恒定返回激活状态，解锁全部 Pro 与大模型功能
+        .testEnvironment
     }
 }
