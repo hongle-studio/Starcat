@@ -606,7 +606,9 @@ final class KnowledgeRAGWorkspaceViewModel {
     var indexingStatus: RAGIndexingStatus { dependencies.knowledgeRAGIndexBuilder.status }
     /// 手动刷新结果在阶段切换后保持不变，供工作台连续展示 README 与分片进度。
     var indexRefreshSummary: RAGIndexRefreshSummary? { dependencies.knowledgeRAGIndexBuilder.refreshSummary }
-    var embeddingModel: String { dependencies.settings.aiEmbeddingTask.resolvedModelName }
+    var embeddingModel: String {
+        dependencies.settings.resolvedAITask(dependencies.settings.aiEmbeddingTask, type: .embedding).resolvedModelName
+    }
     var configuredEmbeddingModelName: String? { dependencies.settings.configuredEmbeddingModelName }
     var embeddingConfigurationIssue: AIEmbeddingError? { dependencies.settings.embeddingConfigurationIssue }
     var errorMessage: String? {
@@ -657,7 +659,7 @@ final class KnowledgeRAGWorkspaceViewModel {
         let resolvedModelID = Self.resolveInitialModelID(
             savedModelID: dependencies.settings.ragWorkspaceSelectedModelID,
             availableModels: availableModels,
-            chatTask: dependencies.settings.aiChatTask
+            chatTask: dependencies.settings.resolvedAITask(dependencies.settings.aiChatTask)
         )
         self.selectedModelID = resolvedModelID
         self.isDebugModeEnabled = dependencies.settings.ragWorkspaceDebugModeEnabled
@@ -719,7 +721,7 @@ final class KnowledgeRAGWorkspaceViewModel {
         let resolvedModelID = Self.resolveInitialModelID(
             savedModelID: savedModelID,
             availableModels: refreshedModels,
-            chatTask: dependencies.settings.aiChatTask
+            chatTask: dependencies.settings.resolvedAITask(dependencies.settings.aiChatTask)
         )
         if selectedModelID != resolvedModelID {
             selectedModelID = resolvedModelID
@@ -831,7 +833,7 @@ final class KnowledgeRAGWorkspaceViewModel {
     var selectedModelDisplayName: String {
         guard usesAPIInferenceBackend else { return String.l10n(inferenceBackend.titleKey) }
         return availableModels.first(where: { $0.id == selectedModelID })?.name
-            ?? dependencies.settings.aiChatTask.resolvedModelName
+            ?? dependencies.settings.resolvedAITask(dependencies.settings.aiChatTask).resolvedModelName
     }
 
     /// 与 `AppDependencies.resolveRAGChatSelection` 同一优先级：选中模型参数优先，
@@ -840,8 +842,8 @@ final class KnowledgeRAGWorkspaceViewModel {
         guard usesAPIInferenceBackend else {
             return dependencies.settings.effectiveParameters(for: dependencies.settings.aiChatTask)
         }
-        return availableModels.first(where: { $0.id == selectedModelID })?.parameters
-            ?? dependencies.settings.effectiveParameters(for: dependencies.settings.aiChatTask)
+        return availableModels.first(where: { $0.id == selectedModelID })?.effectiveParameters
+            ?? dependencies.settings.resolvedAITask(dependencies.settings.aiChatTask).parameters
     }
 
     /// View 只读取已完成的不可变快照；完整历史映射和 token 估算由后台任务刷新。
@@ -1641,7 +1643,7 @@ final class KnowledgeRAGWorkspaceViewModel {
               !isAnswering,
               composerBlockingReason == nil else { return }
         do {
-            try dependencies.entitlementGate.requirePro(.knowledgeRAG)
+            try dependencies.entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: dependencies.settings.isRAGPipelineResolvedToLocalAI)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -1774,7 +1776,7 @@ final class KnowledgeRAGWorkspaceViewModel {
         let question = editingUserDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAnswering else { return }
         do {
-            try dependencies.entitlementGate.requirePro(.knowledgeRAG)
+            try dependencies.entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: dependencies.settings.isRAGPipelineResolvedToLocalAI)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -2560,7 +2562,7 @@ final class KnowledgeRAGWorkspaceViewModel {
             let existing = indexIssueChunks[kind, default: []]
             let page = try await dependencies.ragChunkRepository.fetchIndexIssueChunks(
                 kind: kind,
-                model: dependencies.settings.aiEmbeddingTask.resolvedModelName,
+                model: embeddingModel,
                 limit: append ? 10 : 5,
                 offset: append ? existing.count : 0
             )

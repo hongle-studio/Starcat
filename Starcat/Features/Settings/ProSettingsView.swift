@@ -338,8 +338,7 @@ struct ProSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.direct.section",
-                systemImage: "key.horizontal.fill",
-                style: .prominent
+                systemImage: "key.horizontal.fill"
             )
         }
     }
@@ -353,7 +352,7 @@ struct ProSettingsTab: View {
                 Text("settings.pro.direct.button.activate")
             } icon: {
                 Image(systemName: "checkmark.seal")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(SettingsIconMetrics.standardGlyph)
                     .foregroundStyle(.green)
             }
         }
@@ -370,7 +369,7 @@ struct ProSettingsTab: View {
                 Text("settings.pro.direct.button.validate")
             } icon: {
                 Image(systemName: didValidateSucceed ? "checkmark.circle.fill" : "checkmark.shield")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(SettingsIconMetrics.standardGlyph)
                     .foregroundStyle(didValidateSucceed ? Color.green : Color.primary)
                     .contentTransition(.symbolEffect(.replace))
             }
@@ -399,7 +398,7 @@ struct ProSettingsTab: View {
                 Text("settings.pro.direct.button.deactivate")
             } icon: {
                 Image(systemName: "checkmark.circle.badge.xmark")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(SettingsIconMetrics.standardGlyph)
             }
             .foregroundStyle(Color.red)
         }
@@ -424,8 +423,7 @@ struct ProSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.direct.pass.section",
-                systemImage: "person.crop.rectangle.stack",
-                style: .prominent
+                systemImage: "person.crop.rectangle.stack"
             )
         }
     }
@@ -458,8 +456,7 @@ struct ProSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.direct.cancel.section",
-                systemImage: "calendar.badge.minus",
-                style: .prominent
+                systemImage: "calendar.badge.minus"
             )
         } footer: {
             Text("settings.pro.direct.cancel.footer")
@@ -515,8 +512,7 @@ struct ProSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.direct.checkout.section",
-                systemImage: "cart",
-                style: .prominent
+                systemImage: "cart"
             )
         } footer: {
             Text("settings.pro.direct.checkout.footer")
@@ -532,7 +528,7 @@ struct ProSettingsTab: View {
             Text(titleKey)
         } icon: {
             Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .medium))
+                .font(SettingsIconMetrics.standardGlyph)
                 .foregroundStyle(accent)
         }
     }
@@ -565,8 +561,7 @@ struct ProSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.products.section",
-                systemImage: "bag",
-                style: .prominent
+                systemImage: "bag"
             )
         } footer: {
             Text("settings.pro.footer")
@@ -603,8 +598,7 @@ struct ProSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.benefits.section",
-                systemImage: "star.fill",
-                style: .prominent
+                systemImage: "star.fill"
             )
         }
     }
@@ -651,8 +645,7 @@ struct ProSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.account.section",
-                systemImage: "person.crop.circle",
-                style: .prominent
+                systemImage: "person.crop.circle"
             )
         } footer: {
             Text("settings.pro.account.footer")
@@ -942,7 +935,9 @@ private struct DirectProPassSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "wallet.pass.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    // Sheet header 身份图标：按设置页规范 §3「带背景图标」口径统一为
+                    // 28×28 容器 + 18pt glyph（与管理系统翻译语言 sheet header 同款）。
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.cyan)
                     .frame(width: 28, height: 28)
                     .background(
@@ -978,10 +973,15 @@ private struct DirectProPassSheet: View {
                         performCopy: { onCopyImage(visualStyle) },
                         tooltip: "settings.pro.direct.pass.button.copy"
                     ) { didCopy in
+                        // 与旁边两颗 DirectPassSheetIconButton 同口径（15pt / 28×28），
+                        // 三颗工具图标视觉权重一致。
                         Image(systemName: didCopy ? "checkmark.circle.fill" : "doc.on.doc")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(SettingsIconMetrics.standardGlyph)
                             .foregroundStyle(didCopy ? Color.green : .secondary)
-                            .frame(width: 20, height: 20)
+                            .frame(
+                                width: SettingsIconMetrics.actionFrameSize,
+                                height: SettingsIconMetrics.actionFrameSize
+                            )
                     }
                     DirectPassSheetIconButton(
                         titleKey: "settings.pro.direct.pass.button.download",
@@ -1169,11 +1169,12 @@ private struct DirectLicenseSheet: View {
 
 /// 许可证 sheet 右侧工具图标的统一 metrics。
 ///
-/// `doc.on.doc` 比 `checkmark.shield` 更满；shield 略加大 1pt 做光学对齐，命中框保持一致。
+/// 命中框与设置页 icon-only 标准口径（28×28）对齐；`doc.on.doc` 比 `checkmark.shield`
+/// 更满，shield 略加大 1pt 做光学对齐（规范 §9 例外，命中框保持一致）。
 private enum DirectLicenseSheetIconMetrics {
-    static let glyphSize: CGFloat = 15
-    static let shieldGlyphSize: CGFloat = 16
-    static let hitSize: CGFloat = 26
+    static let glyphSize: CGFloat = SettingsIconMetrics.standardGlyphSize
+    static let shieldGlyphSize: CGFloat = SettingsIconMetrics.standardGlyphSize + 1
+    static let hitSize: CGFloat = SettingsIconMetrics.actionFrameSize
 }
 
 private struct DirectPassDetailRow: View {
@@ -1342,7 +1343,7 @@ private struct DirectPassDeviceRow: View {
         HStack(spacing: 8) {
             Image(systemName: device.deviceKind?.systemImageName ?? DirectLicenseDeviceKind.mac.systemImageName)
                 .foregroundStyle(device.isCurrentDevice ? .blue : .secondary)
-                .font(.system(size: 14, weight: .semibold))
+                .font(SettingsIconMetrics.smallGlyph)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -1369,13 +1370,17 @@ private struct DirectPassDeviceRow: View {
             Spacer(minLength: 8)
 
             Button(role: .destructive, action: onDeactivate) {
-                // 设备行解绑是次要操作，略小于左侧设备图标（14pt），避免抢视觉。
+                // 紧凑设备行内的行内操作：glyph 与左侧设备图标同为 13pt caption 级，
+                // 命中区用 20×20（28×28 会撑破行高，规范 §9 例外，仅限紧凑行内使用）。
                 Image(systemName: "checkmark.circle.badge.xmark")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsIconMetrics.smallGlyph)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focusEffectDisabled()
             .help("settings.pro.direct.devices.deactivate")
+            .accessibilityLabel(Text("settings.pro.direct.devices.deactivate"))
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -1731,10 +1736,9 @@ private struct DirectPassToolbarButton: View {
                         .frame(width: 15, height: 15)
                 } else {
                     Image(systemName: systemImage)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(SettingsIconMetrics.standardGlyph)
                 }
                 Text(titleKey)
-                    .font(.caption.weight(.semibold))
             }
             .foregroundStyle(role == .destructive ? Color.red : Color.secondary)
             .padding(.horizontal, 6)
@@ -1754,8 +1758,11 @@ private struct DirectIconActionButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .medium))
-                .frame(width: 26, height: 26)
+                .font(SettingsIconMetrics.standardGlyph)
+                .frame(
+                    width: SettingsIconMetrics.actionFrameSize,
+                    height: SettingsIconMetrics.actionFrameSize
+                )
                 .foregroundStyle(isPrimary ? Color.accentColor : Color.secondary)
         }
         .buttonStyle(.plain)
@@ -1771,12 +1778,15 @@ private struct DirectPassSheetIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            // 与通行证 sheet 底部复制按钮同一套 metrics（13pt / 20×20），
+            // 与通行证 sheet 底部复制按钮同一套设置页标准 metrics（15pt / 28×28），
             // 避免三颗工具图标视觉权重不一致。
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(SettingsIconMetrics.standardGlyph)
                 .foregroundStyle(.secondary)
-                .frame(width: 20, height: 20)
+                .frame(
+                    width: SettingsIconMetrics.actionFrameSize,
+                    height: SettingsIconMetrics.actionFrameSize
+                )
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -1991,10 +2001,11 @@ private struct DirectLicenseKeyRow: View {
                 tooltip: "settings.pro.direct.button.copyLicense",
                 style: .bordered
             ) { didCopy in
+                // `.bordered` 外壳自带命中区与 padding，glyph 只对齐设置页 15pt 标准，
+                // 不再额外加固定框，避免撑高与旁边「校验 / 解绑」按钮不一致。
                 Image(systemName: didCopy ? "checkmark.circle.fill" : "doc.on.doc")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(SettingsIconMetrics.standardGlyph)
                     .foregroundStyle(didCopy ? Color.green : .primary)
-                    .frame(width: 14, height: 14)
             }
             .controlSize(.regular)
         }
@@ -2038,7 +2049,7 @@ private struct ProAccountActionRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .medium))
+                .font(SettingsIconMetrics.standardGlyph)
                 .foregroundStyle(.secondary)
                 .frame(width: 20, alignment: .center)
 
@@ -2063,11 +2074,11 @@ private struct ProAccountActionRow: View {
             EmptyView()
         case .chevron:
             Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
         case .externalLink:
             Image(systemName: "arrow.up.right.square")
-                .font(.system(size: 12, weight: .medium))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         case .progress:
             ProgressView()
@@ -2213,7 +2224,7 @@ private struct ProBenefitTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .semibold))
+                .font(SettingsIconMetrics.standardGlyph)
                 .foregroundStyle(.orange)
                 .frame(width: 20, height: 20, alignment: .leading)
 

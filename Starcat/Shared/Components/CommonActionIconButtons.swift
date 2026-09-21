@@ -14,6 +14,24 @@
 
 import SwiftUI
 
+/// 设置页（`SettingsView` 全部 Tab 及由设置页打开的 sheet / popover）图标统一口径。
+///
+/// 规范来源：`docs/5-规范/UI-设置页规范.md` §3 / §5。设置域内所有图标按钮的
+/// 字号与命中区都引用这里，禁止再手抄 `Font.system(size:)` 字面量；
+/// 例外（如 chip 内联小按钮、等宽光学对齐 ±1pt）必须按规范 §9 在调用处注释说明。
+enum SettingsIconMetrics {
+    /// 15pt medium：icon-only 按钮 glyph（§5.2）与带文本按钮 / body 行首图标（§5.1）。
+    static let standardGlyphSize: CGFloat = 15
+    static let standardGlyph: Font = .system(size: standardGlyphSize, weight: .medium)
+
+    /// icon-only 按钮 28×28pt 命中区（§5.2）。
+    static let actionFrameSize: CGFloat = 28
+
+    /// 13pt medium：caption 级行首图标 / 分组图标。
+    /// 与 `SettingsSectionHeader` prominent 的 13pt 图标同源（DESIGN.md icon-small）。
+    static let smallGlyph: Font = .system(size: 13, weight: .medium)
+}
+
 /// icon-only 删除 / 清空入口。
 struct DestructiveIconButton: View {
     let help: Text
@@ -59,8 +77,8 @@ struct ResetIconButton: View {
     let help: Text
     let action: () -> Void
     /// 设置页 icon-only 统一采用 15pt glyph + 28pt 命中区；不要再继承旧刷新按钮的 18pt 紧凑尺寸。
-    var font: Font = .system(size: 15, weight: .medium)
-    var frameSize: CGFloat = 28
+    var font: Font = SettingsIconMetrics.standardGlyph
+    var frameSize: CGFloat = SettingsIconMetrics.actionFrameSize
 
     @State private var didReset = false
     @State private var feedbackResetTask: Task<Void, Never>?
@@ -68,8 +86,8 @@ struct ResetIconButton: View {
 
     init(
         help: Text,
-        font: Font = .system(size: 15, weight: .medium),
-        frameSize: CGFloat = 28,
+        font: Font = SettingsIconMetrics.standardGlyph,
+        frameSize: CGFloat = SettingsIconMetrics.actionFrameSize,
         action: @escaping () -> Void
     ) {
         self.help = help
@@ -127,13 +145,13 @@ struct ResetIconButton: View {
 struct RevealInFinderIconButton: View {
     let help: Text
     let action: () -> Void
-    var font: Font = .system(size: 15, weight: .medium)
-    var frameSize: CGFloat = 28
+    var font: Font = SettingsIconMetrics.standardGlyph
+    var frameSize: CGFloat = SettingsIconMetrics.actionFrameSize
 
     init(
         help: Text,
-        font: Font = .system(size: 15, weight: .medium),
-        frameSize: CGFloat = 28,
+        font: Font = SettingsIconMetrics.standardGlyph,
+        frameSize: CGFloat = SettingsIconMetrics.actionFrameSize,
         action: @escaping () -> Void
     ) {
         self.help = help
@@ -156,5 +174,145 @@ struct RevealInFinderIconButton: View {
         .help(help)
         .accessibilityLabel(help)
         .fixedSize()
+    }
+}
+
+/// icon-only 新增 / 添加入口。
+///
+/// 与 `RevealInFinderIconButton` 同用设置页 15pt glyph + 28pt 命中区口径，
+/// 供「添加 Provider」「添加目录」这类行尾轻操作使用；新增语义用 `plus`，
+/// 不携带删除 / 重置的成功反馈状态。
+struct AddIconButton: View {
+    let help: Text
+    let action: () -> Void
+    var font: Font = SettingsIconMetrics.standardGlyph
+    var frameSize: CGFloat = SettingsIconMetrics.actionFrameSize
+
+    init(
+        help: Text,
+        font: Font = SettingsIconMetrics.standardGlyph,
+        frameSize: CGFloat = SettingsIconMetrics.actionFrameSize,
+        action: @escaping () -> Void
+    ) {
+        self.help = help
+        self.action = action
+        self.font = font
+        self.frameSize = frameSize
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(font)
+                .foregroundStyle(.secondary)
+                .frame(width: frameSize, height: frameSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// icon-only 取消 / 放弃草稿入口。
+///
+/// 与 `AddIconButton` 同口径（15pt / 28pt）。`plus` 是新增唯一入口，对应的退出
+/// 用 `xmark` 而不是 `trash`：垃圾桶仍表示删除已保存服务商，避免草稿态误删当前选中项。
+struct CancelIconButton: View {
+    let help: Text
+    let action: () -> Void
+    var font: Font = SettingsIconMetrics.standardGlyph
+    var frameSize: CGFloat = SettingsIconMetrics.actionFrameSize
+
+    init(
+        help: Text,
+        font: Font = SettingsIconMetrics.standardGlyph,
+        frameSize: CGFloat = SettingsIconMetrics.actionFrameSize,
+        action: @escaping () -> Void
+    ) {
+        self.help = help
+        self.action = action
+        self.font = font
+        self.frameSize = frameSize
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(font)
+                .foregroundStyle(.secondary)
+                .frame(width: frameSize, height: frameSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// icon-only「从外部配置导入」入口。
+///
+/// 与 `AddIconButton` 同用设置页 15pt glyph + 28pt 命中区；导入不是草稿新增，
+/// 语义用 `square.and.arrow.down`，避免和 `plus` 抢「唯一新增入口」的注释约定。
+struct ImportIconButton: View {
+    let help: Text
+    let action: () -> Void
+    var font: Font = SettingsIconMetrics.standardGlyph
+    var frameSize: CGFloat = SettingsIconMetrics.actionFrameSize
+
+    init(
+        help: Text,
+        font: Font = SettingsIconMetrics.standardGlyph,
+        frameSize: CGFloat = SettingsIconMetrics.actionFrameSize,
+        action: @escaping () -> Void
+    ) {
+        self.help = help
+        self.action = action
+        self.font = font
+        self.frameSize = frameSize
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "square.and.arrow.down")
+                .font(font)
+                .foregroundStyle(.secondary)
+                .frame(width: frameSize, height: frameSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// 胶囊 chip 内的移除小按钮（语言 chip、过滤 chip 等）。
+///
+/// 例外说明（规范 §9）：chip 是 20pt 上下的紧凑胶囊，28×28pt 标准命中区会撑破
+/// chip 本体，因此这里用 13pt glyph + 20×20pt 命中框（与 chip 内 `+` 添加钮
+/// 13pt 口径同源）。仅限 chip / pill 内部使用，不要当作独立行内操作按钮。
+struct ChipRemoveButton: View {
+    let help: Text
+    let action: () -> Void
+
+    init(help: Text, action: @escaping () -> Void) {
+        self.help = help
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .font(SettingsIconMetrics.smallGlyph)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(help)
+        .accessibilityLabel(help)
     }
 }

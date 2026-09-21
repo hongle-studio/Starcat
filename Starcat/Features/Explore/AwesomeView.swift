@@ -260,8 +260,7 @@ struct AwesomeView: View {
                 ),
                 isSelected: multiStore.isActive
                     ? multiStore.contains(ghRepoId: repo.id)
-                    : (store.selectedRepositoryID == repo.id),
-                showStarredCheckmark: true
+                    : (store.selectedRepositoryID == repo.id)
             )
         }
         .buttonStyle(.plain)

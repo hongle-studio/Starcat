@@ -79,7 +79,7 @@ struct RepoShareHost: ViewModifier {
             return false
         }
         do {
-            try dependencies.entitlementGate.requirePro(.aiSummary)
+            try dependencies.entitlementGate.requirePro(.aiSummary, usesLocalOnly: dependencies.settings.isSummaryTaskResolvedToLocalAI)
             return true
         } catch let error as EntitlementGateError {
             paywallContext = ProPaywallContext(feature: error.feature, message: error.localizedDescription)

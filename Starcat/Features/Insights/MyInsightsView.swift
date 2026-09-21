@@ -1160,12 +1160,10 @@ struct InsightsSectionContainer<Content: View, HeaderTrailing: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            // 图标只与标题同行居中对齐；副标题缩进到标题文字下方，避免相对「标题+副标题」整块居中。
+            // 图标 chip 与标题同行居中对齐；副标题缩进到标题文字下方，避免相对「标题+副标题」整块居中。
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: systemImage)
-                        .foregroundStyle(iconColor)
-                        .frame(width: 14, alignment: .center)
+                    InsightsSectionIconChip(systemImage: systemImage, tint: iconColor)
                     Text(title)
                         .font(interfaceScale.font(.bodyEmphasis))
                     Spacer(minLength: 8)
@@ -1174,7 +1172,7 @@ struct InsightsSectionContainer<Content: View, HeaderTrailing: View>: View {
                 Text(subtitle)
                     .font(interfaceScale.font(.captionSmall))
                     .foregroundStyle(.secondary)
-                    .padding(.leading, 22)
+                    .padding(.leading, 30)
             }
 
             content
@@ -1189,6 +1187,24 @@ struct InsightsSectionContainer<Content: View, HeaderTrailing: View>: View {
             RoundedRectangle(cornerRadius: chrome.cornerRadius, style: .continuous)
                 .stroke(Color.secondary.opacity(chrome.strokeOpacity), lineWidth: 1)
         }
+    }
+}
+
+/// 区块标题行左侧的彩色图标 chip（原型样式：圆角方块底 + 语义色图标）。
+private struct InsightsSectionIconChip: View {
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(tint.opacity(0.15))
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+        .frame(width: 22, height: 22)
+        .accessibilityHidden(true)
     }
 }
 

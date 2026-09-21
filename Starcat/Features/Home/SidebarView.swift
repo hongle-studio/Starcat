@@ -2351,9 +2351,9 @@ struct SidebarView: View {
         row(.githubStarListUngrouped, count: viewModel.githubStarListUngroupedCount)
     }
 
-    /// GitHub Stars List 真实分组行：颜色点 + 名称 + 计数。
+    /// GitHub Stars List 真实分组行：颜色点 + 名称 + 私有盾牌（常驻）+ 计数。
     ///
-    /// 编辑入口不常驻：hover 时紧跟分组名，计数仍走右侧固定槽。
+    /// 编辑入口不常驻：hover 时紧跟名称（私有盾牌之后），计数仍走右侧固定槽。
     /// 未 hover 时按钮不进视图树，避免抢走 List 选中。右键提供编辑 / 删除。「未分组」没有这些入口。
     ///
     /// 不要在 Label 上挂 `TapGesture`：macOS `List(selection:)` 会把单击交给手势，

@@ -46,6 +46,8 @@ struct ShortcutRecorderView: View {
                     HStack(spacing: 4) {
                         ForEach(Array(shortcut.displaySegments.enumerated()), id: \.offset) { _, segment in
                             Text(verbatim: segment)
+                                // 键帽渲染属于特殊键盘 UI（规范 §9 例外）：11pt rounded
+                                // 模拟实体键帽，不适用设置页图标 / 文字口径。
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                                 .foregroundStyle(.primary)
                                 .frame(minWidth: 16)
@@ -77,9 +79,12 @@ struct ShortcutRecorderView: View {
                     Spacer(minLength: 0)
                     Button(action: onRestoreDefault) {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 15, weight: .medium))
+                            .font(SettingsIconMetrics.standardGlyph)
                             .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 28)
+                            .frame(
+                                width: SettingsIconMetrics.actionFrameSize,
+                                height: SettingsIconMetrics.actionFrameSize
+                            )
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

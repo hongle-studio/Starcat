@@ -185,6 +185,8 @@ struct GitHubWeeklyCommitActivity: Decodable, Equatable, Sendable {
 }
 
 /// GitHub contributors endpoint 的贡献者。
+///
+/// 匿名提交可能没有 `login`；缺字段时不能让整页解码失败，否则 Hero / 洞察都看不到任何人。
 struct GitHubRepositoryContributorMetric: Decodable, Equatable, Sendable {
     let login: String
     let contributions: Int
@@ -195,6 +197,15 @@ struct GitHubRepositoryContributorMetric: Decodable, Equatable, Sendable {
         case login, contributions
         case avatarURL = "avatar_url"
         case htmlURL = "html_url"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        login = try container.decodeIfPresent(String.self, forKey: .login)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        contributions = try container.decodeIfPresent(Int.self, forKey: .contributions) ?? 0
+        avatarURL = try container.decodeIfPresent(String.self, forKey: .avatarURL)
+        htmlURL = try container.decodeIfPresent(String.self, forKey: .htmlURL)
     }
 }
 

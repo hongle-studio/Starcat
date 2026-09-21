@@ -246,9 +246,9 @@ enum RepoSortOption: String, CaseIterable, Identifiable {
 ///
 /// 设计选择：
 /// - 当前第一阶段只落地 OpenAI-compatible 路线，**所有 case 都假定走 OpenAI Chat
-///   Completions 协议**，由 `OpenAIClient` 统一适配。Anthropic Messages API（Claude
-///   官方、`*_anthropic` 系列入口）暂未支持，故未列入；未来若新增 Anthropic 客户端
-///   再扩展。
+///   Completions 协议**，由 `OpenAIClient` 统一适配。`.anthropic` 是第二个非 Completions
+///   case：走 Messages API（`AnthropicClient`），给官方 Claude 与各家 `*/anthropic`
+///   中转用；不能把它改写成 OpenAI `/v1/chat/completions`。
 /// - 保留具体 provider 枚举不是为了锁死 SDK，而是给设置页提供"一键填好 base URL +
 ///   chat / embedding 默认值 + logo"的快捷选项。dong4j 仍然可以选 `.openAICompatible`
 ///   + 自填 URL 接入任何 OpenAI 兼容服务。
@@ -297,6 +297,21 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     // 继续追加在尾部，避免改动已有 rawValue 的持久化语义。
     case orcaRouter
 
+    // MARK: - 2026-09-12 新增（内置本地 AI，非 HTTP Provider）
+    //
+    // `localAI` 是第一个不走 OpenAI Chat Completions 协议的 case：进程内 MLX 推理，
+    // 无 Key、无 Base URL，模型经设置页下载校验后由内置 profile 提供（见
+    // `LocalAIModelManager.syncBuiltInProfile`）。任务选择 / capability 校验 /
+    // 门禁逻辑全部复用，仅客户端工厂、免费门控与模型管理 UI 按 provider 适配。
+    // 设计文档：docs/2-产品/需求讨论/starcat-local-ai-framework-and-model-plan.md。
+    case localAI
+
+    // MARK: - 2026-09-14 新增（Anthropic Messages API，非 OpenAI Completions）
+    //
+    // 必须追加在 `localAI` **之后**，禁止插入中间以免改已有 rawValue 的持久化语义。
+    // 设计文档：docs/3-设计/详细设计/68-Anthropic服务商详细设计.md。
+    case anthropic
+
     var id: String { rawValue }
 
     /// 设置页 picker 显示的服务商名（i18n key 复用 LocalizedStringKey 自动解析）。
@@ -326,6 +341,8 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .zhipu:            return "ai.provider.zhipu"
         case .zai:              return "Z.AI"
         case .orcaRouter:       return "OrcaRouter"
+        case .localAI:          return "Starcat Local AI"
+        case .anthropic:        return "Anthropic"
         }
     }
 
@@ -360,6 +377,10 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .zhipu:            return "chatglm"
         case .zai:              return "zai"
         case .orcaRouter:       return "orcarouter"
+        // 自绘 CPU+火花矢量（本地推理语义），非上游品牌资源。
+        case .localAI:          return "localai"
+        // 复用已有 Claude Spark imageset，不新增品牌资源。
+        case .anthropic:        return "claudecode"
         }
     }
 
@@ -371,6 +392,8 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .orcaRouter:
             return "point.3.connected.trianglepath.dotted"
+        case .localAI:
+            return "cpu"
         default:
             return "sparkles"
         }
@@ -389,7 +412,7 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     /// 判定来源：`rg -o 'fill="[^"]*"' Resources/Assets.xcassets/AIProviders/*/*.svg`。
     var iconIsMonochromeWhite: Bool {
         switch self {
-        case .openAICompatible, .ollama, .lmStudio, .grok, .moonshot:
+        case .openAICompatible, .ollama, .lmStudio, .grok, .moonshot, .localAI:
             return true
         default:
             return false
@@ -423,6 +446,8 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .zhipu:            return "https://open.bigmodel.cn/api/paas/v4"
         case .zai:              return "https://api.z.ai/api/coding/paas/v4"
         case .orcaRouter:       return "https://api.orcarouter.ai/v1"
+        case .localAI:          return ""
+        case .anthropic:        return "https://api.anthropic.com"
         }
     }
 
@@ -453,6 +478,9 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .zhipu:            return "glm-4.6"
         case .zai:              return "glm-4.6"
         case .orcaRouter:       return "openai/gpt-4o-mini"
+        // 占位提示：真实可用列表来自内置 profile 的已安装模型（LocalAIModelManager）。
+        case .localAI:          return "Qwen3 4B Instruct 4bit"
+        case .anthropic:        return "claude-sonnet-4-5"
         }
     }
 
@@ -505,6 +533,11 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
             // OrcaRouter 2026-09-05 官方 OpenAPI 未定义 `/v1/embeddings`。
             // 空值只用于构造“模型列表测试”客户端；Embedding 任务由下方能力门禁拦截。
             return ""
+        case .localAI:
+            return "Qwen3 Embedding 0.6B 8bit"
+        case .anthropic:
+            // Anthropic 不提供 embeddings；空值只用于构造测试客户端，任务门禁拦截。
+            return ""
         }
     }
 
@@ -514,11 +547,20 @@ enum AIServiceProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     /// capability 校验，把 OrcaRouter 误用于当前并不存在的 Embedding API。
     var supportsEmbeddingEndpoint: Bool {
         switch self {
-        case .orcaRouter:
+        case .orcaRouter, .anthropic:
             return false
         default:
             return true
         }
+    }
+
+    /// 设置页「新增服务商」可选类型列表。
+    ///
+    /// `localAI` 是内置默认服务商（首启动即注入并默认选中，dong4j 2026-09-12），
+    /// 不是用户可新增的类型，一律不出现在新增列表；其余类型不做硬件过滤
+    /// （新增远端 provider 与本机架构无关）。
+    static var userSelectableCases: [AIServiceProvider] {
+        allCases.filter { $0 != .localAI }
     }
 }
 
@@ -560,7 +602,7 @@ enum SmartSearchMode: String, CaseIterable, Identifiable {
 /// - **未知 locale 仍落到英文**（HOM-198）：`defaultForCurrentLocale()` 只返回
 ///   具体语言，不会再回到 `.auto`。英文是 README 原文最普遍的语言，比硬塞简体合理。
 /// - 目标语言与 App 当前正式开放的 18 种显示语言保持同一组 BCP-47 identifier；
-/// - `displayName` 使用“旗帜 + 母语名称”，不跟随当前界面语言翻译；
+/// - `displayName` 使用母语名称，不跟随当前界面语言翻译；语言不是国家，菜单不加国旗；
 /// - `promptName` 是发给 LLM 的目标语言名称，固定走英文（`Simplified Chinese`），
 ///   避免不同 provider 对中文 prompt 关键词的解析差异，提示词中明确语言能更稳定。
 ///
@@ -596,7 +638,7 @@ enum ReadmeTranslationLanguage: String, CaseIterable, Identifiable, Codable, Sen
     var displayName: String {
         switch self {
         case .auto:
-            // 🌐 和具体语言的国旗同一列，标明「跟界面语言走」而不是某个国家。
+            // Auto 用当前界面语言的短词，标明「跟界面语言走」，不是某个具体语种。
             let localized: String
             switch Self.defaultForCurrentLocale() {
             case .auto, .english:
@@ -632,25 +674,25 @@ enum ReadmeTranslationLanguage: String, CaseIterable, Identifiable, Codable, Sen
             case .arabic:
                 localized = "تلقائي"
             }
-            return "🌐 \(localized)"
-        case .simplifiedChinese:  return "🇨🇳 简体中文"
-        case .traditionalChinese: return "🇨🇳 繁體中文"
-        case .english:            return "🇺🇸 English"
-        case .japanese:           return "🇯🇵 日本語"
-        case .korean:             return "🇰🇷 한국어"
-        case .german:             return "🇩🇪 Deutsch"
-        case .french:             return "🇫🇷 Français"
-        case .spanish:            return "🇪🇸 Español"
-        case .brazilianPortuguese: return "🇧🇷 Português (Brasil)"
-        case .italian:            return "🇮🇹 Italiano"
-        case .russian:            return "🇷🇺 Русский"
-        case .dutch:              return "🇳🇱 Nederlands"
-        case .polish:             return "🇵🇱 Polski"
-        case .ukrainian:          return "🇺🇦 Українська"
-        case .turkish:            return "🇹🇷 Türkçe"
-        case .vietnamese:         return "🇻🇳 Tiếng Việt"
-        case .indonesian:         return "🇮🇩 Bahasa Indonesia"
-        case .arabic:             return "🇸🇦 العربية"
+            return localized
+        case .simplifiedChinese:  return "简体中文"
+        case .traditionalChinese: return "繁體中文"
+        case .english:            return "English"
+        case .japanese:           return "日本語"
+        case .korean:             return "한국어"
+        case .german:             return "Deutsch"
+        case .french:             return "Français"
+        case .spanish:            return "Español"
+        case .brazilianPortuguese: return "Português (Brasil)"
+        case .italian:            return "Italiano"
+        case .russian:            return "Русский"
+        case .dutch:              return "Nederlands"
+        case .polish:             return "Polski"
+        case .ukrainian:          return "Українська"
+        case .turkish:            return "Türkçe"
+        case .vietnamese:         return "Tiếng Việt"
+        case .indonesian:         return "Bahasa Indonesia"
+        case .arabic:             return "العربية"
         }
     }
 
@@ -956,12 +998,44 @@ final class AppSettings {
 
     /// 摘要 / 标签推荐使用的聊天模型。
     var aiChatModel: String {
-        didSet { persist(key: Keys.aiChatModel, value: aiChatModel) }
+        didSet {
+            persist(key: Keys.aiChatModel, value: aiChatModel)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// 语义搜索向量化使用的 embedding 模型。
     var aiEmbeddingModel: String {
-        didSet { persist(key: Keys.aiEmbeddingModel, value: aiEmbeddingModel) }
+        didSet {
+            persist(key: Keys.aiEmbeddingModel, value: aiEmbeddingModel)
+            localAIConfigurationDidChange()
+        }
+    }
+
+    /// 本地 AI 模型下载源（Hugging Face / ModelScope）。
+    ///
+    /// 只影响**新下载**：已安装模型不受切源影响（manifest 记录各自来源）。
+    /// catalog 中未收录某源镜像的模型，在该源下按钮置灰并提示「暂未收录」。
+    ///
+    /// 必须是存储属性：之前是 UserDefaults 计算属性，@Observable 无法追踪，
+    /// 切换下载源后设置页不刷新（dong4j 2026-09-12 反馈）。
+    var localAIDownloadSource: LocalAIModelSource.Kind = .huggingFace {
+        didSet { persist(key: Keys.localAIDownloadSource, value: localAIDownloadSource.rawValue) }
+    }
+
+    /// 设置页正在查看的服务商；沿用原持久化 key，状态面板与设置页共用同一观察源。
+    /// 这是设置页选择，不是对话、摘要等任务的路由，不能触发模型加载或卸载。
+    var aiSettingsSelectedProfileID: String = "" {
+        didSet { persist(key: Keys.aiSettingsSelectedProfileID, value: aiSettingsSelectedProfileID) }
+    }
+
+    /// 三类本地模型下拉的选择，按类别 rawValue 保存 catalog entry ID。
+    /// 普通本地任务的模型真源；改变选择只影响后续请求，正在执行的请求保留自己的快照。
+    var localAIModelSelections: [String: String] = [:] {
+        didSet {
+            persistJSON(key: Keys.localAIModelSelections, value: localAIModelSelections)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// 多服务商 AI 配置。
@@ -971,17 +1045,31 @@ final class AppSettings {
     /// - 第一版先避免数据库迁移风险；
     /// - API Key 不在这里，按 profile ID 存在 `KeychainManager` 的本地加密文件。
     var aiProviderProfiles: [AIProviderProfile] {
-        didSet { persistJSON(key: Keys.aiProviderProfiles, value: aiProviderProfiles) }
+        didSet {
+            persistJSON(key: Keys.aiProviderProfiles, value: aiProviderProfiles)
+            localAIConfigurationDidChange()
+        }
     }
+
+    /// 当前二进制解不出的 profile JSON 片段（例如尚未认识的 `provider` rawValue）。
+    /// 启动时跳过以免整表失败；写回时再拼回去，避免旧版把新版服务商从磁盘抹掉。
+    @ObservationIgnored
+    private var unrecognizedAIProviderProfileJSONFragments: [Data] = []
 
     /// 摘要任务模型配置。摘要与标签拆开，避免 JSON 标签失败拖垮摘要。
     var aiSummaryTask: AIModelTaskConfiguration {
-        didSet { persistJSON(key: Keys.aiSummaryTask, value: aiSummaryTask) }
+        didSet {
+            persistJSON(key: Keys.aiSummaryTask, value: aiSummaryTask)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// 推荐标签任务模型配置。
     var aiTagsTask: AIModelTaskConfiguration {
-        didSet { persistJSON(key: Keys.aiTagsTask, value: aiTagsTask) }
+        didSet {
+            persistJSON(key: Keys.aiTagsTask, value: aiTagsTask)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// 每仓库 AI 标签推荐最少数量（与最多数量组成区间，默认 1）。
@@ -1013,7 +1101,10 @@ final class AppSettings {
 
     /// Embedding 任务模型配置。
     var aiEmbeddingTask: AIModelTaskConfiguration {
-        didSet { persistJSON(key: Keys.aiEmbeddingTask, value: aiEmbeddingTask) }
+        didSet {
+            persistJSON(key: Keys.aiEmbeddingTask, value: aiEmbeddingTask)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// README 翻译任务模型配置（HOM-68 follow-up 2026-06-05）。
@@ -1023,7 +1114,10 @@ final class AppSettings {
     /// 拆开在设置页配置。首次升级时 `init` 兜底逻辑会用与摘要相同的 provider+model 作
     /// 默认值，但参数走 `AIModelParameters.translationDefault`，用户可在设置页改。
     var aiTranslationTask: AIModelTaskConfiguration {
-        didSet { persistJSON(key: Keys.aiTranslationTask, value: aiTranslationTask) }
+        didSet {
+            persistJSON(key: Keys.aiTranslationTask, value: aiTranslationTask)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// README 全文翻译 Prompt。
@@ -1045,7 +1139,10 @@ final class AppSettings {
     /// 参数（chat 与摘要场景接近：都是单仓上下文 + 流式生成 + 中等温度），用户可在
     /// 设置页改。
     var aiChatTask: AIModelTaskConfiguration {
-        didSet { persistJSON(key: Keys.aiChatTask, value: aiChatTask) }
+        didSet {
+            persistJSON(key: Keys.aiChatTask, value: aiChatTask)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// 知识库 RAG 的 keyword/vector 后端。默认 SQLite；Meilisearch/Qdrant 只在用户
@@ -1066,7 +1163,10 @@ final class AppSettings {
 
     /// Rerank 只影响问答/召回测试的候选排序，配置独立于 embedding 与检索后端。
     var ragRerankConfiguration: RAGRerankConfiguration {
-        didSet { persistJSON(key: Keys.ragRerankConfiguration, value: ragRerankConfiguration.normalized) }
+        didSet {
+            persistJSON(key: Keys.ragRerankConfiguration, value: ragRerankConfiguration.normalized)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// RAG 的文本推理后端。只切换 Planner / Generator / 压缩 / 标题，不影响
@@ -1080,7 +1180,10 @@ final class AppSettings {
     /// 空字符串表示从未选过，打开工作台时回退到 `aiChatTask` 对齐的模型。
     /// 只存工作台偏好，不改写全局 chat task，避免 RAG 换模型牵动 AI 助手默认配置。
     var ragWorkspaceSelectedModelID: String {
-        didSet { persist(key: Keys.ragWorkspaceSelectedModelID, value: ragWorkspaceSelectedModelID) }
+        didSet {
+            persist(key: Keys.ragWorkspaceSelectedModelID, value: ragWorkspaceSelectedModelID)
+            localAIConfigurationDidChange()
+        }
     }
 
     /// RAG 工作台「调试模式」开关。只持久化开关本身；debug 事件仍只活在当前窗口。
@@ -1214,6 +1317,11 @@ final class AppSettings {
         didSet { persist(key: Keys.readmeTranslationMode, value: readmeTranslationMode.rawValue) }
     }
 
+    /// 详情页主「翻译」按钮与菜单当前选中的引擎（系统 / AI …）。
+    var readmeTranslationEngine: ReadmeTranslationEngine {
+        didSet { persist(key: Keys.readmeTranslationEngine, value: readmeTranslationEngine.rawValue) }
+    }
+
     /// Undo Star 历史保留天数（2026-07-05）。-1 = 永久不删。
     var undoStarRetentionDays: Int {
         didSet { defaults.set(undoStarRetentionDays, forKey: Keys.undoStarRetentionDays) }
@@ -1276,16 +1384,8 @@ final class AppSettings {
         didSet { persistBool(key: Keys.globalSearchShortcutEnabled, value: globalSearchShortcutEnabled) }
     }
 
-    /// Search Center 本地范围快捷键，默认 Shift+Command+F。
-    var regularSearchShortcut: KeyboardShortcutConfiguration {
-        didSet { persistJSON(key: Keys.regularSearchShortcut, value: regularSearchShortcut) }
-    }
-
-    var regularSearchShortcutEnabled: Bool {
-        didSet { persistBool(key: Keys.regularSearchShortcutEnabled, value: regularSearchShortcutEnabled) }
-    }
-
     /// README 页内查找快捷键，默认 Command+F。与列表常规搜索拆开，不再按焦点分流。
+    /// 原常规搜索（⇧⌘F）快捷键已于 2026-09-13 删除：搜索统一进全局搜索 ⌘K。
     var readmeFindShortcut: KeyboardShortcutConfiguration {
         didSet { persistJSON(key: Keys.readmeFindShortcut, value: readmeFindShortcut) }
     }
@@ -1820,20 +1920,32 @@ final class AppSettings {
             chatModel: resolvedAIChatModel,
             embeddingModel: resolvedAIEmbeddingModel
         )
-        let profiles = Self.decodeJSON([AIProviderProfile].self, key: Keys.aiProviderProfiles, defaults: defaults) ?? []
-        // 历史脏数据（重复 id / 超大目录）会在设置页勾选模型时卡死主线程；启动时只做去重+截断。
-        let sanitizedProfiles = profiles.isEmpty
+        let profiles = Self.loadAIProviderProfiles(defaults: defaults)
+        unrecognizedAIProviderProfileJSONFragments = profiles.unrecognizedFragments
+        // 临时诊断（provider 列表消失问题）：确认启动时 decode 到的 profile 数量。
+        // 历史脏数据（重复 id / 超大目录 / 大目录全开）会在设置页勾选或滚动模型时卡死主线程。
+        let referencedByProfile = Self.referencedAIModelNamesByProfileID(defaults: defaults)
+        let sanitizedProfiles = profiles.items.isEmpty
             ? [defaultProfile]
-            : profiles.map { $0.sanitizedForStorage() }
+            : profiles.items.map {
+                $0.sanitizedForStorage(referencedModelNames: referencedByProfile[$0.id] ?? [])
+            }
         self.aiProviderProfiles = sanitizedProfiles
+        self.localAIDownloadSource = LocalAIModelSource.Kind(
+            rawValue: defaults.string(forKey: Keys.localAIDownloadSource) ?? ""
+        ) ?? .huggingFace
+        self.aiSettingsSelectedProfileID = defaults.string(forKey: Keys.aiSettingsSelectedProfileID) ?? ""
+        self.localAIModelSelections = Self.decodeJSON(
+            [String: String].self, key: Keys.localAIModelSelections, defaults: defaults
+        ) ?? [:]
         // init 里不能调实例方法（其余 stored 属性尚未齐），且 didSet 也不会触发；
         // 若消毒改写了内容，直接写 UserDefaults，避免每次冷启动重复处理同一份脏 JSON。
-        if !profiles.isEmpty, sanitizedProfiles != profiles {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            if let data = try? encoder.encode(sanitizedProfiles) {
-                defaults.set(String(decoding: data, as: UTF8.self), forKey: Keys.aiProviderProfiles)
-            }
+        if !profiles.items.isEmpty, sanitizedProfiles != profiles.items {
+            Self.persistAIProviderProfiles(
+                sanitizedProfiles,
+                unrecognizedFragments: profiles.unrecognizedFragments,
+                defaults: defaults
+            )
         }
         let defaultSummaryTask = Self.makeDefaultTask(
             task: .summary,
@@ -1855,7 +1967,9 @@ final class AppSettings {
             key: Keys.aiSummaryTask,
             defaults: defaults
         ) ?? defaultSummaryTask
-        self.aiSummaryTask = Self.migrateLegacyDefaultSummaryPromptIfNeeded(
+        self.aiSummaryTask = Self.localAIDefaultTaskOverride(
+            task: .summary, key: Keys.aiSummaryTask, defaults: defaults
+        ) ?? Self.migrateLegacyDefaultSummaryPromptIfNeeded(
             persistedSummaryTask,
             defaults: defaults
         )
@@ -1864,7 +1978,9 @@ final class AppSettings {
             key: Keys.aiTagsTask,
             defaults: defaults
         ) ?? defaultTagsTask
-        self.aiTagsTask = Self.migrateLegacyDefaultTagsPromptIfNeeded(
+        self.aiTagsTask = Self.localAIDefaultTaskOverride(
+            task: .tags, key: Keys.aiTagsTask, defaults: defaults
+        ) ?? Self.migrateLegacyDefaultTagsPromptIfNeeded(
             persistedTagsTask,
             defaults: defaults
         )
@@ -1878,7 +1994,10 @@ final class AppSettings {
         )
         self.aiTagSuggestionMinCount = clampedTagCounts.minimum
         self.aiTagSuggestionMaxCount = clampedTagCounts.maximum
-        self.aiEmbeddingTask = Self.decodeJSON(AIModelTaskConfiguration.self, key: Keys.aiEmbeddingTask, defaults: defaults) ?? defaultEmbeddingTask
+        self.aiEmbeddingTask = Self.localAIDefaultTaskOverride(
+            task: .embedding, key: Keys.aiEmbeddingTask, defaults: defaults
+        ) ?? Self.decodeJSON(AIModelTaskConfiguration.self, key: Keys.aiEmbeddingTask, defaults: defaults)
+            ?? defaultEmbeddingTask
         // HOM-68 follow-up：翻译任务首次升级时与摘要使用同一 provider+model，
         // 参数走 translationDefault（低温度 + 高 maxToken），用户可在设置页改。
         let defaultTranslationTask = Self.makeDefaultTask(
@@ -1914,7 +2033,9 @@ final class AppSettings {
             key: Keys.aiChatTask,
             defaults: defaults
         ) ?? defaultChatTask
-        self.aiChatTask = Self.migrateLegacyDefaultChatPromptIfNeeded(
+        self.aiChatTask = Self.localAIDefaultTaskOverride(
+            task: .chat, key: Keys.aiChatTask, defaults: defaults
+        ) ?? Self.migrateLegacyDefaultChatPromptIfNeeded(
             persistedChatTask,
             defaults: defaults
         )
@@ -1990,6 +2111,10 @@ final class AppSettings {
         self.readmeTranslationMode = translationModeRaw
             .flatMap(ReadmeTranslationMode.init(rawValue:))
             ?? .segmented
+        let translationEngineRaw = defaults.string(forKey: Keys.readmeTranslationEngine)
+        self.readmeTranslationEngine = translationEngineRaw
+            .flatMap(ReadmeTranslationEngine.init(rawValue:))
+            ?? .system
 
         let retentionDays = defaults.integer(forKey: Keys.undoStarRetentionDays)
         self.undoStarRetentionDays = retentionDays == 0 ? 7 : retentionDays  // 首次默认 7 天
@@ -2004,7 +2129,6 @@ final class AppSettings {
         self.aiChatRequiresCommandReturn = defaults.object(forKey: Keys.aiChatRequiresCommandReturn) as? Bool ?? false
         self.keyboardShortcutsEnabled = defaults.object(forKey: Keys.keyboardShortcutsEnabled) as? Bool ?? true
         self.globalSearchShortcutEnabled = defaults.object(forKey: Keys.globalSearchShortcutEnabled) as? Bool ?? true
-        self.regularSearchShortcutEnabled = defaults.object(forKey: Keys.regularSearchShortcutEnabled) as? Bool ?? true
         self.readmeFindShortcutEnabled = defaults.object(forKey: Keys.readmeFindShortcutEnabled) as? Bool ?? true
         self.refreshCurrentContentShortcutEnabled = defaults.object(
             forKey: Keys.refreshCurrentContentShortcutEnabled
@@ -2015,11 +2139,6 @@ final class AppSettings {
         let storedSearchShortcut = Self.decodeJSON(
             KeyboardShortcutConfiguration.self,
             key: Keys.globalSearchShortcut,
-            defaults: defaults
-        )
-        let storedRegularSearchShortcut = Self.decodeJSON(
-            KeyboardShortcutConfiguration.self,
-            key: Keys.regularSearchShortcut,
             defaults: defaults
         )
         let storedReadmeFindShortcut = Self.decodeJSON(
@@ -2046,17 +2165,6 @@ final class AppSettings {
         let resolvedSearchShortcut = storedSearchShortcut.flatMap {
             $0.validationError == nil ? $0 : nil
         } ?? .globalSearchDefault
-        let resolvedRegularSearchShortcut: KeyboardShortcutConfiguration = {
-            guard let stored = storedRegularSearchShortcut, stored.validationError == nil else {
-                return .regularSearchDefault
-            }
-            // 旧默认是 ⌘F。拆出 README 搜索后列表搜索改成 ⌘⇧F；仍存着旧默认的用户视为未自定义，
-            // 否则会和新的 README ⌘F 撞车，把六项一起重置。
-            if stored == KeyboardShortcutConfiguration.legacyRegularSearchDefault {
-                return .regularSearchDefault
-            }
-            return stored
-        }()
         let resolvedReadmeFindShortcut = storedReadmeFindShortcut.flatMap {
             $0.validationError == nil ? $0 : nil
         } ?? StarcatShortcutCatalog.readmeFindDefault
@@ -2072,26 +2180,23 @@ final class AppSettings {
 
         let resolvedShortcuts = [
             resolvedSearchShortcut,
-            resolvedRegularSearchShortcut,
             resolvedReadmeFindShortcut,
             resolvedRefreshShortcut,
             resolvedKnowledgeRAGShortcut,
             resolvedSelectedRepoAIShortcut
         ]
 
-        // 六项应用命令始终保持唯一，即使某项暂时关闭也不能占用另一项键位。
+        // 五项应用命令始终保持唯一，即使某项暂时关闭也不能占用另一项键位。
         // 这样重新开启时不会突然产生两个命令竞争；遇到手工篡改或旧版本重复值时，
-        // 六项一起恢复默认，比静默偏袒其中一个动作更可预测。
+        // 五项一起恢复默认，比静默偏袒其中一个动作更可预测。
         if Set(resolvedShortcuts).count != resolvedShortcuts.count {
             self.globalSearchShortcut = .globalSearchDefault
-            self.regularSearchShortcut = .regularSearchDefault
             self.readmeFindShortcut = StarcatShortcutCatalog.readmeFindDefault
             self.refreshCurrentContentShortcut = StarcatShortcutCatalog.refreshCurrentContentDefault
             self.knowledgeRAGShortcut = StarcatShortcutCatalog.openKnowledgeRAGDefault
             self.selectedRepoAIShortcut = StarcatShortcutCatalog.openSelectedRepoAIDefault
         } else {
             self.globalSearchShortcut = resolvedSearchShortcut
-            self.regularSearchShortcut = resolvedRegularSearchShortcut
             self.readmeFindShortcut = resolvedReadmeFindShortcut
             self.refreshCurrentContentShortcut = resolvedRefreshShortcut
             self.knowledgeRAGShortcut = resolvedKnowledgeRAGShortcut
@@ -2250,6 +2355,7 @@ final class AppSettings {
         aiBaseURL = baseURL
         aiChatModel = chatModel
         aiEmbeddingModel = embeddingModel
+        unrecognizedAIProviderProfileJSONFragments = []
         aiProviderProfiles = [defaultProfile]
         aiSummaryTask = Self.makeDefaultTask(task: .summary, profileID: defaultProfile.id, modelName: chatModel)
         aiTagsTask = Self.makeDefaultTask(task: .tags, profileID: defaultProfile.id, modelName: chatModel)
@@ -2283,6 +2389,7 @@ final class AppSettings {
         snakeStyle = SnakeStyle.default
         readmeTranslationLanguage = .auto
         readmeTranslationMode = .segmented
+        readmeTranslationEngine = .system
         disableAnimations = false
         hideDockIcon = false
         spotlightSearchEnabled = false
@@ -2290,8 +2397,6 @@ final class AppSettings {
         keyboardShortcutsEnabled = true
         globalSearchShortcut = .globalSearchDefault
         globalSearchShortcutEnabled = true
-        regularSearchShortcut = .regularSearchDefault
-        regularSearchShortcutEnabled = true
         readmeFindShortcut = StarcatShortcutCatalog.readmeFindDefault
         readmeFindShortcutEnabled = true
         refreshCurrentContentShortcut = StarcatShortcutCatalog.refreshCurrentContentDefault
@@ -2392,6 +2497,14 @@ final class AppSettings {
     }
 
     private func persistJSON<T: Encodable>(key: String, value: T) {
+        if key == Keys.aiProviderProfiles, let profiles = value as? [AIProviderProfile] {
+            Self.persistAIProviderProfiles(
+                profiles,
+                unrecognizedFragments: unrecognizedAIProviderProfileJSONFragments,
+                defaults: defaults
+            )
+            return
+        }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -2407,6 +2520,34 @@ final class AppSettings {
                 message: "A settings value could not be encoded",
                 underlying: DiagnosticEvent.summarize(error),
                 context: ["key": key]
+            )
+        }
+    }
+
+    /// 已识别 profile + 未知片段一起写回。旧二进制改服务商时不能把新 `provider` 从磁盘抹掉。
+    private static func persistAIProviderProfiles(
+        _ profiles: [AIProviderProfile],
+        unrecognizedFragments: [Data],
+        defaults: UserDefaults
+    ) {
+        do {
+            let data = try LenientJSONArrayDecoding.encode(
+                items: profiles,
+                unrecognizedFragments: unrecognizedFragments
+            )
+            defaults.set(String(decoding: data, as: UTF8.self), forKey: Keys.aiProviderProfiles)
+        } catch {
+            AppLog.general.error(
+                "persistJSON failed for \(Keys.aiProviderProfiles, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            DiagnosticLogStore.record(
+                level: .error,
+                visibility: .issue,
+                category: "settings",
+                operation: "settings.persistJSON",
+                message: "A settings value could not be encoded",
+                underlying: DiagnosticEvent.summarize(error),
+                context: ["key": Keys.aiProviderProfiles]
             )
         }
     }
@@ -2479,6 +2620,33 @@ final class AppSettings {
         return settings
     }
 
+    /// 启动消毒前先从任务 JSON 收集「仍在用的模型名」，避免把任务引用的模型关掉。
+    private static func referencedAIModelNamesByProfileID(defaults: UserDefaults) -> [String: Set<String>] {
+        let keys = [
+            Keys.aiSummaryTask,
+            Keys.aiTagsTask,
+            Keys.aiEmbeddingTask,
+            Keys.aiTranslationTask,
+            Keys.aiChatTask,
+        ]
+        var result: [String: Set<String>] = [:]
+        for key in keys {
+            guard let task = decodeJSON(AIModelTaskConfiguration.self, key: key, defaults: defaults) else {
+                continue
+            }
+            let resolved = task.resolvedModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !task.providerID.isEmpty else { continue }
+            if !resolved.isEmpty {
+                result[task.providerID, default: []].insert(resolved)
+            }
+            let modelID = task.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !modelID.isEmpty {
+                result[task.providerID, default: []].insert(modelID)
+            }
+        }
+        return result
+    }
+
     private static func decodeJSON<T: Decodable>(
         _ type: T.Type,
         key: String,
@@ -2504,6 +2672,56 @@ final class AppSettings {
             )
             return nil
         }
+    }
+
+    /// 逐条解码 AI 服务商列表。单条未知 provider / 脏数据不能让整表变 nil。
+    private static func loadAIProviderProfiles(defaults: UserDefaults) -> LenientJSONArrayDecoding.Outcome<AIProviderProfile> {
+        guard let raw = defaults.string(forKey: Keys.aiProviderProfiles),
+              let data = raw.data(using: .utf8)
+        else {
+            return LenientJSONArrayDecoding.Outcome(
+                items: [],
+                unrecognizedFragments: [],
+                skips: [],
+                topLevelFailure: nil
+            )
+        }
+
+        let outcome = LenientJSONArrayDecoding.decode(AIProviderProfile.self, from: data)
+        if let error = outcome.topLevelFailure {
+            AppLog.general.error(
+                "decodeJSON failed for \(Keys.aiProviderProfiles, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            DiagnosticLogStore.record(
+                level: .error,
+                visibility: .issue,
+                category: "settings",
+                operation: "settings.decodeJSON",
+                message: "A persisted settings value could not be decoded",
+                underlying: DiagnosticEvent.summarize(error),
+                context: ["key": Keys.aiProviderProfiles]
+            )
+            return outcome
+        }
+
+        for skip in outcome.skips {
+            AppLog.general.warning(
+                "skipped AI provider profile at index \(skip.index, privacy: .public): \(skip.summary, privacy: .public)"
+            )
+            DiagnosticLogStore.record(
+                level: .warning,
+                visibility: .context,
+                category: "settings",
+                operation: "settings.decodeJSON.skip",
+                message: "Skipped one persisted AI provider profile",
+                underlying: skip.summary,
+                context: [
+                    "key": Keys.aiProviderProfiles,
+                    "index": String(skip.index)
+                ]
+            )
+        }
+        return outcome
     }
 
     /// 只升级仍等于已发布旧默认值的标签 Prompt，保留用户选择的 Provider / Model / 参数。
@@ -2609,7 +2827,7 @@ final class AppSettings {
     func effectiveParameters(for task: AIModelTaskConfiguration) -> AIModelParameters {
         if let profile = aiProviderProfiles.first(where: { $0.id == task.providerID }),
            let model = profile.models.first(where: { $0.name == task.modelID }) {
-            return model.parameters ?? AIModelParameters.defaults(for: model.capability)
+            return model.effectiveParameters
         }
         return task.parameters
     }
@@ -2643,6 +2861,22 @@ final class AppSettings {
                 )
             ]
         )
+    }
+
+    /// 首启动默认覆盖：对应任务的配置键**尚无持久化值**（首次安装 / 恢复出厂后首启）
+    /// 时，任务默认指向内置 Local AI（dong4j 2026-09-12 拍板「下载后开箱即用」）。
+    /// 用户一旦改过该任务，键已持久化，覆盖自动失效；Intel Mac 回退旧默认。
+    private static func localAIDefaultTaskOverride(
+        task: AIModelTask, key: String, defaults: UserDefaults
+    ) -> AIModelTaskConfiguration? {
+        guard defaults.object(forKey: key) == nil,
+            LocalAIHardwareSupport.isLocalAIAvailable
+        else { return nil }
+        let entry = task == .embedding ? LocalAIModelCatalog.embedding : LocalAIModelCatalog.llm
+        return makeDefaultTask(
+            task: task,
+            profileID: LocalAIModelCatalog.builtInProfileID,
+            modelName: entry.displayName)
     }
 
     private static func makeDefaultTask(
@@ -2708,6 +2942,9 @@ final class AppSettings {
         static let aiChatModel = "settings.ai.chatModel"
         static let aiEmbeddingModel = "settings.ai.embeddingModel"
         static let aiProviderProfiles = "settings.ai.providerProfiles.v2"
+        static let localAIDownloadSource = "settings.localai.downloadSource.v1"
+        static let aiSettingsSelectedProfileID = "settings.ai.lastSelectedProfileID"
+        static let localAIModelSelections = "settings.localai.modelSelections.v1"
         static let aiSummaryTask = "settings.ai.task.summary.v2"
         static let aiTagsTask = "settings.ai.task.tags.v2"
         static let aiTagSuggestionMinCount = "settings.ai.tagSuggestion.minCount.v1"
@@ -2735,6 +2972,7 @@ final class AppSettings {
         static let snakeStyle = "settings.contribution.snakeStyle"  // HOM-SNAKE-MODES
         static let readmeTranslationLanguage = "settings.readme.translation.language"  // HOM-68
         static let readmeTranslationMode = "settings.readme.translation.mode.v1"
+        static let readmeTranslationEngine = "settings.readme.translation.engine.v1"
         static let undoStarRetentionDays = "settings.undoStar.retentionDays"  // 2026-07-05
         static let isProUser = "settings.pro.isProUser"  // HOM-151
         static let disableAnimations = "settings.general.disableAnimations.v1"  // 2026-06-15
@@ -2744,8 +2982,8 @@ final class AppSettings {
         static let keyboardShortcutsEnabled = "settings.general.shortcuts.enabled.v1"
         static let globalSearchShortcut = "settings.general.shortcuts.globalSearch.v1"
         static let globalSearchShortcutEnabled = "settings.general.shortcuts.globalSearch.enabled.v1"
-        static let regularSearchShortcut = "settings.general.shortcuts.regularSearch.v1"
-        static let regularSearchShortcutEnabled = "settings.general.shortcuts.regularSearch.enabled.v1"
+        // 已废弃（2026-09-13）：settings.general.shortcuts.regularSearch(.enabled).v1
+        // 随常规搜索快捷键一起退役；已发布用户的磁盘残留值无人读取，不做迁移清理。
         static let readmeFindShortcut = "settings.general.shortcuts.readmeFind.v1"
         static let readmeFindShortcutEnabled = "settings.general.shortcuts.readmeFind.enabled.v1"
         static let refreshCurrentContentShortcut = "settings.general.shortcuts.refreshCurrentContent.v1"
@@ -2845,6 +3083,7 @@ final class AppSettings {
             snakeStyle,
             readmeTranslationLanguage,
             readmeTranslationMode,
+            readmeTranslationEngine,
             isProUser,
             disableAnimations,
             hideDockIcon,
@@ -2852,8 +3091,6 @@ final class AppSettings {
             keyboardShortcutsEnabled,
             globalSearchShortcut,
             globalSearchShortcutEnabled,
-            regularSearchShortcut,
-            regularSearchShortcutEnabled,
             readmeFindShortcut,
             readmeFindShortcutEnabled,
             refreshCurrentContentShortcut,

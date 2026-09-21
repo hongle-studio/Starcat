@@ -18,7 +18,7 @@
 //  ────────────────────────────────────────────────────────────────────────────
 //
 //  - 40pt 头像（来自 owner 拼接 GitHub 公开重定向 URL）
-//  - 已 star → fullName 右侧紧贴 ✓ 标记（systemGreen 11pt，gap 4pt）
+//  - star 状态 → chip 行 Stars 徽章：已 star 实心 `star.fill` / 未 star 空心 `star`（v2.1）
 //  - 描述 2 行截断
 //  - chip 行：Lang → Stars → Forks → archived（如有）→ 场景独有徽章 (badge)
 //  - 不渲染 star/unstar 按钮（设计 §3.1.6 决策：交互入口仅在详情页 hero stats 行）
@@ -87,6 +87,20 @@
 //  「事件发生」），且 `.suggestion` 是启发式推荐而非时间事件 —— v2.0 整列删除
 //  是承认这个时戳维度不够强一致来支持统一渲染。
 //
+//  ────────────────────────────────────────────────────────────────────────────
+//  v2.1 修订（2026-09-11, dong4j 决策）：绿色 ✓ 标记删除，star 状态改由星星 chip 表达
+//  ────────────────────────────────────────────────────────────────────────────
+//
+//  fullName 右侧的绿色 `checkmark.circle.fill` 不再使用：star 与否改由 chip 行的
+//  Stars 徽章直接表达 —— 已 star 实心 `star.fill` 黄，未 star 空心 `star` 用
+//  `.primary` 主色（亮色黑描边 / 暗色白描边，见 StarsBadge.starTint）。
+//  `card.isStarred` 在各场景已由调用方派生好（Manage 读本地库，DTO 场景走
+//  `StarredRegistry.contains`），星星实/空心直接消费该真值，无需场景显式开关，
+//  也就不存在 v1.8 时代「Manage 全显 ✓」式的实现疏忽风险。
+//
+//  `showStarredCheckmark` 参数整体删除（旧路径不留双轨）；原 ✓ 的「已 star」
+//  VoiceOver 播报挪到 Stars 徽章上，空心态复用 `list.filter.starStatus.unstarred`。
+//
 
 import SwiftUI
 
@@ -118,17 +132,6 @@ struct UnifiedRepoRow: View {
 
     /// 推荐场景可复用现有本地化格式显示“匹配度 29%”；语义搜索保持原百分比。
     let semanticScoreFormatKey: String?
-
-    /// 是否在 row 上显示「已 star ✓」标记(v1.8 修订, 2026-06-10)。
-    ///
-    /// **默认 false** —— 调用方必须显式按场景决定:
-    /// - Manage 多数分类:不传(默认 false),本就是已 star 列表,挂 ✓ 视觉冗余;
-    /// - 知识库 / 我的项目 / Trending / Weekly / Explore:传 `true`,区分已/未 Star;
-    /// - 后续新场景:必须显式决定,避免「全显 ✓」式实现疏忽。
-    ///
-    /// 渲染条件是 `showStarredCheckmark && card.isStarred` 双条件 AND——
-    /// `card.isStarred` 仍由调用方派生(Manage 读 self,Trending/Weekly 走 registry)。
-    let showStarredCheckmark: Bool
 
     /// 是否在头像左上角显示“已加入知识库”角标。
     /// 知识库自身列表会关闭该标记，避免所有行重复同一个无区分度信号。
@@ -165,7 +168,6 @@ struct UnifiedRepoRow: View {
         isPinned: Bool = false,
         semanticHit: SemanticSearchHit? = nil,
         semanticScoreFormatKey: String? = nil,
-        showStarredCheckmark: Bool = false,
         showLibraryBadge: Bool = true,
         showReadStatusBadge: Bool = true,
         hasAISummary: Bool = false,
@@ -176,7 +178,6 @@ struct UnifiedRepoRow: View {
         self.isPinned = isPinned
         self.semanticHit = semanticHit
         self.semanticScoreFormatKey = semanticScoreFormatKey
-        self.showStarredCheckmark = showStarredCheckmark
         self.showLibraryBadge = showLibraryBadge
         self.showReadStatusBadge = showReadStatusBadge
         self.hasAISummary = hasAISummary
@@ -192,7 +193,7 @@ struct UnifiedRepoRow: View {
 
                 VStack(alignment: .leading, spacing: 5) {
 
-                    // fullName + 已 star ✓ 标记 + Fork 徽章
+                    // fullName + Fork 徽章（star 状态改由 chip 行 Stars 徽章实/空心表达，v2.1）
                     HStack(spacing: 4) {
                         Text(card.fullName)
                             .font(interfaceScale.font(.body, weight: .semibold))
@@ -200,16 +201,6 @@ struct UnifiedRepoRow: View {
                             .truncationMode(.middle)
                             .layoutPriority(1)
                             .help(card.fullName)
-
-                        if showStarredCheckmark && card.isStarred {
-                            // 紧贴 fullName 右侧 4pt（设计 §3.1.2 表格：图标 = checkmark.circle.fill / systemGreen / 11pt）
-                            // v1.8 修订(2026-06-10):双条件 AND——Manage 不传 showStarredCheckmark
-                            // 默认 false 即不显;Trending / Weekly 显式传 true,再由 card.isStarred 决定单 row。
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(interfaceScale.font(.captionSmall, weight: .semibold))
-                                .foregroundStyle(Color.green)
-                                .accessibilityLabel(Text("repo.card.alreadyStarred"))
-                        }
 
                         if card.isFork {
                             // 标题行只表达 Fork 身份；数量仍在底部单独显示。
@@ -271,8 +262,16 @@ struct UnifiedRepoRow: View {
                     // 保留单棵布局树，避免恢复 ViewThatFits 多变体测量带来的滚动开销。
                     // 胶囊按自然宽度紧邻排列，空余宽度只交给末尾 Spacer；状态图标不另起右簇。
                     // clipped 只兜住越界绘制，单行约束负责防止胶囊换行增高。
+                    //
+                    // 2026-09-11（dong4j 反馈知识库窗口最小宽度下「1/19」被拦腰裁切）：
+                    // 胶囊全部 fixedSize，行宽不足时 clipped 会从胶囊中间切断。改成
+                    // ViewThatFits 两档：宽裕时全量胶囊；窄栏先丢 forks / AI 摘要这类
+                    // 次要信号，保住语言、Stars 与场景元数据（如 RAG 索引进度）完整可读。
                     HStack(spacing: 8) {
-                        metadataChipCluster
+                        ViewThatFits(in: .horizontal) {
+                            metadataChipCluster(showsSecondaryMetadata: true)
+                            metadataChipCluster(showsSecondaryMetadata: false)
+                        }
                         Spacer(minLength: 8)
                         if let semanticHit {
                             SemanticScoreBadge(
@@ -348,25 +347,35 @@ struct UnifiedRepoRow: View {
     }
 
     /// 胶囊保持原有顺序与 8pt 间距；长文本在各自宽度上限内截断，不扩展短胶囊的占位。
+    ///
+    /// `showsSecondaryMetadata == false` 是窄栏降级簇：只去掉 forks / AI 摘要两个
+    /// 「同站内到处可见」的次要信号，语言、Stars、RAG 索引进度等身份信息原样保留。
     @ViewBuilder
-    private var metadataChipCluster: some View {
+    private func metadataChipCluster(showsSecondaryMetadata: Bool) -> some View {
         HStack(spacing: 8) {
             if let language = card.language, !language.isEmpty {
                 LanguageBadge(language: language, style: .full, maximumWidth: 96 * interfaceScale.multiplier)
             }
-            StarsBadge(count: displayedStarsCount, style: .full)
-            MetaBadge(systemImage: "tuningfork", text: card.forksCount.formattedShort, tint: forkTint)
-            if hasAISummary {
-                // 与 RAG 仓库选择器复用同一 `sparkles` 语义；只显示图标，完整含义通过
-                // tooltip 与 accessibility label 提供，避免在窄栏挤占 metadata 行。
-                MetaBadge(
-                    systemImage: "sparkles",
-                    text: "",
-                    tint: .accentColor,
-                    iconOnly: true,
-                    accessibilityLabel: "repo.card.aiSummaryAvailable"
-                )
-                .help("repo.card.aiSummaryAvailable")
+            // v2.1：星星实/空心表达 star 状态（原 fullName 右侧绿 ✓ 的替代），
+            // VoiceOver 播报也挪到这里；空心态复用列筛选的「未 Star」文案，不加新 key。
+            StarsBadge(count: displayedStarsCount, style: .full, isStarred: card.isStarred)
+                .accessibilityLabel(Text(card.isStarred
+                    ? "repo.card.alreadyStarred"
+                    : "list.filter.starStatus.unstarred"))
+            if showsSecondaryMetadata {
+                MetaBadge(systemImage: "tuningfork", text: card.forksCount.formattedShort, tint: forkTint)
+                if hasAISummary {
+                    // 与 RAG 仓库选择器复用同一 `sparkles` 语义；只显示图标，完整含义通过
+                    // tooltip 与 accessibility label 提供，避免在窄栏挤占 metadata 行。
+                    MetaBadge(
+                        systemImage: "sparkles",
+                        text: "",
+                        tint: .accentColor,
+                        iconOnly: true,
+                        accessibilityLabel: "repo.card.aiSummaryAvailable"
+                    )
+                    .help("repo.card.aiSummaryAvailable")
+                }
             }
             if let metadata = card.footerMetadata {
                 RepoCardInlineMetadataBadge(metadata: metadata)
@@ -546,7 +555,8 @@ private struct RepoCardInlineMetadataBadge: View {
 /// 语义搜索命中分数 chip。
 ///
 /// 紫色 capsule + sparkles + 百分比，悬停 tooltip 显示命中原因（reason）。
-/// 仅在 Manage 场景的 RepoListView 通过 `viewModel.semanticHit(for:)` 注入。
+/// Manage 列表经 `viewModel.semanticHit(for:)` 注入；Search Center 经候选上的
+/// `semanticScore` 构造 display-only hit。纯关键词行不传，避免假百分比。
 ///
 /// **2026-06-14 dong4j 改造（A 重标定）**：
 /// - 百分数源从原始 cosine `hit.score` 改成重标定后的 `hit.displayScore`，

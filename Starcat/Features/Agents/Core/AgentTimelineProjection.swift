@@ -26,6 +26,9 @@ struct AgentTimelineItem: Identifiable, Sendable {
     var kind: AgentTimelineItemKind
     var title: String
     var text: String
+    /// Assistant 的原始有序内容块。正文展示必须消费这份顺序，不能把 reasoning/text
+    /// 分别聚合后再拼接，否则 DeepSeek 每个 step 的叙事边界会被破坏。
+    var messageParts: [AgentMessagePart] = []
     /// 工具提供的用户可读运行叙事。它与完整审计日志分开，避免主界面暴露
     /// status / elapsed_ms 等实现细节，同时仍保留 log 作为持久化事实投影。
     var narrative: String? = nil
@@ -127,7 +130,14 @@ enum AgentTimelineProjection {
             artifacts: artifacts,
             userPrompt: userPrompt
         )
-        let assistantItems = items.filter { $0.kind == .assistant && !$0.text.isEmpty }
+        let assistantItems = items.filter { item in
+            item.kind == .assistant
+                && !item.text.isEmpty
+                && !item.messageParts.contains { part in
+                    if case .toolCall = part { return true }
+                    return false
+                }
+        }
         let lastToolResultSequence = messages.lazy
             .filter { message in
                 message.parts.contains { part in
@@ -137,15 +147,24 @@ enum AgentTimelineProjection {
             }
             .map(\.sequence)
             .max()
-        let finalAnswer = assistantItems.last { item in
-            guard let lastToolResultSequence else { return true }
-            return item.sequence > lastToolResultSequence
+        let finalAnswer: AgentTimelineItem?
+        if status == .completed {
+            finalAnswer = assistantItems.last { item in
+                guard let lastToolResultSequence else { return true }
+                return item.sequence > lastToolResultSequence
+            }
+        } else {
+            // settled step 在运行中始终属于过程区，避免它先跳到页面底部，下一 step 到来后
+            // 又搬回执行过程。Run 完成时只发生一次“最后消息 → 最终答案”的稳定切换。
+            finalAnswer = nil
         }
         let processItems = items.filter { item in
             switch item.kind {
             case .assistant:
-                // 原始 reasoning 永远不进入普通 Run Surface；只有明确的用户可见文本可作为进度。
-                return item.id != finalAnswer?.id && !item.text.isEmpty
+                // 已结算的 reasoning 是 Harness 明确提供的用户可见内容块；它与正文按原始
+                // 顺序展示。只有未结算的 raw token delta 仍被排除在持久化 Run Surface 外。
+                return item.id != finalAnswer?.id
+                    && (!item.text.isEmpty || item.reasoning?.isEmpty == false)
             case .toolExecution, .approval:
                 return true
             case .user, .artifact:
@@ -216,6 +235,7 @@ enum AgentTimelineProjection {
                         kind: .assistant,
                         title: "Starcat",
                         text: text,
+                        messageParts: message.parts,
                         reasoning: reasoning.isEmpty ? nil : reasoning,
                         sources: []
                     ))

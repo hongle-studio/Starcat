@@ -26,6 +26,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import ThinkingOrbsKit
 
 struct RepoDetailView: View {
 
@@ -313,12 +314,20 @@ struct ReadmeStateView: View {
 
     /// Toast 消息绑定（翻译错误 → 底部浮动提示）。
     @State private var translationToast: String?
+    /// 「已是目标语言」轻提示 toast。与错误 toast 分开挂，才能用中性 checkmark 图标、
+    /// 不带「前往设置」按钮；两条 toast 互斥出现（提示只在翻译未启动时置位）。
+    @State private var translationNoticeToast: String?
     /// 当前已渲染文档的两种翻译输入。用 document key 守门，避免切 repo 的一帧窗口误用旧数据。
     @State private var translationSourceDocumentKey: String?
     @State private var translationSourceSnapshot: ReadmeTranslationSourceSnapshot = .empty
     /// loading 阶段短暂保留上一份文档，让同一个 WKWebView 实例留在视图树中。
     /// 骨架是不透明的，保留内容不会被用户看到，也不会接收点击或进入辅助功能树。
     @State private var retainedReadmeDocument: PresentedReadmeDocument?
+
+    /// 非 Manage 的 README 详情页通过显式 repo 开启同一套 Star History DOM 状态机；
+    /// Manage 仍由 `ManageDetailContent` 持有，避免同一份 README 产生两个加载器。
+    @State private var readmeStarHistoryViewModel: ReadmeStarHistoryViewModel?
+    @State private var readmeStarHistoryTask: Task<Void, Never>?
 
     /// 主窗口各详情页共用一份翻译 VM。星标有 HomeView.selectedRepoID 的 prepare，
     /// 探索 / 活动 / 周刊没有；这里按当前仓 bind，避免 A 的译文和光圈留在 B 上。
@@ -335,6 +344,9 @@ struct ReadmeStateView: View {
     let starHistoryRenderState: ReadmeStarHistoryRenderState
     /// WebView 接近文档底部时的加载兜底；Manage 场景通常已在首帧预加载。
     let onApproachingBottom: () -> Void
+    /// 非 Manage README 详情页传入 repo 后，自动复用 Star History 加载与底部兜底。
+    /// nil 表示调用方自行提供 `starHistoryRenderState` / `onApproachingBottom`。
+    let starHistoryRepo: Repo?
     let onRetry: @MainActor @Sendable () -> Void
     /// 未登录用户点击"登录"按钮时的回调
     let onLogin: () -> Void
@@ -350,6 +362,7 @@ struct ReadmeStateView: View {
         translationControl: ReadmeTranslationControl? = nil,
         starHistoryRenderState: ReadmeStarHistoryRenderState = .empty,
         onApproachingBottom: @escaping () -> Void = {},
+        starHistoryRepo: Repo? = nil,
         onRetry: @escaping @MainActor @Sendable () -> Void,
         onLogin: @escaping () -> Void
     ) {
@@ -360,6 +373,7 @@ struct ReadmeStateView: View {
         self.translationControl = translationControl
         self.starHistoryRenderState = starHistoryRenderState
         self.onApproachingBottom = onApproachingBottom
+        self.starHistoryRepo = starHistoryRepo
         self.onRetry = onRetry
         self.onLogin = onLogin
     }
@@ -413,14 +427,26 @@ struct ReadmeStateView: View {
             reduceMotion ? nil : .easeOut(duration: ReadmeRevealTiming.contentRevealSeconds),
             value: showsReadmePlaceholder
         )
+        .task(id: readmeStarHistoryPreloadIdentity) {
+            await preloadReadmeStarHistoryIfNeeded()
+        }
+        .onDisappear {
+            cancelReadmeStarHistory()
+        }
         .toast(
             message: $translationToast,
             icon: "exclamationmark.triangle.fill",
+            duration: 5,
             iconColor: .orange,
             bottomPadding: 30,
-            autoDismiss: false,
             actionLabel: translationToastActionLabel,
             onAction: translationToastOnAction
+        )
+        .toast(
+            message: $translationNoticeToast,
+            icon: "checkmark.circle.fill",
+            duration: 5,
+            bottomPadding: 30
         )
         .onChange(of: translationControl?.translationVM.errorMessage) { _, newValue in
             if let msg = newValue {
@@ -430,6 +456,16 @@ struct ReadmeStateView: View {
         .onChange(of: translationToast) { _, newValue in
             if newValue == nil {
                 translationControl?.translationVM.dismissError()
+            }
+        }
+        .onChange(of: translationControl?.translationVM.showsAlreadyInTargetNotice == true) { _, shown in
+            guard shown else { return }
+            // 传 catalog key，由 toast 内部 LocalizedStringKey 按当前语言解析。
+            translationNoticeToast = "readme.translate.notice.alreadyInTarget"
+        }
+        .onChange(of: translationNoticeToast) { _, newValue in
+            if newValue == nil {
+                translationControl?.translationVM.dismissAlreadyInTargetNotice()
             }
         }
         .starcatRefreshCommand(
@@ -663,7 +699,8 @@ struct ReadmeStateView: View {
                 repo: nil,
                 sourceHtml: nil,
                 targetLanguage: language,
-                mode: mode
+                mode: mode,
+                engine: settings.readmeTranslationEngine
             )
             return
         }
@@ -677,7 +714,8 @@ struct ReadmeStateView: View {
             repo: control.repo,
             sourceHtml: html,
             targetLanguage: language,
-            mode: mode
+            mode: mode,
+            engine: settings.readmeTranslationEngine
         )
     }
 
@@ -691,7 +729,8 @@ struct ReadmeStateView: View {
             to: newLanguage.resolved(),
             repo: control.repo,
             sourceHtml: html,
-            mode: settings.readmeTranslationMode
+            mode: settings.readmeTranslationMode,
+            engine: settings.readmeTranslationEngine
         )
     }
 
@@ -705,7 +744,8 @@ struct ReadmeStateView: View {
             to: newMode,
             repo: control.repo,
             sourceHtml: html,
-            targetLanguage: settings.effectiveReadmeTranslationLanguage
+            targetLanguage: settings.effectiveReadmeTranslationLanguage,
+            engine: settings.readmeTranslationEngine
         )
     }
 
@@ -752,8 +792,8 @@ struct ReadmeStateView: View {
                     translationSourceDocumentKey = documentKey
                     translationSourceSnapshot = snapshot
                 },
-                starHistoryRenderState: starHistoryRenderState,
-                onApproachingBottom: onApproachingBottom
+                starHistoryRenderState: effectiveStarHistoryRenderState,
+                onApproachingBottom: effectiveOnApproachingBottom
             )
             // 与 ActivityReleaseDetailContent 对齐：body slot 必须吃满 Scaffold 剩余
             // 高度，否则 WKWebView 在 VStack 里按零 intrinsic 高度布局 → 闪一下后空白。
@@ -788,6 +828,70 @@ struct ReadmeStateView: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 非 Manage README 页面沿用同一份 cache-first / ETag / DOM 骨架逻辑。
+    /// Manage 已经在外层持有 ViewModel，因此只在显式传入 `starHistoryRepo` 时启用。
+    private var effectiveStarHistoryRenderState: ReadmeStarHistoryRenderState {
+        starHistoryRepo == nil
+            ? starHistoryRenderState
+            : (readmeStarHistoryViewModel?.renderState ?? .empty)
+    }
+
+    private var effectiveOnApproachingBottom: () -> Void {
+        starHistoryRepo == nil ? onApproachingBottom : startReadmeStarHistoryFallbackIfNeeded
+    }
+
+    /// 用 owner/repo 组成身份，而不是只用临时 Repo.id；Trending / Discovery 的 Repo
+    /// 可能是未落库的 ephemeral 对象，但同一公开仓库仍必须共享加载生命周期。
+    private var readmeStarHistoryPreloadIdentity: String? {
+        guard let repo = starHistoryRepo else { return nil }
+        return "\(repo.owner.lowercased())/\(repo.name.lowercased())|\(repo.id)|\(dependencies.databaseScopeRevision)|\(locale.identifier)"
+    }
+
+    private func preloadReadmeStarHistoryIfNeeded() async {
+        guard let repo = starHistoryRepo else {
+            readmeStarHistoryViewModel?.cancel()
+            return
+        }
+        guard repo.starsCount > 0 else {
+            readmeStarHistoryViewModel?.cancel()
+            return
+        }
+
+        let historyViewModel: ReadmeStarHistoryViewModel
+        if let readmeStarHistoryViewModel {
+            historyViewModel = readmeStarHistoryViewModel
+        } else {
+            let created = ReadmeStarHistoryViewModel(
+                repository: dependencies.repoStarHistoryRepository,
+                projectVisibilityProvider: { repoID in
+                    (try? await dependencies.userProjectRepository.fetchProject(repoID: repoID))?.visibility
+                }
+            )
+            readmeStarHistoryViewModel = created
+            historyViewModel = created
+        }
+
+        await historyViewModel.loadIfNeeded(
+            repo: repo,
+            databaseScopeRevision: dependencies.databaseScopeRevision,
+            locale: locale
+        )
+    }
+
+    private func startReadmeStarHistoryFallbackIfNeeded() {
+        guard starHistoryRepo?.starsCount ?? 0 > 0 else { return }
+        readmeStarHistoryTask?.cancel()
+        readmeStarHistoryTask = Task {
+            await preloadReadmeStarHistoryIfNeeded()
+        }
+    }
+
+    private func cancelReadmeStarHistory() {
+        readmeStarHistoryTask?.cancel()
+        readmeStarHistoryTask = nil
+        readmeStarHistoryViewModel?.cancel()
     }
 
     @ViewBuilder
@@ -863,10 +967,14 @@ struct ReadmeStateView: View {
         sourceSnapshot: ReadmeTranslationSourceSnapshot
     ) -> some View {
         readmeStatusFooter {
-            Image(systemName: "clock")
-                .font(.caption2)
-            Text(String(format: String.l10n("readme.cachedAtFormat"), RelativeTimeText.pastEvent(cachedAt, locale: locale)))
-                .font(.caption2)
+            // 时钟和图文必须先合成一组。外层 footer 的 12pt 是给左侧状态与右侧按钮用的；
+            // 若把 Image / Text 直接作为 HStack 子项，图标和「缓存于」会被拉开到 12pt。
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                    .font(.caption2)
+                Text(String(format: String.l10n("readme.cachedAtFormat"), RelativeTimeText.pastEvent(cachedAt, locale: locale)))
+                    .font(.caption2)
+            }
             Spacer()
             if let control = translationControl {
                 ReadmeTranslationFooterButton(
@@ -899,6 +1007,16 @@ struct ReadmeStateView: View {
         .padding(.vertical, 6)
         .foregroundStyle(.secondary)
         .background(.bar)
+        // 状态栏高度受系统字体和右侧按钮组合影响。只测量、不参与布局，避免 AI
+        // child window 继续用固定间距而覆盖状态栏；没有 footer 的状态分支不会上报值。
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: RepoDetailAIOverlayBottomInsetPreference.self,
+                    value: proxy.size.height
+                )
+            }
+        }
     }
 
     private var readmeRefreshButton: some View {
@@ -935,8 +1053,8 @@ struct ReadmeTranslationControl {
 ///   已显示译文时点击切回原文，符合 dong4j Coding Style 里"最少操作即可完成任务"。
 /// - 旁边的下拉菜单负责"选择目标语言"+"重新翻译"+"清除当前译文"，避免在 footer 里
 ///   堆出多个按钮抢空间。
-/// - 翻译进行中切换为 ProgressView + 禁用，复用与同列其它按钮（SyncIconButton）一致的视觉。
-/// - 错误不再内联到 footer，改为通过 toast 浮动提示（手动关闭 + AI 配置类错误可跳转设置）。
+/// - 翻译进行中图标切换为思考球（与 AI 标签整理行同款）。
+/// - 错误不再内联到 footer，改为通过 toast 浮动提示（5 秒自动关闭 + AI 配置类错误可跳转设置）。
 struct ReadmeTranslationFooterButton: View {
 
     let control: ReadmeTranslationControl
@@ -951,7 +1069,7 @@ struct ReadmeTranslationFooterButton: View {
     ///     hover 切换符合用户对"翻译中按钮 = 当前能做的事就是取消"的直觉；
     ///   - hover 时只切**图标**，文字"翻译"保持不变：按钮宽度不抖动，视觉聚焦在 icon；
     ///   - 翻译中按钮**不再 disabled**：让 click 能落地触发 `cancelTranslation()`；
-    ///   - 默认 ProgressView 转圈：脱离 hover 时仍清晰看到"在跑"。
+    ///   - 默认思考球动画：脱离 hover 时仍清晰看到"在跑"。
     @State private var isHoveringWhileTranslating: Bool = false
 
     /// 2026-06-15:hover 切图标的 0.15s 淡入在「关闭应用内动画」时跳过。
@@ -991,7 +1109,8 @@ struct ReadmeTranslationFooterButton: View {
                         sourceHtml: sourceHtml,
                         sourceSegments: selectedSourceSegments,
                         targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                        mode: settings.readmeTranslationMode
+                        mode: settings.readmeTranslationMode,
+                        engine: settings.readmeTranslationEngine
                     )
                 }
             } label: {
@@ -1029,14 +1148,14 @@ struct ReadmeTranslationFooterButton: View {
     }
 
     /// 按钮图标：3 态切换。
-    ///   - 翻译中 + 未 hover → 转圈 ProgressView（明确"在跑"）
+    ///   - 翻译中 + 未 hover → 思考球（与 AI 标签整理行同款，明确"AI 在跑"）
     ///   - 翻译中 + hover → 红色 `stop.fill`（暗示"点击可停"）
     ///   - 非翻译态 → 原 `character.bubble[.fill]` 取决于是否已显示译文
     ///
     /// 翻译中两态用 ZStack + opacity 切换而非 if-else，是因为：
-    ///   - if-else 切换会导致 SwiftUI 重新初始化 ProgressView，转圈动画从 0 重启，
+    ///   - if-else 切换会导致 SwiftUI 重新初始化思考球，TimelineView 动画从 0 重启，
     ///     用户连续 hover / leave 时会看到"动画反复重置"的不连续感；
-    ///   - ZStack + opacity 保留 ProgressView 实例 + 让动画连贯跑下去，hover 切走
+    ///   - ZStack + opacity 保留思考球实例 + 让动画连贯跑下去，hover 切走
     ///     时只是隐藏不重启。
     /// 加 `.animation(.easeInOut(duration: 0.15), value: isHoveringWhileTranslating)`
     /// 让 hover 切换有淡入淡出，避免硬切。
@@ -1044,10 +1163,18 @@ struct ReadmeTranslationFooterButton: View {
     private var iconView: some View {
         if isTranslatingCurrentRepo {
             ZStack {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 12, height: 12)
-                    .opacity(isHoveringWhileTranslating ? 0 : 1)
+                // 翻译中用 AI 标签整理行（BatchAITagReviewRow.statusIcon）同款思考球
+                // 替代系统菊花，统一「AI 在跑」的视觉语言；displaySize 12 适配本按钮
+                // 的 12×12 图标槽，paused 透传 reduceMotion 做「关闭应用内动画」兜底。
+                ThinkingOrb(
+                    state: .working,
+                    size: .px20,
+                    theme: .auto,
+                    paused: reduceMotion,
+                    displaySize: 12
+                )
+                .accessibilityHidden(true)
+                .opacity(isHoveringWhileTranslating ? 0 : 1)
                 Image(systemName: "stop.fill")
                     .font(.caption2)
                     .foregroundStyle(.red)
@@ -1078,13 +1205,36 @@ struct ReadmeTranslationFooterButton: View {
             return "readme.translate.tooltip.stop"
         }
         if isShowingTranslation { return "readme.translate.tooltip.showOriginal" }
-        return "readme.translate.tooltip.translate"
+        // 引擎可变后文案不再写死 AI，统一指向「所选翻译服务」。
+        return "readme.translate.tooltip.translateService"
     }
 
-    /// 右侧 chevron 下拉菜单：切换目标语言、重新翻译。
+    /// 右侧 chevron 下拉菜单：引擎 / 方式 / 语言 / 重新翻译。
     /// 不放更多按钮：footer 已足够小，再加按钮会和右边的刷新图标抢空间。
+    @State private var availableEngines: [ReadmeTranslationEngine] = []
+
     private var languageMenu: some View {
         Menu {
+            if !availableEngines.isEmpty {
+                Picker(selection: Binding(
+                    get: { settings.readmeTranslationEngine },
+                    set: { settings.readmeTranslationEngine = $0 }
+                )) {
+                    ForEach(availableEngines) { engine in
+                        Label(
+                            LocalizedStringKey(engine.displayNameKey),
+                            systemImage: engine.systemImage
+                        )
+                        .tag(engine)
+                    }
+                } label: {
+                    Text("readme.translate.menu.engine")
+                }
+                .pickerStyle(.inline)
+
+                Divider()
+            }
+
             Picker(selection: Binding(
                 get: { settings.readmeTranslationMode },
                 set: { settings.readmeTranslationMode = $0 }
@@ -1123,7 +1273,8 @@ struct ReadmeTranslationFooterButton: View {
                     sourceHtml: sourceHtml,
                     sourceSegments: selectedSourceSegments,
                     targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                    mode: settings.readmeTranslationMode
+                    mode: settings.readmeTranslationMode,
+                    engine: settings.readmeTranslationEngine
                 )
             } label: {
                 Label("readme.translate.menu.regenerate", systemImage: "arrow.clockwise")
@@ -1150,6 +1301,26 @@ struct ReadmeTranslationFooterButton: View {
         .frame(width: 18)
         .focusEffectDisabled()
         .help("readme.translate.menu.tooltip")
+        .task(id: settings.effectiveReadmeTranslationLanguage) {
+            await refreshAvailableEngines()
+        }
+    }
+
+    @MainActor
+    private func refreshAvailableEngines() async {
+        let available = await ReadmeTranslationEngineAvailability.availableEngines(
+            targetLanguage: settings.effectiveReadmeTranslationLanguage,
+            settings: settings,
+            keychain: KeychainManager.shared
+        )
+        availableEngines = available
+        let resolved = ReadmeTranslationEngineAvailability.resolvedDefault(
+            current: settings.readmeTranslationEngine,
+            available: available
+        )
+        if resolved != settings.readmeTranslationEngine, !available.isEmpty {
+            settings.readmeTranslationEngine = resolved
+        }
     }
 }
 

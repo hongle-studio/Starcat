@@ -229,7 +229,7 @@ private struct FlowLayout: Layout {
     TagWallView(
         tags: [
             Tag(id: "1", name: "Swift", color: "#FF453A", icon: "swift", sortOrder: 0, isPreset: false, parentId: nil, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z"),
-            Tag(id: "2", name: "JavaScript", color: "#FFD60A", icon: nil, sortOrder: 1, isPreset: false, parentId: nil, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z"),
+            Tag(id: "2", name: "JavaScript", color: "#C9A406", icon: nil, sortOrder: 1, isPreset: false, parentId: nil, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z"),
             Tag(id: "3", name: "Python", color: "#30D158", icon: nil, sortOrder: 2, isPreset: false, parentId: nil, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z"),
             Tag(id: "4", name: "Rust", color: "#0A84FF", icon: "hammer", sortOrder: 3, isPreset: false, parentId: nil, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z"),
             Tag(id: "5", name: "Go", color: "#66D4CF", icon: nil, sortOrder: 4, isPreset: false, parentId: nil, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z"),

@@ -6,7 +6,7 @@
 >
 > 操作规范：[`docs/5-规范/Git-分支与Worktree规范.md`](docs/5-规范/Git-分支与Worktree规范.md)
 >
-> 最后核对：2026-09-09
+> 最后核对：2026-09-15
 
 ## 登记说明
 
@@ -32,9 +32,9 @@
 
 | 分支 | 位置 | 用途 | 当前状态 | 下一步 |
 |---|---|---|---|---|
-| `dev` | 本地 + `origin/dev` | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；1.6.1 发布基线与 `main` 已同步（`abcaf63f`），Direct、官网、appcast 与 Homebrew 已于 2026-09-09 发布。 | 继续承载 1.6.1 后续维护与新功能开发；App Store 版本发布由 dong4j 完成。 |
+| `dev` | 本地 + `origin/dev`；仓库根目录 worktree | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；1.7.0 发布基线与 `main` 已同步（`24636b6b`），Direct、官网、appcast 与 Homebrew 已于 2026-09-16 发布。 | 继续承载 1.7.0 后续维护与新功能开发；App Store 版本发布由 dong4j 完成。 |
 | `codex/performance-optimization` | 本地；无独立 worktree | Starcat macOS App 的 UI、列表分页、数据加载与缓存性能专项优化。 | `已合并`；多轮优化与交互修复已于 2026-09-06 合入 `dev`，独有提交为 0，原 worktree 已安全删除。 | 暂时保留本地分支；如需删除分支，等待 dong4j 单独授权。 |
-| `main` | 本地 + `origin/main`；仓库根目录 worktree | 远端默认稳定主线和发布基线。 | `长期保留`；1.6.1 已于 2026-09-09 推送 `main` 与 `v1.6.1`，Direct 公证、官网、appcast 和 Homebrew 已完成，App Store archive `1.6.1 (3171)` 已生成待上传。 | 保持 1.6.1 发布基线；App Store 版本发布由 dong4j 完成，后续版本继续从已验收的 `dev` 快进。 |
+| `main` | 本地 + `origin/main`；仓库根目录 worktree | 远端默认稳定主线和发布基线。 | `长期保留`；1.7.0 已于 2026-09-15 推送 `main` 与 `v1.7.0`；Direct 公证、官网、appcast 与 Homebrew 已于 2026-09-16 完成，GitHub Release 已发布，App Store 已上传待处理。 | 保持 1.7.0 发布基线；App Store 版本发布由 dong4j 完成，后续版本继续从已验收的 `dev` 快进。 |
 
 ## 推荐数据链路跨仓分支
 
@@ -44,6 +44,9 @@
 
 | 分支 | 处理结论 | 清理依据 |
 |---|---|---|
+| `feature/anthropic-cc-switch-import` | 已删除 | 2026-09-14 dong4j 确认删除。已以 merge commit（`1341600a`）合入 `dev`，删除前 `merge-base --is-ancestor` 成立、独有提交 0、`git cherry` 为空、diff 为空；`../Starcat-anthropic-cc-switch` worktree 干净后 `git worktree remove`，再 `git branch -d`（HEAD `2ab786f2`）。从未存在远端分支。 |
+| `feature/settings-ui-unify` | 已删除 | 2026-09-14 dong4j 确认删除。已以 merge commit（`a7a4c5c7`）合入 `dev`，删除前 `merge-base --is-ancestor` 成立、独有提交 0、`git cherry` 为空、`../Starcat-settings-ui-unify` worktree 干净后 `git worktree remove`，再 `git branch -d`（HEAD `bb013ab1`）。从未存在远端分支。 |
+| `feature/local-ai` | 已删除 | 2026-09-13 dong4j 确认删除。2026-09-12 已以 merge commit（`84b7e5c5`）合入 `dev`，删除前 `merge-base --is-ancestor` 成立、独有提交 0、`git cherry` 为空、diff 为空；`../Starcat-local-ai` worktree 干净后 `git worktree remove`，再 `git branch -d`（HEAD `d78b6fcb`）。从未存在远端分支。 |
 | `codex/collection-pipeline` | 已删除 | 2026-08-29 dong4j 确认删除。已是 local `dev` 的 ancestor，独有提交为 0，diff 为空；`../Starcat-collection-pipeline` worktree 干净后 `git worktree remove`，再 `git branch -d`。从未存在远端分支。配套 `starcat-collection-api` 同名本地分支一并删除。 |
 | `codex/awesome-discovery` | 已删除 | 2026-08-29 dong4j 确认删除。Starcat / `starcat-discovery-api` / `starcat-site` 三仓本地分支均已是各自 `dev` 的 ancestor，独有提交为 0，diff 为空；无 worktree。从未存在远端分支。 |
 | `codex/collection-api-source` | 已删除 | 2026-08-29 从 `starcat-recsys-trainer` 删除本地分支；已合入该仓 `dev`，从未存在远端分支。 |

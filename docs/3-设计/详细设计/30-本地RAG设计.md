@@ -1590,13 +1590,20 @@ UI 展示:
 
 ### 8.9 Reranker 边界
 
-Reranker 是可选的远程排序阶段，默认关闭；当前支持 Hugging Face TEI `/rerank` 与 Cohere v2
-兼容协议。Retriever 先完成 keyword/vector RRF，再把配置上限内的候选发给 reranker；请求失败时
-保留 fusion 原顺序，不能让可选排序阻断本地问答。
+Reranker 是可选的排序阶段，默认关闭；当前支持 Hugging Face TEI `/rerank`、Cohere v2
+兼容协议，以及内置本地 MLX（`local_mlx`，2026-09-12 新增）。Retriever 先完成 keyword/vector
+RRF，再把配置上限内的候选发给 reranker；请求失败时保留 fusion 原顺序，不能让可选排序阻断
+本地问答。
 
-两套 Provider 共用不可变候选快照、正文上限、Bearer 认证、JSON HTTP 错误语义和按请求 index
-回填排序，确保返回下标始终指向实际发送的候选。TEI 的 `texts` / 顶层 `score` 与 Cohere 的
-`model/documents/top_n` / `relevance_score` DTO 保持独立，不用条件分支伪装成统一协议。
+两套远程 Provider 共用不可变候选快照、正文上限、Bearer 认证、JSON HTTP 错误语义和按请求
+index 回填排序，确保返回下标始终指向实际发送的候选。TEI 的 `texts` / 顶层 `score` 与 Cohere
+的 `model/documents/top_n` / `relevance_score` DTO 保持独立，不用条件分支伪装成统一协议。
+
+本地 MLX Provider（`LocalMLXRAGReranker`）复用相同的候选截断与文档拼装口径，加载
+`mlx-community/Qwen3-Reranker-0.6B-mxfp8` 判别式权重（`RerankerModelFactory`），无端点 /
+无 Key / 不发网络请求；模型未安装时抛「模型未安装」错误上抛检索管线。与历史决策
+「不做本地 reranker 模型」的关系：该决策针对的是随分发的内置模型，本地 AI 方案改为
+用户按需下载后解锁，模型不打进 bundle。
 
 ### 8.10 可选自托管后端
 

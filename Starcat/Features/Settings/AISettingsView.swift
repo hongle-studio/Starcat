@@ -21,9 +21,23 @@
 import AppKit
 import OSLog
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// AI 设置 Tab 页面。
+/// 主设置中的 AI 分类页。
+///
+/// 四个页面只重新组织既有配置，不复制 `AppSettings` 状态：模型是所有 AI 能力的
+/// 上游依赖，自动化消费模型配置，索引与上下文承载本地数据准备，外部搜索独立配置。
+enum AISettingsPage: Hashable {
+    case models
+    case automation
+    case indexAndContext
+    case externalSearch
+}
+
+/// AI 设置分类页面。
 struct AISettingsTab: View {
+
+    let page: AISettingsPage
 
     @Environment(AppSettings.self) private var settings
     /// HOM-126：「立刻手动触发一次」按钮直接调度。@Environment 注入自 StarcatApp。
@@ -31,8 +45,7 @@ struct AISettingsTab: View {
     /// 2026-06-12 向量索引改进：AI 索引 Section 的"开始 / 暂停 / 全量重建"按钮需要
     /// 直接调度 `SemanticIndexBuilder`。从 AppDependencies 拿。
     @Environment(AppDependencies.self) private var dependencies
-    /// 2026-06-15:disclosureLabel / 草稿 Provider 收/放 / 已发现模型展开等
-    /// 多处 0.18-0.2s 动画在「关闭应用内动画」时跳过。
+    /// disclosureLabel 与草稿 Provider 收放等动画在「关闭应用内动画」时跳过。
     @Environment(\.starcatReduceMotion) private var reduceMotion
     /// 2026-06-16:`RelativeDateTimeFormatter` 默认走系统 locale,需显式注入跟随
     /// LocaleStore 切换。Settings scene 已挂 `appLocaleEnvironment()`。
@@ -46,16 +59,14 @@ struct AISettingsTab: View {
     /// 用户每次进入 AI 设置都会被强行切回 DeepSeek（第一个），第二行 Provider
     /// picker 也跟着回到 DeepSeek，违反"进页面时显示当前选中的已配好服务商"诉求。
     ///
-    /// 改成 `@AppStorage` 跨 Settings 窗口和 app 启动都持久化，空串当 nil 哨兵
-    /// （`@AppStorage` 不直接支持 `String?`）。`ensureSelection()` 仍保留兜底逻辑：
+    /// 选择现在由 AppSettings 共用并持久化，沿用原 key 与空串 nil 哨兵，
+    /// 让 toolbar 同步知道设置页当前查看的服务商。`ensureSelection()` 保留兜底逻辑：
     /// 持久化的 ID 在当前已验证列表里找不到（profile 被删 / 升级后改了 ID）时
     /// 降级到 `verifiedProfiles.first?.id`，避免"指向幽灵 profile"。
-    @AppStorage("settings.ai.lastSelectedProfileID") private var lastSelectedProfileIDStorage: String = ""
-
     /// 当前选中的服务商 profile ID。空串持久化值视为 nil。
     /// 真正的写入入口走 `setSelectedProfileID(_:)`，避免散落的赋值绕过空串哨兵。
     private var selectedProfileID: String? {
-        lastSelectedProfileIDStorage.isEmpty ? nil : lastSelectedProfileIDStorage
+        settings.aiSettingsSelectedProfileID.isEmpty ? nil : settings.aiSettingsSelectedProfileID
     }
 
     @State private var draftProfile: AIProviderProfile?
@@ -64,8 +75,6 @@ struct AISettingsTab: View {
     @State private var isTestingProfileID: String?
     @State private var keyError: String?
     @State private var promptTask: AIModelTask = .summary
-    /// 翻译 Prompt 的二级 Tab。只切换 Prompt，不复制 Provider / Model / 参数配置。
-    @State private var translationPromptMode: ReadmeTranslationMode = .segmented
     /// Prompt 区「可用占位符」popover；切换任务时关闭，避免旧任务说明残留。
     @State private var isPromptPlaceholderPopoverPresented = false
 
@@ -84,53 +93,17 @@ struct AISettingsTab: View {
     /// summary，但调参数时可能在调 tags，强同步会反直觉）。
     @State private var taskModelTask: AIModelTask = .summary
 
-    // HOM-68 follow-up v2 (2026-06-05 22:30 dong4j 反馈)：
-    // Prompt 不是首次配置必填项，默认收起来减小视觉噪音，需要时再展开。
-    // 用 SceneStorage 而不是 @State，让用户的展开偏好跨设置页打开持久化，
-    // 但保持"应用首次启动默认折叠"语义。
-    //
     // HOM-68 follow-up v9：原"模型参数"区已迁到"已发现模型"每行的齿轮 popover
     // （模型粒度，不再按任务），不再需要 isParametersExpanded SceneStorage。
-    @SceneStorage("settings.ai.prompt.expanded") private var isPromptExpanded: Bool = false
-
-    // HOM-68 follow-up v7：把"已发现模型" / "默认设置" 也变成可折叠，
-    // 与"模型参数" / "Prompt" 折叠风格统一。默认折叠以减小首次进入设置页的
-    // 视觉噪音。"已发现模型" 在用户点击"测试并获取模型"且成功获取到 ≥1 个
-    // 模型时自动展开（见 `testAndFetchModels`），这样新用户走"配置 → 测试 →
-    // 选模型"完整路径时不需要手动展开折叠组。
-    @SceneStorage("settings.ai.discoveredModels.expanded") private var isDiscoveredModelsExpanded: Bool = false
-    @SceneStorage("settings.ai.taskModels.expanded") private var isTaskModelsExpanded: Bool = false
     private static let taskModelsSettingsAnchor = "settings.ai.taskModels"
-    /// 「自动整理」分组的展开偏好。默认折叠——与同 Tab 内其他 DisclosureGroup
-    /// （已发现模型 / 模型配置 / Prompt / AI 索引 / AI 代码上下文）的默认折叠风格统一，
-    /// 避免设置页一进来一堆分组同时展开造成视觉拥挤；用户主动展开后由 SceneStorage 持久化。
-    @SceneStorage("settings.ai.autoTidy.expanded") private var isAutoTidyExpanded: Bool = false
-    /// 「仓库分组」与「标签分类」保持同级、同款折叠交互；默认折叠，避免独立配置区
-    /// 始终展开破坏设置页的信息层级，用户主动展开后由 SceneStorage 记住偏好。
-    @SceneStorage("settings.ai.githubListGrouping.expanded") private var isGitHubListGroupingExpanded: Bool = false
-
-    /// 2026-06-12 向量索引改进："AI 索引"分组默认收起，避免设置页一进来 6 个分组太挤；
-    /// 用户主动点开后偏好持久化。
-    @SceneStorage("settings.ai.aiIndex.expanded") private var isAIIndexExpanded: Bool = false
+    private static let aiIndexSettingsAnchor = "settings.ai.index"
 
     /// "AI 索引"折叠区显示 / 隐藏具体阈值数字；预设 == `.custom` 时强制展开（写 didSet 上不易，
     /// 这里通过 computed `effectiveAdvancedExpanded` 处理）。
     @SceneStorage("settings.ai.aiIndex.advancedExpanded") private var isAIIndexAdvancedExpanded: Bool = false
 
-    /// 知识库 RAG 自托管检索后端默认折叠；SQLite 默认路径无需任何配置。
-    @SceneStorage("settings.ai.ragBackends.expanded") private var isRAGBackendsExpanded: Bool = false
-    @State private var meilisearchAPIKey: String = ""
-    @State private var qdrantAPIKey: String = ""
-    @State private var testingRAGBackends: Set<String> = []
-    /// 连接结果按后端分行：文案左对齐，按钮右对齐，中间拉开，不贴在按钮旁边。
-    @State private var meilisearchStatus: RAGBackendTestStatus?
-    @State private var qdrantStatus: RAGBackendTestStatus?
-
-    /// 2026-06-13 RepoContextPacker 客户端接入（§0.4 Y3）：「AI 代码上下文」分组的展开偏好。
-    /// 默认收起——与 promptSection / aiIndexSection 一致；避免设置页首次打开就被新 section 撑高。
-    /// 用户主动点开后偏好持久化（SceneStorage 跨设置窗口打开周期保留）。
-    @SceneStorage("settings.ai.repoContext.expanded") private var isRepoContextExpanded: Bool = false
     private static let repoContextSettingsAnchor = "settings.ai.repoContext"
+    private static let externalSearchSettingsAnchor = "settings.ai.externalSearch"
 
     /// HOM-68 v3 (2026-06-15)：AI 代码上下文产物管理面板从存储 Tab 搬过来。
     /// `@Observable` 单例直接订阅；视图层调 reveal / delete 等方法时由 storage 内部
@@ -144,12 +117,28 @@ struct AISettingsTab: View {
     @State private var pendingRebuildAllConfirm: Bool = false
     /// 免费用户点击 AI 设置页升级入口时展示统一 Pro 付费墙。
     @State private var paywallContext: ProPaywallContext?
+    /// CC Switch 导入预览。确认前不写 Keychain。
+    @State private var ccSwitchImportSession: CCSwitchImportSession?
+    @State private var ccSwitchImportError: String?
+
+    init(page: AISettingsPage = .models) {
+        self.page = page
+    }
+
+    /// Intel 免费用户仍可配置原本位于“集成”的联网搜索；仅模型、自动化、语义
+    /// 索引和仓库上下文继续遵守既有 Pro / Apple Silicon Local AI 门控。
+    private var hasAIConfigurationAccess: Bool {
+        dependencies.entitlementGate.isProUser || LocalAIHardwareSupport.isLocalAIAvailable
+    }
 
     @ViewBuilder
     var body: some View {
         // AI 服务是 Direct / StoreKit 共享的 Pro 能力，必须读取聚合后的业务门控；
         // 直接读取 SubscriptionManager 会把 Direct License 用户误判为未开通。
-        if dependencies.entitlementGate.isProUser {
+        // 本地 AI 免费（dong4j 2026-09-12）：Apple Silicon 上免费用户也必须能进入
+        // 本页配置并下载本地模型；远程 provider 的消费仍由 EntitlementGate 在调用点拦截，
+        // 设置页只是配置面。Intel Mac 维持整页锁定。
+        if page == .externalSearch || hasAIConfigurationAccess {
             aiConfigurationForm
         } else {
             lockedAISettings
@@ -164,27 +153,33 @@ struct AISettingsTab: View {
         // temperature 只对'用 X 模型的摘要任务'生效，其它任务用 X 模型还是默认值"
         // 的反直觉行为。改成每行模型一个齿轮按钮 + popover，参数与"模型"绑定。
         Form {
-            providerSection
-            enabledModelsSection
-            taskModelsSection
-                .id(Self.taskModelsSettingsAnchor)
-            promptSection
-            // HOM-126 follow-up (dong4j 反馈 2026-06-07)：
-            // 自动整理分类放到 Prompt 之后——按"配置链路从上到下"顺序排：
-            // Provider → 模型 → 模型配置 → Prompt → 自动化（消费上面所有配置）→ 隐私说明。
-            autoTidySection
-            // 仓库分组不是标签分类的子能力：独立顶级 Section 承载全局授权与专属阈值。
-            githubListGroupingSection
-            // 2026-06-12 向量索引改进：AI 索引（向量化）配置，放在自动整理之后
-            // 因为索引依赖摘要 / README 等上游配置就绪。
-            aiIndexSection
-            ragBackendSection
-            // 2026-06-13 RepoContextPacker 客户端接入（§0.4 Y3）：AI 代码上下文配置。
-            // 放在 aiIndexSection 与 privacySection 之间——与「索引」性质相同（消费上游配置的
-            // 高级 AI 能力），且紧贴 privacySection 形成「先看功能再看隐私」的阅读节奏。
-            aiRepoContextSection
-                .id(Self.repoContextSettingsAnchor)
-            privacySection
+            switch page {
+            case .models:
+                providerSection
+                // 本地模型只在选中 Starcat Local AI 时出现，避免远程供应商页面
+                // 同时展示无关下载项；模型与任务绑定按依赖顺序从上到下排列。
+                if LocalAIHardwareSupport.isLocalAIAvailable, activeProfile?.provider == .localAI {
+                    LocalAIModelsSection(settings: dependencies.settings)
+                }
+                enabledModelsSection
+                taskModelsSection
+                    .id(Self.taskModelsSettingsAnchor)
+                // Prompt 有完整默认值，不属于首次配置必填项，继续放在模型页末尾。
+                promptSection
+            case .automation:
+                // 两项都消费上游模型配置，但彼此不是父子能力，保留独立顶级 Section。
+                autoTidySection
+                githubListGroupingSection
+            case .indexAndContext:
+                aiIndexSection
+                    .id(Self.aiIndexSettingsAnchor)
+                aiRepoContextSection
+                    .id(Self.repoContextSettingsAnchor)
+            case .externalSearch:
+                // 联网搜索原本对所有用户可配置，因此独立页面不能被 AI Pro 门控隐藏。
+                ExternalSearchSettingsSection()
+                    .id(Self.externalSearchSettingsAnchor)
+            }
         }
         .alert(
             "settings.aiIndex.rebuildAll.confirmTitle",
@@ -197,39 +192,74 @@ struct AISettingsTab: View {
         } message: {
             Text("settings.aiIndex.rebuildAll.confirmMessage")
         }
+        .alert(
+            "settings.ai.provider.importCCSwitch",
+            isPresented: Binding(
+                get: { ccSwitchImportError != nil },
+                set: { if !$0 { ccSwitchImportError = nil } }
+            )
+        ) {
+            Button("general.cancel", role: .cancel) {}
+        } message: {
+            Text(ccSwitchImportError ?? "")
+        }
+        .sheet(item: $ccSwitchImportSession) { session in
+            CCSwitchImportPreviewSheet(
+                preview: session.preview,
+                onImport: { candidates, progress in
+                    await importCCSwitchCandidates(candidates, progress: progress)
+                },
+                onSelectProfile: { profileID in
+                    setSelectedProfileID(profileID)
+                }
+            )
+        }
         .formStyle(.grouped)
         // Placeholders popover 锚在 Prompt 区按钮上：Form 一滚就关，避免锚点滚走后浮层悬空。
         .onScrollPhaseChange { _, newPhase in
             guard newPhase != .idle else { return }
             isPromptPlaceholderPopoverPresented = false
         }
-        .task {
+        .task(id: page) {
+            guard page == .models else { return }
             ensureSelection()
             loadAPIKeys()
-            loadRAGBackendKeys()
         }
         .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIRepoContextSection)) { _ in
-            isRepoContextExpanded = true
+            guard page == .indexAndContext else { return }
             // Settings 首次创建时 Form 的滚动容器要到下一轮 RunLoop 才完成布局。
             DispatchQueue.main.async {
                 proxy.scrollTo(Self.repoContextSettingsAnchor, anchor: .top)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIIndexSection)) { _ in
+            guard page == .indexAndContext else { return }
+            DispatchQueue.main.async {
+                proxy.scrollTo(Self.aiIndexSettingsAnchor, anchor: .top)
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIEmbeddingSection)) { _ in
-            // 入口语义是“配置向量模型”：展开模型配置并直接切换到向量化任务，
-            // 避免用户还要在 AI 设置里二次寻找目标。
-            isTaskModelsExpanded = true
+            guard page == .models else { return }
+            // 入口语义是“配置向量模型”：直接切换到向量化任务并定位常驻分组。
             taskModelTask = .embedding
             DispatchQueue.main.async {
                 proxy.scrollTo(Self.taskModelsSettingsAnchor, anchor: .top)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIChatModelSection)) { _ in
-            // 从工作台缺少模型提示进入时，直接展开并选中“对话”，避免用户二次寻找。
-            isTaskModelsExpanded = true
+            guard page == .models else { return }
+            // 从工作台缺少模型提示进入时，直接选中“对话”并定位常驻分组。
             taskModelTask = .chat
             DispatchQueue.main.async {
                 proxy.scrollTo(Self.taskModelsSettingsAnchor, anchor: .top)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToSettingsTab)) { note in
+            guard page == .externalSearch,
+                  let target = note.object as? String,
+                  target == "integrations.externalSearch" || target == "ai.externalSearch" else { return }
+            DispatchQueue.main.async {
+                proxy.scrollTo(Self.externalSearchSettingsAnchor, anchor: .top)
             }
         }
         // HOM-AIPROVIDERS-DRAFT-DISCARD-2026-06-06 (dong4j 反馈):
@@ -249,11 +279,7 @@ struct AISettingsTab: View {
             // 成功路径里已被晋升为 verified profile 并把 draftProfile 置 nil,
             // 这里看到的 draftProfile != nil 全是"未完成"草稿。
             AppLog.ai.debug("[AISettings] SettingsWindowCloseListener.onClose fired draftID=\(self.draftProfile?.id ?? "nil", privacy: .public)")
-            if draftProfile != nil {
-                draftProfile = nil
-                draftAPIKey = ""
-                keyError = nil
-            }
+            discardDraft()
         })
         // HOM-AIPROVIDERS-DELETE-CONFIRM-2026-06-12 (dong4j 反馈)：
         // 删除服务商二次确认。用 `presenting:` 把 profile 注入到 alert 闭包，
@@ -278,7 +304,8 @@ struct AISettingsTab: View {
         }
         // HOM-68 v3 (2026-06-15)：AI 代码上下文产物管理从存储 Tab 搬过来后,
         // 进入 AI Tab 时强制重扫描产物目录,让用户刚生成的产物立即可见。
-        .task {
+        .task(id: page) {
+            guard page == .indexAndContext else { return }
             aiContextStorage.reload()
         }
         // AI 代码上下文 storage 操作失败 alert (与 IntegrationSettingsView 同款模式)。
@@ -378,7 +405,7 @@ struct AISettingsTab: View {
         // 被删的恰好是当前 selected 时，回退到剩余 verified 中的第一个；
         // 否则保持当前 selection 不动（删的是非当前项时，用户视线不应被打断）。
         if selectedProfileID == id {
-            setSelectedProfileID(verifiedProfiles.first?.id)
+            setSelectedProfileID(pickerProfiles.first?.id)
         }
         repairTasksAfterProfileChange()
         pendingDeleteProfileID = nil
@@ -388,26 +415,24 @@ struct AISettingsTab: View {
 
     private var providerSection: some View {
         Section {
-            // HOM-68 follow-up v2 (dong4j 反馈 #1)：
-            // "新增服务商" / "删除当前" 按钮移到 picker 同一行的右侧，
-            // 紧凑且符合设置面板"次要操作贴近主控件"的常见 macOS 布局。
-            HStack {
-                // HOM-AIPROVIDERS-2026-06-06：服务商配置 picker 在每个 profile 行
-                // 前面挂当前 provider 的 logo，让用户在多 profile（"OpenAI 摘要 +
-                // DeepSeek 翻译 + Ollama embedding"）场景下一眼分辨。
-                // SwiftUI Picker 的 menu style 会把 Label 内的 Image 一起渲染到下拉
-                // 菜单和已选 caption 区，无需为下拉 / 当前选中分别画。
-                if verifiedProfiles.isEmpty {
-                    // HOM-AIPROVIDERS-HIDE-PROVIDER-2026-06-12 (dong4j 反馈)：
-                    // zero state 文案补充行动指引——之前只说「暂无已验证服务商」是
-                    // 状态描述，用户不知道下一步要做什么。改成「...点右侧 + 新增」
-                    // 让新用户直接看到入口。
+            // 与下方「显示名称」同一套：左 label 列 + 垂直居中。
+            // 不用 LabeledContent——Form 会按首行基线排 label，右侧 28pt 按钮一高，
+            // 标题就会看起来偏上。下拉靠右，贴着导入 / + / 删除。
+            HStack(alignment: .center, spacing: ProviderFieldLayout.rowSpacing) {
+                Text("settings.ai.provider.pickerLabel")
+                    .font(.body)
+                    .frame(width: ProviderFieldLayout.labelWidth, alignment: .leading)
+                    .lineLimit(1)
+
+                if pickerProfiles.isEmpty {
                     Text("settings.ai.provider.empty")
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 } else {
+                    Spacer(minLength: 8)
                     Picker("settings.ai.provider.pickerLabel", selection: selectedProfileBinding) {
-                        ForEach(verifiedProfiles) { profile in
+                        ForEach(pickerProfiles) { profile in
                             Label {
                                 Text(profile.displayName)
                             } icon: {
@@ -417,43 +442,47 @@ struct AISettingsTab: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
                 }
 
-                Spacer(minLength: 12)
+                ImportIconButton(help: Text("settings.ai.provider.importCCSwitch.help")) {
+                    beginCCSwitchImport()
+                }
+                .disabled(draftProfile != nil || isTestingProfileID != nil)
 
-                Button {
-                    // HOM-AIPROVIDERS-HIDE-PROVIDER-2026-06-12：包 withAnimation 让下方
-                    // Provider 行 + 输入区伴随 transition 滑入，而不是瞬切。
+                AddIconButton(help: Text("settings.ai.provider.addHelp")) {
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
                         beginDraft(provider: .openAICompatible)
                     }
-                } label: {
-                    Label("settings.ai.provider.add", systemImage: "plus")
-                        .labelStyle(.iconOnly)
                 }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .font(.system(size: 15, weight: .medium))
-                .frame(width: 28, height: 28)
-                .help("settings.ai.provider.addHelp")
-                .accessibilityLabel(Text("settings.ai.provider.addHelp"))
                 .disabled(draftProfile != nil)
 
-                Button(role: .destructive) {
-                    // HOM-AIPROVIDERS-DELETE-CONFIRM-2026-06-12：先弹二次确认 dialog，
-                    // dialog 内点「删除」才真正执行 `deleteProfile(id:)`。
-                    pendingDeleteProfileID = selectedProfileID
-                } label: {
-                    Label("settings.ai.provider.delete", systemImage: "trash")
-                        .labelStyle(.iconOnly)
+                if draftProfile != nil {
+                    CancelIconButton(
+                        help: Text(
+                            isAddingNewProviderDraft
+                                ? "settings.ai.provider.discardDraft.addHelp"
+                                : "settings.ai.provider.discardDraft.editHelp"
+                        ),
+                        font: SettingsIconMetrics.standardGlyph,
+                        frameSize: SettingsIconMetrics.actionFrameSize
+                    ) {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                            discardDraft()
+                        }
+                    }
+                    .disabled(isTestingProfileID != nil)
+                } else {
+                    DestructiveIconButton(
+                        help: Text("settings.ai.provider.deleteHelp"),
+                        font: SettingsIconMetrics.standardGlyph,
+                        frameSize: SettingsIconMetrics.actionFrameSize
+                    ) {
+                        pendingDeleteProfileID = selectedProfileID
+                    }
+                    .disabled(selectedProfile == nil || selectedProfile?.provider == .localAI)
                 }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .font(.system(size: 15, weight: .medium))
-                .frame(width: 28, height: 28)
-                .help("settings.ai.provider.deleteHelp")
-                .accessibilityLabel(Text("settings.ai.provider.deleteHelp"))
-                .disabled(selectedProfile == nil)
             }
 
             // HOM-AIPROVIDERS-HIDE-PROVIDER-2026-06-12 (dong4j 反馈)：
@@ -486,7 +515,8 @@ struct AISettingsTab: View {
             // 影响输入，干扰极小。
             if draftProfile != nil {
                 Picker("Provider", selection: supportedProviderBinding) {
-                    ForEach(AIServiceProvider.allCases) { provider in
+                    // 按硬件能力过滤：Intel Mac 不提供本地 AI 选项。
+                    ForEach(AIServiceProvider.userSelectableCases) { provider in
                         Label {
                             Text(provider.displayName)
                         } icon: {
@@ -500,32 +530,58 @@ struct AISettingsTab: View {
             }
 
             if let profile = activeProfile {
-                providerInputRows(profile)
-
-                HStack {
-                    Text(profile.lastTestStatus.displayText)
+                if profile.provider == .localAI {
+                    // 内置本地 AI：无 Key / 无 Base URL 可填，也不走「测试并获取模型」。
+                    // 下载模型在下方「本地 AI 模型」区；此处只给一句引导。
+                    Text("settings.localai.provider.hint")
                         .font(.caption)
-                        .foregroundStyle(statusTint(profile.lastTestStatus))
-                        .lineLimit(2)
-                        .truncationMode(.tail)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    providerInputRows(profile)
 
-                    Spacer(minLength: 12)
-
-                    Button {
-                        Task { await testAndFetchModels(profile) }
-                    } label: {
-                        if isTestingProfileID == profile.id {
-                            HStack(spacing: 4) {
-                                ProgressView().controlSize(.small)
-                                Text("settings.ai.provider.testButton")
-                            }
-                        } else {
-                            Label("settings.ai.provider.testButton", systemImage: "network")
+                    if profile.provider == .anthropic {
+                        // 两条 caption 收进同一 Form 行，避免 grouped Form 给每句各垫一行高。
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(
+                                SettingsCaptionASCIILinks.attributedString(
+                                    from: String.l10n("settings.ai.provider.anthropic.baseURLHint")
+                                )
+                            )
+                            .tint(.accentColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                            Text("settings.ai.provider.anthropic.embeddingUnsupported")
+                                .foregroundStyle(.secondary)
                         }
+                        .font(.caption)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .disabled(isTestingProfileID != nil || !canTest(profile))
+
+                    HStack {
+                        Text(profile.lastTestStatus.displayText)
+                            .font(.caption)
+                            .foregroundStyle(statusTint(profile.lastTestStatus))
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+
+                        Spacer(minLength: 12)
+
+                        Button {
+                            Task { await testAndFetchModels(profile) }
+                        } label: {
+                            if isTestingProfileID == profile.id {
+                                HStack(spacing: 4) {
+                                    ProgressView().controlSize(.small)
+                                    Text("settings.ai.provider.testButton")
+                                }
+                            } else {
+                                Label("settings.ai.provider.testButton", systemImage: "network")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .disabled(isTestingProfileID != nil || !canTest(profile))
+                    }
                 }
 
                 if let keyError {
@@ -537,8 +593,7 @@ struct AISettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.ai.provider.sectionTitle",
-                systemImage: "server.rack",
-                style: .prominent
+                systemImage: "server.rack"
             )
         } footer: {
             Text("settings.ai.provider.sectionFooter")
@@ -546,74 +601,63 @@ struct AISettingsTab: View {
     }
 
     private var enabledModelsSection: some View {
-        // HOM-68 follow-up v7 (dong4j 反馈 2026-06-05 23:20)：
-        // 改成 DisclosureGroup 默认折叠，与"模型参数" / "Prompt" 折叠风格统一。
-        // 自动展开时机：用户点"测试并获取模型"成功且 ≥1 个模型时，自动 expand
-        // 一次（见 `testAndFetchModels`），让"配置 → 测试 → 看模型"的完整路径
-        // 不需要手动展开折叠组。
-        //
-        // HOM-126 follow-up (dong4j 反馈 2026-06-07)：折叠组内层加 VStack(spacing: 14) 收紧
-        // 上下内边距与「模型配置」/「Prompt」一致——折叠组展开后视觉对齐。
+        // “模型与供应商”已经是独立一级页面；模型列表常驻展示，避免再套一层折叠。
         Section {
-            DisclosureGroup(isExpanded: $isDiscoveredModelsExpanded) {
-                // 折叠标题与列表之间留一点间距；列表内部已有行分隔。
-                Group {
-                    if let profile = selectedProfile {
-                        if profile.models.isEmpty {
-                            Text("settings.ai.discoveredModels.empty")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 8)
-                        } else {
-                            AIModelListView(
-                                profile: profile,
-                                enabledBinding: { model in modelEnabledBinding(profile.id, model.id) },
-                                capabilityBinding: { model in modelCapabilityBinding(profile.id, model.id) },
-                                parametersBinding: { model in modelParametersBinding(profile.id, model.id) }
-                            )
-                        }
+            Group {
+                if let profile = selectedProfile {
+                    if profile.models.isEmpty {
+                        Text("settings.ai.discoveredModels.empty")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    } else {
+                        AIModelListView(
+                            profile: profile,
+                            enabledBinding: { model in modelEnabledBinding(profile.id, model.id) },
+                            capabilityBinding: { model in modelCapabilityBinding(profile.id, model.id) },
+                            parametersBinding: { model in modelParametersBinding(profile.id, model.id) }
+                        )
+                        .id(profile.id)
                     }
                 }
-                .padding(.top, 4)
-            } label: {
-                disclosureLabel("settings.ai.discoveredModels.title", systemImage: "list.bullet.rectangle", isExpanded: $isDiscoveredModelsExpanded)
             }
+        } header: {
+            SettingsSectionHeader(
+                "settings.ai.discoveredModels.title",
+                systemImage: "list.bullet.rectangle"
+            )
         }
     }
 
     // MARK: - Tasks
 
     private var taskModelsSection: some View {
-        // HOM-68 follow-up v7：tab 样式（segmented Picker + 单行 Provider/模型/自定义），
-        // 与"模型参数" / "Prompt" 一致；DisclosureGroup 默认折叠。
-        // HOM-68 follow-up v8：标题从"默认设置"改成"模型配置"。
-        // 2026-07-18：对齐通用设置页——DisclosureGroup 内容用横线分割 + 统一行距，
-        // 避免「折叠标题 / tab / 配置行」黏成一块。
+        // 配置页按依赖顺序常驻展示任务模型；深链接只需切换任务并滚动定位。
         Section {
-            DisclosureGroup(isExpanded: $isTaskModelsExpanded) {
-                // 等宽铺满：系统 segmented 按文案 intrinsic 定宽，中文短/英文长会两套布局；
-                // EqualWidthSegmentedControl 按父宽均分，中英文同一套整行样式。
-                VStack(alignment: .leading, spacing: 0) {
-                    EqualWidthSegmentedControl(
-                        items: Array(AIModelTask.allCases),
-                        selection: $taskModelTask,
-                        title: { LocalizedStringKey($0.displayNameKey) }
-                    )
-                    .accessibilityLabel("settings.ai.task.pickerLabel")
+            // 等宽铺满：系统 segmented 按文案 intrinsic 定宽，中文短/英文长会两套布局；
+            // EqualWidthSegmentedControl 按父宽均分，中英文同一套整行样式。
+            VStack(alignment: .leading, spacing: 0) {
+                EqualWidthSegmentedControl(
+                    items: AIModelTask.aiSettingsPageTasks,
+                    selection: $taskModelTask,
+                    title: { LocalizedStringKey($0.displayNameKey) }
+                )
+                .accessibilityLabel("settings.ai.task.pickerLabel")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+
+                Divider()
+
+                taskModelRow(taskModelTask)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-
-                    Divider()
-
-                    taskModelRow(taskModelTask)
-                        .frame(maxWidth: .infinity)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 4)
-            } label: {
-                disclosureLabel("settings.ai.taskModels.title", systemImage: "slider.horizontal.3", isExpanded: $isTaskModelsExpanded)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } header: {
+            SettingsSectionHeader(
+                "settings.ai.taskModels.title",
+                systemImage: "slider.horizontal.3"
+            )
         }
     }
 
@@ -654,7 +698,7 @@ struct AISettingsTab: View {
                             .tag("")
                     } else {
                         ForEach(availableModels) { model in
-                            Text(model.name).tag(model.name)
+                            Text(AnthropicModelCatalog.displayName(forAPIID: model.name)).tag(model.name)
                         }
                     }
                 }
@@ -709,61 +753,46 @@ struct AISettingsTab: View {
     // parameterMaxTokensKBinding / parameterTimeoutSecondsBinding——这些都是
     // "task → AIModelParameters" 路径上的辅助，迁移后 popover 内部自带等价控件。
 
-    /// AI 服务商三个长输入项的自定义表格块。
+    /// 显示名称 / Base URL / API Key：跟「服务」页同一套行高。
     ///
-    /// 这里不再让 `Form(.grouped)` 分别布局三条 `TextField` row。macOS 的 Form 会
-    /// 对每个 row 单独测量，短文本输入框、长 URL 输入框、聚焦态输入框得到的
-    /// proposed width 可能不同；单行内 `GeometryReader` 也只能读到该 row 自己的
-    /// 宽度，无法保证三行一致。
-    ///
-    /// 把三行收进同一个 `VStack` 后，Form 只测量一次这个块；块内部固定 label 列宽，
-    /// 右侧输入框吃满剩余宽度，三个输入框自然共享同一左边界和右边界。
-    ///
-    /// 输入控件不能用 SwiftUI 原生 `TextField`：在 macOS `Form(.grouped)` 里，超长
-    /// Base URL 仍可能参与 row 测量并把布局顶成换行。这里用 AppKit `NSTextField`
-    /// 包装，明确要求单行、不可换行、内容超出时在字段内横向滚动。
+    /// 旧实现把三行锁成 52pt 再塞进一个固定高度 VStack，Form 行被撑得比系统
+    /// grouped 行高一倍。`SingleLineTextField` 已压低 hugging，超长 URL 不会再
+    /// 把行顶换行，因此改回独立 Form 行，高度交给 22pt bezel 字段。
+    private enum ProviderFieldLayout {
+        static let labelWidth: CGFloat = 96
+        static let fieldHeight: CGFloat = 22
+        static let rowSpacing: CGFloat = 8
+    }
+
     @ViewBuilder
     private func providerInputRows(_ profile: AIProviderProfile) -> some View {
-        let labelWidth: CGFloat = 96
-        let columnSpacing: CGFloat = 14
-        let rowHeight: CGFloat = 52
-
-        VStack(spacing: 0) {
-            providerInputRow(label: "settings.ai.provider.displayName", labelWidth: labelWidth, columnSpacing: columnSpacing, rowHeight: rowHeight) {
-                SingleLineTextField(text: editableProfileTextBinding(keyPath: \.displayName))
-                    .accessibilityLabel("settings.ai.provider.displayName")
-            }
-            Divider()
-            providerInputRow(label: "Base URL", labelWidth: labelWidth, columnSpacing: columnSpacing, rowHeight: rowHeight) {
-                SingleLineTextField(text: editableProfileTextBinding(keyPath: \.baseURL))
-                    .accessibilityLabel("Base URL")
-            }
-            Divider()
-            providerInputRow(label: "API Key", labelWidth: labelWidth, columnSpacing: columnSpacing, rowHeight: rowHeight) {
-                SingleLineTextField(text: editableAPIKeyBinding(), isSecure: true)
-                    .accessibilityLabel("API Key")
-            }
+        providerInputRow(label: "settings.ai.provider.displayName") {
+            SingleLineTextField(text: editableProfileTextBinding(keyPath: \.displayName))
+                .accessibilityLabel("settings.ai.provider.displayName")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: rowHeight * 3 + 2)
+        providerInputRow(label: "Base URL") {
+            SingleLineTextField(text: editableProfileTextBinding(keyPath: \.baseURL))
+                .accessibilityLabel("Base URL")
+        }
+        providerInputRow(label: "API Key") {
+            SingleLineTextField(text: editableAPIKeyBinding(), isSecure: true)
+                .accessibilityLabel("API Key")
+        }
     }
 
     private func providerInputRow<Field: View>(
         label: LocalizedStringKey,
-        labelWidth: CGFloat,
-        columnSpacing: CGFloat,
-        rowHeight: CGFloat,
         @ViewBuilder field: () -> Field
     ) -> some View {
-        HStack(alignment: .center, spacing: columnSpacing) {
+        HStack(alignment: .center, spacing: ProviderFieldLayout.rowSpacing) {
             Text(label)
-                .frame(width: labelWidth, alignment: .leading)
+                .font(.body)
+                .frame(width: ProviderFieldLayout.labelWidth, alignment: .leading)
                 .lineLimit(1)
             field()
+                .frame(height: ProviderFieldLayout.fieldHeight)
                 .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: rowHeight)
     }
 
     /// HOM-68 follow-up v5 (dong4j 反馈 2026-06-05 23:00)：
@@ -789,9 +818,11 @@ struct AISettingsTab: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .medium))
+                    // 与 SettingsSectionHeader prominent 的分组图标同口径（13pt / 20×20），
+                    // 让 DisclosureGroup 标题和 Section 分组标题在 Form 里同一视觉层级。
+                    .font(SettingsIconMetrics.smallGlyph)
                     .foregroundStyle(.secondary)
-                    .frame(width: 14, height: 14)
+                    .frame(width: 20, height: 20)
                 Text(titleKey)
                 Spacer(minLength: 0)
             }
@@ -807,11 +838,11 @@ struct AISettingsTab: View {
 
     // MARK: - Auto Tidy (HOM-126)
 
-    /// HOM-126：「自动整理」分组。
+    /// HOM-126：「标签分类」配置区。
     ///
     /// 设计：
-    /// - 用 DisclosureGroup 默认折叠（与同 Tab 其他折叠组统一），用户主动展开后由
-    ///   `isAutoTidyExpanded` SceneStorage 持久化。
+    /// - 「标签分类」是自动化页的一等配置区，标题放在面板外并始终展示配置内容，
+    ///   避免用户还要额外展开才能发现关键开关。
     /// - 总开关 OFF 时下面所有子项 `.disabled(true)` + `.opacity(0.5)`，符合 HOM-126
     ///   验收"总开关关闭时所有子项 disabled"。
     /// - 触发时机用三个独立 Toggle（启动 / 同步 / 定时），UI 简单直接；不用 Picker
@@ -822,11 +853,12 @@ struct AISettingsTab: View {
     /// - 运行状态用只读 LabeledContent + 「立刻手动触发一次」按钮。
     private var autoTidySection: some View {
         Section {
-            DisclosureGroup(isExpanded: $isAutoTidyExpanded) {
-                autoTidyContent
-            } label: {
-                disclosureLabel("settings.autoTidy.section", systemImage: "wand.and.stars", isExpanded: $isAutoTidyExpanded)
-            }
+            autoTidyContent
+        } header: {
+            SettingsSectionHeader(
+                "settings.autoTidy.section",
+                systemImage: "wand.and.stars"
+            )
         }
     }
 
@@ -834,65 +866,60 @@ struct AISettingsTab: View {
     ///
     /// 标签是 Starcat 本地数据，而仓库分组会写入 GitHub Lists。两者的授权边界和
     /// 置信度不能放在同一个配置组里，否则调整标签策略时可能意外改变远端写入行为。
+    /// 自动化页需要并列展示两组完整配置，因此标题位于面板外，内容不再折叠。
     private var githubListGroupingSection: some View {
         Section {
-            DisclosureGroup(isExpanded: $isGitHubListGroupingExpanded) {
-                VStack(alignment: .leading, spacing: 0) {
-                    // 与「标签分类」总开关同款：标题与备注分行，避免 Toggle thumb 被挤出裁切。
-                    // 备注只说后台整理未分组仓库；启动 / 同步触发已拆到下方独立开关，不能再写死。
-                    Toggle("settings.githubListGrouping.enabled.title", isOn: githubListGroupingBinding(\.enabled))
-                        .toggleStyle(.switch)
-                        .padding(.vertical, 8)
+            VStack(alignment: .leading, spacing: 0) {
+                // 与「标签分类」总开关同款：标题与备注分行，避免 Toggle thumb 被挤出裁切。
+                // 备注只说后台整理未分组仓库；启动 / 同步触发已拆到下方独立开关，不能再写死。
+                Toggle("settings.githubListGrouping.enabled.title", isOn: githubListGroupingBinding(\.enabled))
+                    .toggleStyle(.switch)
+                    .padding(.vertical, 8)
 
-                    Text("settings.githubListGrouping.enabled.description")
+                Text("settings.githubListGrouping.enabled.description")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 8)
+
+                Group {
+                    githubListGroupingTriggerGroup
+                    githubListGroupingRangeGroup
+
+                    Divider()
+                    autoTidySectionHeader("settings.autoTidy.actions.label")
+                    VStack(alignment: .leading, spacing: 6) {
+                        LabeledContent("settings.githubListGrouping.threshold.label") {
+                            Text(verbatim: githubListGroupingThresholdPercentString)
+                                .font(.callout.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(.tint)
+                        }
+                        Slider(
+                            value: githubListGroupingBinding(\.confidenceThreshold),
+                            in: 0.5...1.0,
+                            step: 0.05
+                        )
+                        .controlSize(.mini)
+                        Text(String(
+                            format: String.l10n("settings.githubListGrouping.threshold.hintFormat"),
+                            githubListGroupingThresholdPercentString
+                        ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 8)
-
-                    Group {
-                        githubListGroupingTriggerGroup
-                        githubListGroupingRangeGroup
-
-                        Divider()
-                        autoTidySectionHeader("settings.autoTidy.actions.label")
-                        VStack(alignment: .leading, spacing: 6) {
-                            LabeledContent("settings.githubListGrouping.threshold.label") {
-                                Text(verbatim: githubListGroupingThresholdPercentString)
-                                    .font(.callout.weight(.semibold).monospacedDigit())
-                                    .foregroundStyle(.tint)
-                            }
-                            Slider(
-                                value: githubListGroupingBinding(\.confidenceThreshold),
-                                in: 0.5...1.0,
-                                step: 0.05
-                            )
-                            .controlSize(.mini)
-                            Text(String(
-                                format: String.l10n("settings.githubListGrouping.threshold.hintFormat"),
-                                githubListGroupingThresholdPercentString
-                            ))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 8)
                     }
-                    .disabled(!settings.githubStarListAutoGroupingSettings.enabled)
-                    .opacity(settings.githubStarListAutoGroupingSettings.enabled ? 1.0 : 0.5)
+                    .padding(.vertical, 8)
                 }
-                .padding(.top, 4)
-            } label: {
-                disclosureLabel(
-                    "settings.githubListGrouping.section",
-                    systemImage: "folder.badge.gearshape",
-                    isExpanded: $isGitHubListGroupingExpanded
-                )
+                .disabled(!settings.githubStarListAutoGroupingSettings.enabled)
+                .opacity(settings.githubStarListAutoGroupingSettings.enabled ? 1.0 : 0.5)
             }
+            .padding(.top, 4)
+        } header: {
+            SettingsSectionHeader(
+                "settings.githubListGrouping.section",
+                systemImage: "folder.badge.gearshape"
+            )
         } footer: {
-            // 折叠时只保留标题行，避免说明文字悬在已收起的配置组下方。
-            if isGitHubListGroupingExpanded {
-                Text("settings.githubListGrouping.footer")
-            }
+            Text("settings.githubListGrouping.footer")
         }
     }
 
@@ -991,7 +1018,7 @@ struct AISettingsTab: View {
 
     @ViewBuilder
     private var autoTidyContent: some View {
-        // 2026-07-18：DisclosureGroup 内不会自动出现 Form 行分隔线，
+        // 配置面板内不会自动出现 Form 行分隔线，
         // 改用 VStack(spacing: 0) + Divider + 统一行 padding，对齐通用设置页节奏。
         VStack(spacing: 0) {
             // 总开关：标题行与说明分两行，避免 LabeledContent 把 Toggle thumb 挤出裁切。
@@ -1268,7 +1295,7 @@ struct AISettingsTab: View {
             if autoTidyScheduler.isAutoTidyRunning {
                 HStack(spacing: 4) {
                     ProgressView()
-                        .controlSize(.mini)
+                        .controlSize(.small)
                     Text(verbatim: autoTidyScheduler.autoTidyProgressText)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
@@ -1399,110 +1426,89 @@ struct AISettingsTab: View {
     ///   TextEditor 在 macOS 上内置垂直滚动，超出高度自动出现滚动条，不再让长
     ///   prompt 撑大整个设置面板。
     private var promptSection: some View {
-        // 2026-07-18：与模型配置同款——DisclosureGroup 内用横线分割配置块，
-        // tab 行与 System/User Prompt 之间拉开，贴近通用设置页 Form 行分隔节奏。
+        // Prompt 有完整默认值但仍属于本一级页面；常驻展示并保留原分隔节奏。
         Section {
-            DisclosureGroup(isExpanded: $isPromptExpanded) {
-                // 与模型配置同款：等宽铺满剩余宽度；重置按钮固定在右侧。
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 12) {
-                        EqualWidthSegmentedControl(
-                            items: [AIModelTask.summary, .tags, .chat, .embedding, .translation],
-                            selection: $promptTask,
-                            title: { LocalizedStringKey($0.displayNameKey) }
+            // 与模型配置同款：等宽铺满剩余宽度；重置按钮固定在右侧。
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 12) {
+                    EqualWidthSegmentedControl(
+                        items: AIModelTask.aiSettingsPageTasks,
+                        selection: $promptTask,
+                        title: { LocalizedStringKey($0.displayNameKey) }
+                    )
+                    .accessibilityLabel("settings.ai.prompt.task.pickerLabel")
+
+                    // HOM-126 follow-up (dong4j 反馈 2026-06-07)：「恢复默认」按钮去掉文字只保留 icon
+                    // （扫一眼就懂 = 旋转箭头），节省横向空间让左侧 segmented picker 不被挤；语义留在 tooltip。
+                    ResetIconButton(help: Text("settings.ai.prompt.restoreHelpFormat \(promptTask.displayName)")) {
+                        restoreDefaultPrompt(promptTask)
+                    }
+                }
+                .padding(.vertical, 10)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("settings.ai.prompt.system")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TextEditor(text: promptSystemBinding(promptTask))
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(height: 180)
+                        .disabled(!promptTask.supportsSystemPrompt)
+                        .opacity(promptTask.supportsSystemPrompt ? 1.0 : 0.5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
                         )
-                        .accessibilityLabel("settings.ai.prompt.task.pickerLabel")
-
-                        // HOM-126 follow-up (dong4j 反馈 2026-06-07)：「恢复默认」按钮去掉文字只保留 icon
-                        // （扫一眼就懂 = 旋转箭头），节省横向空间让左侧 segmented picker 不被挤；语义留在 tooltip。
-                        ResetIconButton(help: Text("settings.ai.prompt.restoreHelpFormat \(promptTask.displayName)")) {
-                            restoreDefaultPrompt(promptTask)
-                        }
+                    if !promptTask.supportsSystemPrompt {
+                        Text("settings.ai.prompt.system.embeddingUnavailable")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 10)
+                }
+                .padding(.vertical, 10)
 
-                    if promptTask == .translation {
-                        Divider()
+                Divider()
 
-                        // 翻译任务包含两套独立 Prompt。二级 Tab 必须放在 Prompt 区，
-                        // 紧跟一级任务 Tab，避免误落到“模型配置”后在当前面板不可见。
-                        EqualWidthSegmentedControl(
-                            items: ReadmeTranslationMode.allCases,
-                            selection: $translationPromptMode,
-                            title: { LocalizedStringKey($0.displayNameKey) }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("settings.ai.prompt.user")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TextEditor(text: promptUserBinding(promptTask))
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(height: 80)
+                        .disabled(!promptTask.supportsUserPromptTemplate)
+                        .opacity(promptTask.supportsUserPromptTemplate ? 1.0 : 0.5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
                         )
-                        .accessibilityLabel("settings.ai.prompt.translation.mode.pickerLabel")
-                        // 二级 Tab 只有两个短选项，限制宽度并居中，避免随面板横向拉伸成两个大色块。
-                        .frame(maxWidth: 320)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 10)
+                    if !promptTask.supportsUserPromptTemplate {
+                        Text("settings.ai.prompt.user.chatUnavailable")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("settings.ai.prompt.system")
-                            .font(.caption.weight(.semibold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        TextEditor(text: promptSystemBinding(promptTask))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(height: 180)
-                            .disabled(!promptTask.supportsSystemPrompt)
-                            .opacity(promptTask.supportsSystemPrompt ? 1.0 : 0.5)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
-                            )
-                        if !promptTask.supportsSystemPrompt {
-                            Text("settings.ai.prompt.system.embeddingUnavailable")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 10)
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("settings.ai.prompt.user")
-                            .font(.caption.weight(.semibold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        TextEditor(text: promptUserBinding(promptTask))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(height: 80)
-                            .disabled(!promptTask.supportsUserPromptTemplate)
-                            .opacity(promptTask.supportsUserPromptTemplate ? 1.0 : 0.5)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
-                            )
-                        if !promptTask.supportsUserPromptTemplate {
-                            Text("settings.ai.prompt.user.chatUnavailable")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 10)
-
-                    Divider()
-
-                    // 对齐设置页独立操作按钮右对齐规范：长文案收进 popover，底部只留入口。
-                    HStack {
-                        Spacer(minLength: 0)
-                        promptPlaceholderHelpButton
-                    }
-                    .padding(.vertical, 10)
                 }
-                .padding(.top, 4)
-                .onChange(of: promptTask) { _, _ in
-                    isPromptPlaceholderPopoverPresented = false
+                .padding(.vertical, 10)
+
+                Divider()
+
+                // 对齐设置页独立操作按钮右对齐规范：长文案收进 popover，底部只留入口。
+                HStack {
+                    Spacer(minLength: 0)
+                    promptPlaceholderHelpButton
                 }
-                .onChange(of: translationPromptMode) { _, _ in
-                    isPromptPlaceholderPopoverPresented = false
-                }
-            } label: {
-                disclosureLabel("settings.ai.prompt.title", systemImage: "text.quote", isExpanded: $isPromptExpanded)
+                .padding(.vertical, 10)
             }
+            .onChange(of: promptTask) { _, _ in
+                isPromptPlaceholderPopoverPresented = false
+            }
+        } header: {
+            SettingsSectionHeader(
+                "settings.ai.prompt.title",
+                systemImage: "text.quote"
+            )
         }
     }
 
@@ -1513,11 +1519,11 @@ struct AISettingsTab: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "curlybraces")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                 Text("settings.ai.prompt.placeholders.open")
                     .font(.caption.weight(.medium))
                 Image(systemName: "info.circle")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
             }
             .foregroundStyle(.secondary)
             .contentShape(Rectangle())
@@ -1527,8 +1533,7 @@ struct AISettingsTab: View {
         .help("settings.ai.prompt.placeholders.openHelp")
         .popover(isPresented: $isPromptPlaceholderPopoverPresented, arrowEdge: .top) {
             AIPromptPlaceholderPopover(catalog: AIPromptPlaceholderCatalog.catalog(
-                for: promptTask,
-                translationMode: translationPromptMode
+                for: promptTask
             ))
                 .appLocaleEnvironment()
         }
@@ -1556,308 +1561,35 @@ struct AISettingsTab: View {
     /// 折叠区显示 10/20 但实际生效 5/10 的"漂移"。
     private var aiIndexSection: some View {
         Section {
-            DisclosureGroup(isExpanded: $isAIIndexExpanded) {
-                // HOM-197（2026-06-13 dong4j）：截断长度与过滤阈值同属语义搜索流水线旋钮。
-                // 2026-07-18：DisclosureGroup 内显式 Divider + 统一行距，对齐通用设置页。
-                VStack(alignment: .leading, spacing: 0) {
-                    truncateLengthRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    scoreThresholdRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    presetRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    advancedDisclosure
-                        .padding(.vertical, 8)
-                    Divider()
-                    Toggle("settings.aiIndex.autoPrefetch", isOn: autoPrefetchBinding)
-                        .padding(.vertical, 8)
-                    Divider()
-                    builderControlsRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    rebuildAllRow
-                        .padding(.vertical, 8)
-                }
-                .padding(.top, 4)
-            } label: {
-                disclosureLabel("settings.aiIndex.section", systemImage: "brain.head.profile", isExpanded: $isAIIndexExpanded)
-            }
-        }
-    }
-
-    // MARK: - Knowledge RAG backends
-
-    /// SQLite 始终可用；Meilisearch / Qdrant 只作为用户自行部署后的高级 REST provider。
-    /// 选择外部后端后，工作台重建索引会同步数据；连接失败时可按开关回退 SQLite。
-    private var ragBackendSection: some View {
-        Section {
-            DisclosureGroup(isExpanded: $isRAGBackendsExpanded) {
-                // 条件字段出现时也要横线分隔，避免 Meilisearch/Qdrant 展开后糊成一团。
-                VStack(alignment: .leading, spacing: 0) {
-                    ragIndexControlRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    Picker("settings.rag.backends.keyword", selection: ragKeywordBackendBinding) {
-                        Text("SQLite FTS5").tag(RAGKeywordBackend.sqliteFTS5)
-                        Text("Meilisearch").tag(RAGKeywordBackend.meilisearch)
-                    }
-                    .pickerStyle(.menu)
+            // 顶级配置区始终展开；仅内部“高级”参数继续按需折叠，保留主次层级。
+            VStack(alignment: .leading, spacing: 0) {
+                truncateLengthRow
                     .padding(.vertical, 8)
-
-                    if settings.ragBackendConfiguration.keywordBackend == .meilisearch {
-                        Divider()
-                        ragField("settings.rag.backends.endpoint", text: ragMeilisearchEndpointBinding)
-                            .padding(.vertical, 8)
-                        Divider()
-                        ragField("settings.rag.backends.index", text: ragMeilisearchIndexBinding)
-                            .padding(.vertical, 8)
-                        Divider()
-                        SecureField("settings.rag.backends.apiKey", text: $meilisearchAPIKey)
-                            .textFieldStyle(.roundedBorder)
-                            .padding(.vertical, 8)
-                        Divider()
-                        ragBackendActionRow(
-                            id: "meilisearch",
-                            label: "settings.rag.backends.testAndSave",
-                            status: meilisearchStatus
-                        ) { await testMeilisearch() }
-                        .padding(.vertical, 8)
-                    }
-
-                    Divider()
-
-                    Picker("settings.rag.backends.vector", selection: ragVectorBackendBinding) {
-                        Text("SQLite BLOB").tag(RAGVectorBackend.sqlite)
-                        Text("Qdrant").tag(RAGVectorBackend.qdrant)
-                    }
-                    .pickerStyle(.menu)
+                Divider()
+                scoreThresholdRow
                     .padding(.vertical, 8)
-
-                    if settings.ragBackendConfiguration.vectorBackend == .qdrant {
-                        Divider()
-                        ragField("settings.rag.backends.endpoint", text: ragQdrantEndpointBinding)
-                            .padding(.vertical, 8)
-                        Divider()
-                        ragField("settings.rag.backends.collection", text: ragQdrantCollectionBinding)
-                            .padding(.vertical, 8)
-                        Divider()
-                        ragField("settings.rag.backends.vectorName", text: ragQdrantVectorNameBinding)
-                            .padding(.vertical, 8)
-                        Divider()
-                        SecureField("settings.rag.backends.apiKey", text: $qdrantAPIKey)
-                            .textFieldStyle(.roundedBorder)
-                            .padding(.vertical, 8)
-                        Divider()
-                        ragBackendActionRow(
-                            id: "qdrant",
-                            label: "settings.rag.backends.testAndSave",
-                            status: qdrantStatus
-                        ) { await testQdrant() }
-                        .padding(.vertical, 8)
-                    }
-
-                    Divider()
-                    Toggle("settings.rag.backends.fallback", isOn: ragFallbackBinding)
-                        .padding(.vertical, 8)
-                }
-                .padding(.top, 4)
-            } label: {
-                disclosureLabel("settings.rag.backends.section", systemImage: "magnifyingglass", isExpanded: $isRAGBackendsExpanded)
+                Divider()
+                presetRow
+                    .padding(.vertical, 8)
+                Divider()
+                advancedDisclosure
+                    .padding(.vertical, 8)
+                Divider()
+                Toggle("settings.aiIndex.autoPrefetch", isOn: autoPrefetchBinding)
+                    .padding(.vertical, 8)
+                Divider()
+                builderControlsRow
+                    .padding(.vertical, 8)
+                Divider()
+                rebuildAllRow
+                    .padding(.vertical, 8)
             }
-        }
-    }
-
-    private var ragIndexControlRow: some View {
-        let builder = dependencies.knowledgeRAGIndexBuilder
-        return HStack(spacing: 10) {
-            Text(ragIndexStatusText(builder.status))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            Spacer()
-            switch builder.status {
-            case .fetchingReadmes, .building, .embedding:
-                Button("settings.rag.index.pause") { builder.cancel() }
-            case .idle, .completed, .failed:
-                Button {
-                    builder.startRebuild()
-                } label: {
-                    Label("settings.rag.index.rebuild", systemImage: "arrow.triangle.2.circlepath")
-                }
-            }
-        }
-    }
-
-    private func ragIndexStatusText(_ status: RAGIndexingStatus) -> String {
-        switch status {
-        case .idle: return String.l10n("settings.rag.index.idle")
-        case .fetchingReadmes(let processed, let total):
-            return String(format: String.l10n("settings.rag.index.readmesFormat"), processed, total)
-        case .building(let processed, let total):
-            return String(format: String.l10n("settings.rag.index.reposFormat"), processed, total)
-        case .embedding(let processed, let total):
-            return String(format: String.l10n("settings.rag.index.chunksFormat"), processed, total)
-        case .completed(let coverage):
-            return String(format: String.l10n("settings.rag.index.readyFormat"), coverage.readyChunks)
-        case .failed(let message): return message
-        }
-    }
-
-    private func ragField(_ label: LocalizedStringKey, text: Binding<String>) -> some View {
-        LabeledContent(label) {
-            TextField("", text: text)
-                .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 220)
-        }
-    }
-
-    private func ragBackendActionRow(
-        id: String,
-        label: LocalizedStringKey,
-        status: RAGBackendTestStatus?,
-        action: @escaping @MainActor () async -> Void
-    ) -> some View {
-        // 同一行：状态左对齐，按钮右对齐。不要把文案贴在按钮左侧。
-        HStack(alignment: .center, spacing: 8) {
-            ragBackendStatusLabel(status)
-            Spacer(minLength: 8)
-            if testingRAGBackends.contains(id) {
-                ProgressView().controlSize(.small)
-            }
-            Button(label) {
-                Task { await action() }
-            }
-            .disabled(testingRAGBackends.contains(id))
-        }
-    }
-
-    /// 成功绿勾、需重建橙警告、失败红叉。
-    /// 状态色只上图标（DESIGN.md success / warning / danger），正文仍走 `.secondary`。
-    @ViewBuilder
-    private func ragBackendStatusLabel(_ status: RAGBackendTestStatus?) -> some View {
-        if let status {
-            HStack(alignment: .center, spacing: 6) {
-                Image(systemName: status.systemImage)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(status.badgeColor)
-                    .font(.callout)
-                Text(status.message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-            }
-        }
-    }
-
-    private var ragKeywordBackendBinding: Binding<RAGKeywordBackend> {
-        Binding(
-            get: { settings.ragBackendConfiguration.keywordBackend },
-            set: { value in
-                var configuration = settings.ragBackendConfiguration
-                configuration.keywordBackend = value
-                settings.ragBackendConfiguration = configuration
-                meilisearchStatus = value == .meilisearch ? .rebuildRequired : nil
-            }
-        )
-    }
-
-    private var ragVectorBackendBinding: Binding<RAGVectorBackend> {
-        Binding(
-            get: { settings.ragBackendConfiguration.vectorBackend },
-            set: { value in
-                var configuration = settings.ragBackendConfiguration
-                configuration.vectorBackend = value
-                settings.ragBackendConfiguration = configuration
-                qdrantStatus = value == .qdrant ? .rebuildRequired : nil
-            }
-        )
-    }
-
-    private var ragFallbackBinding: Binding<Bool> {
-        ragBackendBinding(\.fallbackToSQLite)
-    }
-
-    private var ragMeilisearchEndpointBinding: Binding<String> {
-        ragBackendBinding(\.meilisearch.endpoint)
-    }
-
-    private var ragMeilisearchIndexBinding: Binding<String> {
-        ragBackendBinding(\.meilisearch.indexName)
-    }
-
-    private var ragQdrantEndpointBinding: Binding<String> {
-        ragBackendBinding(\.qdrant.endpoint)
-    }
-
-    private var ragQdrantCollectionBinding: Binding<String> {
-        ragBackendBinding(\.qdrant.collectionName)
-    }
-
-    private var ragQdrantVectorNameBinding: Binding<String> {
-        ragBackendBinding(\.qdrant.vectorName)
-    }
-
-    private func ragBackendBinding<Value>(_ keyPath: WritableKeyPath<RAGBackendConfiguration, Value>) -> Binding<Value> {
-        Binding(
-            get: { settings.ragBackendConfiguration[keyPath: keyPath] },
-            set: { value in
-                var configuration = settings.ragBackendConfiguration
-                configuration[keyPath: keyPath] = value
-                settings.ragBackendConfiguration = configuration
-            }
-        )
-    }
-
-    private func loadRAGBackendKeys() {
-        meilisearchAPIKey = (try? KeychainManager.shared.loadAIKey(
-            forProvider: RAGBackendConfiguration.meilisearchKeychainID
-        )) ?? ""
-        qdrantAPIKey = (try? KeychainManager.shared.loadAIKey(
-            forProvider: RAGBackendConfiguration.qdrantKeychainID
-        )) ?? ""
-    }
-
-    private func testMeilisearch() async {
-        testingRAGBackends = testingRAGBackends.union(["meilisearch"])
-        defer { testingRAGBackends = testingRAGBackends.subtracting(["meilisearch"]) }
-        do {
-            try KeychainManager.shared.storeAIKey(
-                meilisearchAPIKey,
-                forProvider: RAGBackendConfiguration.meilisearchKeychainID
+            .padding(.top, 4)
+        } header: {
+            SettingsSectionHeader(
+                "settings.aiIndex.section",
+                systemImage: "brain.head.profile"
             )
-            let provider = MeilisearchRAGProvider(
-                configuration: settings.ragBackendConfiguration.meilisearch,
-                apiKey: meilisearchAPIKey,
-                repository: dependencies.ragChunkRepository
-            )
-            try await provider.testConnection()
-            meilisearchStatus = .success
-        } catch {
-            meilisearchStatus = .failure(error.localizedDescription)
-        }
-    }
-
-    private func testQdrant() async {
-        testingRAGBackends = testingRAGBackends.union(["qdrant"])
-        defer { testingRAGBackends = testingRAGBackends.subtracting(["qdrant"]) }
-        do {
-            try KeychainManager.shared.storeAIKey(
-                qdrantAPIKey,
-                forProvider: RAGBackendConfiguration.qdrantKeychainID
-            )
-            let provider = QdrantRAGProvider(
-                configuration: settings.ragBackendConfiguration.qdrant,
-                apiKey: qdrantAPIKey,
-                repository: dependencies.ragChunkRepository
-            )
-            try await provider.testConnection()
-            qdrantStatus = .success
-        } catch {
-            qdrantStatus = .failure(error.localizedDescription)
         }
     }
 
@@ -2226,8 +1958,8 @@ struct AISettingsTab: View {
     //
     // 「AI 代码上下文」分组，对应 §0 客户端接入任务清单 §0.4 触点 C。
     //
-    // 设计要点（沿用 promptSection / autoTidySection / aiIndexSection 同款风格）：
-    //   - DisclosureGroup 默认折叠（@SceneStorage 持久化）；
+    // 设计要点（沿用 autoTidySection / aiIndexSection 同款顶级配置风格）：
+    //   - 标题放在面板外，配置内容始终展示；
     //   - 总开关 Toggle 控制下面控件的 disabled 状态（用户关掉总开关后调下面没意义）；
     //   - Token 与 ZIP 上限 Slider 走 Int↔Double 适配；行数使用数字 TextField，遵守禁止 Stepper 规范；
     //   - **不提供「私有仓库」开关**：当前 OAuth scope 是 `read:user` + `public_repo`，
@@ -2239,27 +1971,28 @@ struct AISettingsTab: View {
 
     private var aiRepoContextSection: some View {
         Section {
-            DisclosureGroup(isExpanded: $isRepoContextExpanded) {
-                VStack(alignment: .leading, spacing: 0) {
-                    repoContextEnableRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    repoContextTokenBudgetRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    repoContextMaximumArchiveSizeRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    repoContextTier1MaxLinesRow
-                        .padding(.vertical, 8)
-                    Divider()
-                    repoContextManageStorageRow
-                        .padding(.vertical, 8)
-                }
-                .padding(.top, 4)
-            } label: {
-                disclosureLabel("ai.context.settings.title", systemImage: "shippingbox.fill", isExpanded: $isRepoContextExpanded)
+            VStack(alignment: .leading, spacing: 0) {
+                repoContextEnableRow
+                    .padding(.vertical, 8)
+                Divider()
+                repoContextTokenBudgetRow
+                    .padding(.vertical, 8)
+                Divider()
+                repoContextMaximumArchiveSizeRow
+                    .padding(.vertical, 8)
+                Divider()
+                repoContextTier1MaxLinesRow
+                    .padding(.vertical, 8)
+                Divider()
+                repoContextManageStorageRow
+                    .padding(.vertical, 8)
             }
+            .padding(.top, 4)
+        } header: {
+            SettingsSectionHeader(
+                "ai.context.settings.title",
+                systemImage: "shippingbox.fill"
+            )
         }
     }
 
@@ -2403,17 +2136,9 @@ struct AISettingsTab: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
                 .fixedSize()
-                Button {
+                RevealInFinderIconButton(help: Text("ai.context.storage.revealHelp")) {
                     revealAIContextOutputDirectory()
-                } label: {
-                    Image(systemName: "folder")
-                        .font(.system(size: 15, weight: .medium))
-                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .help(Text("ai.context.storage.revealHelp"))
-                .accessibilityLabel(Text("ai.context.storage.revealHelp"))
                 .fixedSize()
                 ResetIconButton(help: Text("ai.context.storage.resetHelp")) {
                     resetAIContextOutputDirectory()
@@ -2558,33 +2283,22 @@ struct AISettingsTab: View {
         )
     }
 
-    private var privacySection: some View {
-        Section {
-            Text("settings.ai.privacy.notice")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        } header: {
-            SettingsSectionHeader(
-                "settings.ai.privacy.section",
-                systemImage: "lock.shield",
-                style: .prominent
-            )
-        }
-    }
-
     // MARK: - Actions
 
     /// 写入 `selectedProfileID` 的统一入口。
     /// nil → 持久化层写空串哨兵；非 nil → 直接写入 ID。
     /// 集中走这个 helper 是为了让"空串 ↔ nil"语义不要散落到 4 个赋值点。
     private func setSelectedProfileID(_ id: String?) {
-        AppLog.ai.debug("[AISettings] setSelectedProfileID(\(id ?? "nil", privacy: .public)) prev=\(self.lastSelectedProfileIDStorage, privacy: .public)")
-        lastSelectedProfileIDStorage = id ?? ""
+        AppLog.ai.debug("[AISettings] setSelectedProfileID(\(id ?? "nil", privacy: .public)) prev=\(self.settings.aiSettingsSelectedProfileID, privacy: .public)")
+        settings.aiSettingsSelectedProfileID = id ?? ""
     }
 
     private func ensureSelection() {
-        if selectedProfileID == nil || verifiedProfiles.allSatisfy({ $0.id != selectedProfileID }) {
-            setSelectedProfileID(verifiedProfiles.first?.id)
+        if selectedProfileID == nil || pickerProfiles.allSatisfy({ $0.id != selectedProfileID }) {
+            // 从未选过 / 指向已删 profile 时优先回落到本地 AI（首启动默认服务商）。
+            let fallback = pickerProfiles.first(where: { $0.provider == .localAI })?.id
+                ?? pickerProfiles.first?.id
+            setSelectedProfileID(fallback)
         }
     }
 
@@ -2616,10 +2330,152 @@ struct AISettingsTab: View {
         keyError = nil
     }
 
+    /// 放弃未完成的服务商草稿。草稿从未写入 `aiProviderProfiles`，所以只清内存态。
+    /// 编辑已有服务商时，落盘配置仍在原 ID 上，丢掉草稿即恢复已保存值。
+    private func discardDraft() {
+        guard draftProfile != nil else { return }
+        AppLog.ai.debug("[AISettings] discardDraft() draftID=\(self.draftProfile?.id ?? "nil", privacy: .public)")
+        draftProfile = nil
+        draftAPIKey = ""
+        keyError = nil
+    }
+
+    /// 点 `+` 生成的新草稿 ID 不在已保存列表里；从已有 profile 提升的草稿沿用原 ID。
+    private var isAddingNewProviderDraft: Bool {
+        guard let draftID = draftProfile?.id else { return false }
+        return !settings.aiProviderProfiles.contains { $0.id == draftID }
+    }
+
     // `deleteSelectedProfile()` 已被 `deleteProfile(id:)` + `confirmationDialog`
     // 二次确认链路取代（HOM-AIPROVIDERS-DELETE-CONFIRM-2026-06-12）。原函数
     // 隐式依赖 `selectedProfileID`，confirm dialog 期间用户可能切换 selection
     // 导致语义偏差，新函数收紧到显式 ID 删除。
+
+    @MainActor
+    private func beginCCSwitchImport() {
+        ccSwitchImportError = nil
+        if DistributionChannel.current.isDirect,
+           let url = POSIXHome.ccSwitchDefaultDatabase,
+           FileManager.default.isReadableFile(atPath: url.path) {
+            openCCSwitchFile(url)
+            return
+        }
+        presentCCSwitchOpenPanel()
+    }
+
+    @MainActor
+    private func presentCCSwitchOpenPanel() {
+        let panel = NSOpenPanel()
+        let defaultPath = POSIXHome.ccSwitchDefaultDatabase?.path ?? "~/.cc-switch/cc-switch.db"
+        panel.message = String(format: String.l10n("settings.ai.provider.importCCSwitch.panelMessage"), defaultPath)
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "db"),
+            UTType(filenameExtension: "sqlite"),
+            UTType(filenameExtension: "sqlite3"),
+            UTType(filenameExtension: "sql")
+        ].compactMap { $0 }
+        panel.allowsOtherFileTypes = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        openCCSwitchFile(url)
+    }
+
+    @MainActor
+    private func openCCSwitchFile(_ url: URL) {
+        do {
+            let rows = try CCSwitchConfigStore.open(url: url)
+            let preview = CCSwitchProviderMapper.preview(
+                rows: rows,
+                sourcePath: url.path,
+                anthropicAvailable: CCSwitchProviderMapper.isAnthropicAdapterAvailable
+            )
+            ccSwitchImportSession = CCSwitchImportSession(preview: preview)
+        } catch {
+            ccSwitchImportError = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func importCCSwitchCandidates(
+        _ candidates: [CCSwitchImportCandidate],
+        progress: @MainActor (Int, Int, String) -> Void
+    ) async -> CCSwitchImportOutcome {
+        var succeeded: [CCSwitchImportResultRow] = []
+        var failed: [CCSwitchImportResultRow] = []
+        var existingNames = settings.aiProviderProfiles.map(\.displayName)
+        var cancelled = false
+
+        for (offset, candidate) in candidates.enumerated() {
+            if Task.isCancelled {
+                cancelled = true
+                break
+            }
+            progress(offset + 1, candidates.count, candidate.displayName)
+            let displayName = CCSwitchProviderMapper.uniquedDisplayName(
+                candidate.displayName,
+                existing: existingNames
+            )
+            existingNames.append(displayName)
+            let profile = AIProviderProfile(
+                id: UUID().uuidString,
+                provider: candidate.provider,
+                displayName: displayName,
+                baseURL: candidate.baseURL,
+                isEnabled: false,
+                lastTestStatus: .notTested
+            )
+            var profiles = settings.aiProviderProfiles
+            profiles.append(profile)
+            settings.aiProviderProfiles = profiles
+            do {
+                try persistAPIKey(
+                    candidate.apiKey,
+                    forProvider: profile.id,
+                    allowsEmpty: profile.provider.allowsEmptyAPIKey
+                )
+                apiKeys[profile.id] = candidate.apiKey
+            } catch {
+                failed.append(CCSwitchImportResultRow(
+                    id: profile.id,
+                    displayName: displayName,
+                    profileID: profile.id,
+                    succeeded: false,
+                    statusText: error.localizedDescription
+                ))
+                AppLog.ai.error("CC Switch import persist failed appType=\(candidate.appType, privacy: .public) provider=\(candidate.provider.rawValue, privacy: .public)")
+                continue
+            }
+
+            await testAndFetchModels(profile)
+            let updated = settings.aiProviderProfiles.first { $0.id == profile.id } ?? profile
+            let ok: Bool
+            if case .success = updated.lastTestStatus {
+                ok = true
+            } else {
+                ok = false
+            }
+            let row = CCSwitchImportResultRow(
+                id: profile.id,
+                displayName: displayName,
+                profileID: profile.id,
+                succeeded: ok,
+                statusText: updated.lastTestStatus.displayText
+            )
+            if ok {
+                succeeded.append(row)
+            } else {
+                failed.append(row)
+            }
+            AppLog.ai.info("CC Switch import appType=\(candidate.appType, privacy: .public) provider=\(candidate.provider.rawValue, privacy: .public) success=\(ok, privacy: .public)")
+        }
+
+        if Task.isCancelled {
+            cancelled = true
+        }
+        return CCSwitchImportOutcome(succeeded: succeeded, failed: failed, cancelled: cancelled)
+    }
 
     @MainActor
     private func testAndFetchModels(_ profile: AIProviderProfile) async {
@@ -2629,7 +2485,7 @@ struct AISettingsTab: View {
 
         let testingKey = apiKey(for: profile)
         do {
-            let models = try await OpenAIClient(configuration: AIClientConfiguration(
+            let client = try AIClientFactory.make(configuration: AIClientConfiguration(
                 providerID: profile.id,
                 provider: profile.provider,
                 apiKey: testingKey,
@@ -2637,11 +2493,18 @@ struct AISettingsTab: View {
                 chatModel: profile.models.first(where: { $0.capability == .chat })?.name ?? profile.provider.defaultChatModel,
                 embeddingModel: profile.models.first(where: { $0.capability == .embedding })?.name ?? profile.provider.defaultEmbeddingModel,
                 timeoutInterval: 60
-            )).listModels()
+            ))
+            let models = try await client.listModels()
 
             var verified = profile
+            if let anthropic = client as? AnthropicClient {
+                verified.baseURL = anthropic.probedBaseURL
+            }
             // 去重 / 大目录不全开 / 容量上限：避免 OpenRouter 类目录在勾选时卡死主线程。
-            verified.mergeDiscoveredModels(models)
+            verified.mergeDiscoveredModels(
+                models,
+                referencedModelNames: referencedModelNames(for: profile.id)
+            )
             verified.isEnabled = true
             verified.lastTestedAt = ISO8601DateFormatter.shared.string(from: Date())
             verified.lastTestStatus = .success(modelCount: verified.models.count)
@@ -2667,16 +2530,6 @@ struct AISettingsTab: View {
             }
             apiKeys[profile.id] = testingKey
             repairTasksAfterProfileChange()
-            // HOM-68 follow-up v7 (dong4j 反馈 2026-06-05 23:20)：
-            // 测试成功且抓到 ≥1 个模型时，自动把"已发现模型"折叠组展开。
-            // 用户路径："配置 provider → 点测试 → 看到模型列表" 一气呵成，
-            // 不用手动去展开折叠组。withAnimation 与 disclosureLabel 的展开动画
-            // 走同一条曲线（easeInOut 0.18），视觉一致。
-            if !models.isEmpty {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
-                    isDiscoveredModelsExpanded = true
-                }
-            }
         } catch {
             if isActiveProfileDraft(profile.id) {
                 draftProfile?.lastTestedAt = ISO8601DateFormatter.shared.string(from: Date())
@@ -2720,11 +2573,8 @@ struct AISettingsTab: View {
     }
 
     private func restoreDefaultPrompt(_ task: AIModelTask) {
-        if task == .translation, translationPromptMode == .full {
-            settings.aiFullTranslationPrompt = AIDefaultPrompts.fullTranslation
-            return
-        }
-
+        // 2026-09-11：翻译任务的 Prompt（分段 / 全文）已迁入「翻译服务」设置页，
+        // 这里只剩非翻译任务的恢复默认；`.translation` 分支仅为 switch 穷尽性保留。
         updateTask(task) { config in
             switch task {
             case .summary:
@@ -2736,7 +2586,7 @@ struct AISettingsTab: View {
             case .chat:
                 config.prompt = AIDefaultPrompts.chat
             case .translation:
-                // 分段与全文使用独立 Prompt；全文分支已在函数开头单独写回。
+                // UI 不再出现翻译任务（已迁「翻译服务」页）；仅为穷尽性保留。
                 config.prompt = AIDefaultPrompts.translation
             }
         }
@@ -2874,6 +2724,7 @@ struct AISettingsTab: View {
             get: { model(profileID: profileID, modelID: modelID)?.isEnabled ?? false },
             set: { enabled in
                 // 取消勾选前先记下是否被任务引用：未引用时不必跑 repair（会连写 5 份 task JSON）。
+                guard model(profileID: profileID, modelID: modelID)?.isEnabled != enabled else { return }
                 let modelName = model(profileID: profileID, modelID: modelID)?.name
                 let needsTaskRepair = !enabled && isModelReferencedByAnyTask(
                     providerID: profileID,
@@ -2899,10 +2750,22 @@ struct AISettingsTab: View {
         }
     }
 
+    /// 合并 / 消毒大目录时保住任务仍在用的模型名（含自定义名称，避免关掉正在跑的配置）。
+    private func referencedModelNames(for profileID: String) -> Set<String> {
+        Set(AIModelTask.allCases.compactMap { task in
+            let config = taskConfig(task)
+            guard config.providerID == profileID else { return nil }
+            let name = config.resolvedModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? nil : name
+        })
+    }
+
     private func modelCapabilityBinding(_ profileID: String, _ modelID: String) -> Binding<AIModelCapability> {
         Binding(
             get: { model(profileID: profileID, modelID: modelID)?.capability ?? .unknown },
             set: { capability in
+                // Picker 出现时可能把当前值再 set 一遍；无变化就不要写回整个 profiles 数组。
+                guard model(profileID: profileID, modelID: modelID)?.capability != capability else { return }
                 updateModel(profileID: profileID, modelID: modelID) { model in
                     model.capability = capability
                 }
@@ -2931,6 +2794,7 @@ struct AISettingsTab: View {
         Binding(
             get: { taskConfig(task).modelID },
             set: { modelName in
+                settings.selectLocalAIModel(named: modelName, providerID: taskConfig(task).providerID)
                 updateTask(task) { config in
                     config.modelID = modelName
                     // 选列表模型时关掉自定义开关，但保留 customModelName，
@@ -2978,35 +2842,17 @@ struct AISettingsTab: View {
         )
     }
 
+    // 2026-09-11：翻译 Prompt（分段 / 全文）的编辑入口已迁入「翻译服务」设置页，
+    // 这里的 binding 只服务其余任务。
     private func promptSystemBinding(_ task: AIModelTask) -> Binding<String> {
-        if task == .translation, translationPromptMode == .full {
-            return Binding(
-                get: { settings.aiFullTranslationPrompt.systemPrompt },
-                set: { value in
-                    var prompt = settings.aiFullTranslationPrompt
-                    prompt.systemPrompt = value
-                    settings.aiFullTranslationPrompt = prompt
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: { taskConfig(task).prompt.systemPrompt },
             set: { value in updateTask(task) { $0.prompt.systemPrompt = value } }
         )
     }
 
     private func promptUserBinding(_ task: AIModelTask) -> Binding<String> {
-        if task == .translation, translationPromptMode == .full {
-            return Binding(
-                get: { settings.aiFullTranslationPrompt.userPromptTemplate },
-                set: { value in
-                    var prompt = settings.aiFullTranslationPrompt
-                    prompt.userPromptTemplate = value
-                    settings.aiFullTranslationPrompt = prompt
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: { taskConfig(task).prompt.userPromptTemplate },
             set: { value in updateTask(task) { $0.prompt.userPromptTemplate = value } }
         )
@@ -3016,6 +2862,12 @@ struct AISettingsTab: View {
 
     private var verifiedProfiles: [AIProviderProfile] {
         settings.aiProviderProfiles.filter(\.isVerifiedConfiguration)
+    }
+
+    /// 服务商 Picker 的可选项：已验证 profile + 内置本地 AI（未下载模型时也显示，
+    /// 选中后由「本地 AI 模型」区引导下载）。首启动默认选中 Local AI（dong4j 2026-09-12）。
+    private var pickerProfiles: [AIProviderProfile] {
+        settings.aiProviderProfiles.filter { $0.isVerifiedConfiguration || $0.provider == .localAI }
     }
 
     /// 任务下拉只显示具备对应协议端点的已验证 Provider。
@@ -3033,8 +2885,8 @@ struct AISettingsTab: View {
     }
 
     private var selectedProfile: AIProviderProfile? {
-        guard let selectedProfileID else { return verifiedProfiles.first }
-        return verifiedProfiles.first { $0.id == selectedProfileID }
+        guard let selectedProfileID else { return pickerProfiles.first }
+        return pickerProfiles.first { $0.id == selectedProfileID }
     }
 
     private func profile(_ id: String) -> AIProviderProfile? {
@@ -3064,13 +2916,15 @@ struct AISettingsTab: View {
     }
 
     private func taskConfig(_ task: AIModelTask) -> AIModelTaskConfiguration {
+        let config: AIModelTaskConfiguration
         switch task {
-        case .summary:     return settings.aiSummaryTask
-        case .tags:        return settings.aiTagsTask
-        case .embedding:   return settings.aiEmbeddingTask
-        case .translation: return settings.aiTranslationTask
-        case .chat:        return settings.aiChatTask
+        case .summary:     config = settings.aiSummaryTask
+        case .tags:        config = settings.aiTagsTask
+        case .embedding:   config = settings.aiEmbeddingTask
+        case .translation: config = settings.aiTranslationTask
+        case .chat:        config = settings.aiChatTask
         }
+        return settings.resolvedAITask(config, type: task.requiredCapability == .embedding ? .embedding : .llm)
     }
 
     private func updateTask(_ task: AIModelTask, mutate: (inout AIModelTaskConfiguration) -> Void) {
@@ -3104,6 +2958,8 @@ struct AISettingsTab: View {
     private func repairTasksAfterProfileChange() {
         for task in AIModelTask.allCases {
             let config = taskConfig(task)
+            // 明确选中的本地模型未下载/已卸载时应提示安装，不能静默换成远程服务商。
+            if profile(config.providerID)?.provider == .localAI { continue }
             let models = enabledModels(providerID: config.providerID, capability: task.requiredCapability)
             let eligibleProfiles = eligibleVerifiedProfiles(for: task)
             let currentProfileIsEligible = eligibleProfiles.contains { $0.id == config.providerID }
@@ -3213,45 +3069,6 @@ private struct SettingsWindowCloseListener: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
                 self.observer = nil
             }
-        }
-    }
-}
-
-/// 知识库外部后端「测试并保存」的分行状态。图标颜色表达结果，正文保持 `.secondary`。
-private enum RAGBackendTestStatus: Equatable {
-    case success
-    case rebuildRequired
-    case failure(String)
-
-    /// DESIGN.md `success` / `warning` / `danger`。状态色只上图标，正文保持 `.secondary`。
-    static let successTint = Color(red: 52 / 255, green: 199 / 255, blue: 89 / 255)
-    static let warningTint = Color(red: 255 / 255, green: 149 / 255, blue: 0 / 255)
-    static let dangerTint = Color(red: 255 / 255, green: 59 / 255, blue: 48 / 255)
-
-    var message: String {
-        switch self {
-        case .success:
-            return String.l10n("settings.rag.backends.connectionSuccess")
-        case .rebuildRequired:
-            return String.l10n("settings.rag.backends.rebuildRequired")
-        case .failure(let message):
-            return message
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .success: return "checkmark.circle.fill"
-        case .rebuildRequired: return "exclamationmark.triangle.fill"
-        case .failure: return "xmark.circle.fill"
-        }
-    }
-
-    var badgeColor: Color {
-        switch self {
-        case .success: return Self.successTint
-        case .rebuildRequired: return Self.warningTint
-        case .failure: return Self.dangerTint
         }
     }
 }

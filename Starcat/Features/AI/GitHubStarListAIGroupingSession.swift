@@ -563,7 +563,7 @@ final class GitHubStarListAIGroupingSession {
         confidenceThreshold: Double = GitHubStarListAutoGroupingSettings.default.confidenceThreshold
     ) async {
         do {
-            try entitlementGate.requirePro(.batchAI)
+            try entitlementGate.requirePro(.batchAI, usesLocalOnly: AppSettings.shared.isGenerationTasksResolvedToLocalAI)
         } catch {
             contextErrorMessage = error.localizedDescription
             return

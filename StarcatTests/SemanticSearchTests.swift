@@ -134,6 +134,32 @@ struct SemanticSearchTests {
         #expect(!SemanticSearchService.hasLiteralMatch(repo: repo, query: "kubernetes"))
     }
 
+    @Test("hasLiteralMatch: snapshot body 含 README 标题时也能字面命中")
+    func literalMatchIndexedBody() {
+        let repo = makeRepo(
+            fullName: "starcat-app/starcat",
+            description: "Native GitHub Stars Manager",
+            topics: nil
+        )
+        let snapshot = IndexedSnapshot(
+            body: "Starcat — Native GitHub Stars Manager & AI Knowledge Base for macOS",
+            metadata: IndexedSnapshot.Metadata(fullName: repo.fullName, description: repo.description)
+        )
+        #expect(
+            SemanticSearchService.hasLiteralMatch(
+                repo: repo,
+                query: "AI Knowledge Base for macOS",
+                snapshot: snapshot
+            )
+        )
+        #expect(
+            !SemanticSearchService.hasLiteralMatch(
+                repo: repo,
+                query: "AI Knowledge Base for macOS"
+            )
+        )
+    }
+
     @Test("常量约束：literal boost floor / fts boost weight 在合理范围")
     func constantsAreSane() {
         // literal boost 必须 ≥ displayScore 高档阈值 (4 星 = 0.85)
@@ -144,6 +170,28 @@ struct SemanticSearchTests {
         let span = SemanticSearchService.displayScoreHighAnchor - SemanticSearchService.displayScoreLowAnchor
         #expect(SemanticSearchService.ftsBoostWeight < span)
         #expect(SemanticSearchService.ftsBoostWeight > 0)
+    }
+
+    @Test("query 向量缓存：同一句同一模型命中，换模型不命中")
+    func queryEmbeddingCacheHitsSameQueryAndModel() {
+        var cache = QueryEmbeddingSessionCache(limit: 8)
+        let key = QueryEmbeddingSessionCache.Key(query: "AI Knowledge Base", model: "text-embedding-3-small")
+        cache.store([0.1, 0.2], for: key)
+        #expect(cache.value(for: key) == [0.1, 0.2])
+        #expect(cache.value(for: .init(query: "AI Knowledge Base", model: "other-model")) == nil)
+        #expect(cache.value(for: .init(query: "other query", model: "text-embedding-3-small")) == nil)
+    }
+
+    @Test("query 向量缓存：超出上限淘汰最久未用的 key")
+    func queryEmbeddingCacheEvictsLeastRecent() {
+        var cache = QueryEmbeddingSessionCache(limit: 2)
+        cache.store([1], for: .init(query: "a", model: "m"))
+        cache.store([2], for: .init(query: "b", model: "m"))
+        #expect(cache.value(for: .init(query: "a", model: "m")) == [1])
+        cache.store([3], for: .init(query: "c", model: "m"))
+        #expect(cache.value(for: .init(query: "a", model: "m")) == [1])
+        #expect(cache.value(for: .init(query: "b", model: "m")) == nil)
+        #expect(cache.value(for: .init(query: "c", model: "m")) == [3])
     }
 
     // MARK: - helpers
@@ -223,6 +271,19 @@ struct RepoAIInsightTests {
         let tags = try RepoAIInsightService.decodeTagSuggestions(json: raw)
         #expect(tags.count == 1)
         #expect(tags[0].name == "local-ai")
+    }
+
+    @Test("AI Tags: snake_case、缺 reason、字符串数组也能解析")
+    func decodeTagSuggestionsLenientShapes() throws {
+        let snake = #"{"suggested_tags":[{"name":"Swift","confidence":"0.9"}]}"#
+        let snakeTags = try RepoAIInsightService.decodeTagSuggestions(json: snake)
+        #expect(snakeTags.count == 1)
+        #expect(snakeTags[0].name == "Swift")
+        #expect(snakeTags[0].confidence == 0.9)
+
+        let names = #"["macOS","Swift"]"#
+        let nameTags = try RepoAIInsightService.decodeTagSuggestions(json: names)
+        #expect(nameTags.map(\.name) == ["macOS", "Swift"])
     }
 
     @Test("AI Tags: 批量建议按 repo_id 解码")
@@ -537,5 +598,76 @@ struct SemanticIndexProgressSinkTests {
         sink.markEmbedded(3)
         #expect(last.processed == 5)
         #expect(last.total == 5)
+    }
+
+    @Test("countEmbeddings 只统计当前模型与候选仓交集")
+    func countEmbeddingsIntersectsModelAndCandidates() async throws {
+        let db = try InMemoryDatabaseManager()
+        let repository = GRDBRepoEmbeddingRepository(database: db)
+        // repo_embeddings.repo_id 外键指向 repos.id，先插占位 repo 行再写向量。
+        try await db.insertRepoFixture(id: 1)
+        try await db.insertRepoFixture(id: 2)
+        try await db.insertRepoFixture(id: 99)
+        let current = RepoEmbedding(
+            repoId: 1,
+            model: "text-embedding-3-small",
+            vector: [0.1, 0.2],
+            snapshotJson: "{}",
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+        let otherModel = RepoEmbedding(
+            repoId: 2,
+            model: "other-model",
+            vector: [0.3, 0.4],
+            snapshotJson: "{}",
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+        let outsideCandidate = RepoEmbedding(
+            repoId: 99,
+            model: "text-embedding-3-small",
+            vector: [0.5, 0.6],
+            snapshotJson: "{}",
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+        try await repository.upsert([current, otherModel, outsideCandidate])
+
+        let count = try await repository.countEmbeddings(
+            model: "text-embedding-3-small",
+            repoIDs: [1, 2]
+        )
+        #expect(count == 1)
+        #expect(try await repository.countEmbeddings(model: "text-embedding-3-small", repoIDs: []) == 0)
+    }
+
+    @Test("底栏向量 chip：刷新中优先进度，空闲看覆盖率，0 条为未就绪")
+    func semanticIndexFooterPhaseResolve() {
+        #expect(
+            SemanticIndexFooterPhase.resolve(
+                isIndexing: false,
+                progress: nil,
+                coverage: nil
+            ) == .hidden
+        )
+        #expect(
+            SemanticIndexFooterPhase.resolve(
+                isIndexing: true,
+                progress: (processed: 30, total: 2037),
+                coverage: SemanticIndexCoverage(indexed: 1807, total: 2037)
+            ) == .refreshing(processed: 30, total: 2037)
+        )
+        #expect(
+            SemanticIndexFooterPhase.resolve(
+                isIndexing: false,
+                progress: nil,
+                coverage: SemanticIndexCoverage(indexed: 1807, total: 2037)
+            ) == .coverage(indexed: 1807, total: 2037)
+        )
+        #expect(
+            SemanticIndexFooterPhase.resolve(
+                isIndexing: false,
+                progress: nil,
+                coverage: SemanticIndexCoverage(indexed: 0, total: 2037)
+            ) == .notReady
+        )
     }
 }

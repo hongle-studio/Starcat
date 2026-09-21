@@ -483,7 +483,8 @@ struct RepoListView: View {
     /// 未分组中栏横幅的启动回调。Sheet 仍由 Sidebar / HomeView 共用一份状态承载。
     var onStartGitHubStarListAIGrouping: (() -> Void)?
     /// 全局搜索中心由 HomeView 承载；列表 toolbar 只负责触发，不持有浮层状态。
-    /// `nil` 保留 Search Center 当前 scope；`.local` 用于原“列表搜索”快捷键。
+    /// `nil` 保留 Search Center 当前 scope。原“列表搜索”快捷键（⇧⌘F）已随搜索
+    /// 统一进全局搜索一起删除，只保留这个可发现入口。
     var onOpenSearchCenter: ((SearchScope?) -> Void)?
     /// 覆盖式知识库 RAG 工作台由 HomeView 承载；列表 toolbar 只暴露入口。
     var onOpenKnowledgeRAGWorkspace: (() -> Void)?
@@ -663,10 +664,7 @@ struct RepoListView: View {
         // W12 PR-5：Cmd+A 全选 — 4 场景统一注入一个隐藏按钮承载快捷键。
         // 仅当**当前 page 对应的 store** 处于多选模式时生效（disabled 否则）。Shift 区间选不补。
         .background {
-            ZStack {
-                selectAllShortcutButton
-                smartSearchShortcutButton
-            }
+            selectAllShortcutButton
         }
     }
 
@@ -697,24 +695,6 @@ struct RepoListView: View {
         .keyboardShortcut("a", modifiers: .command)
         .disabled(!store.isActive || selectedPage != .manage)
         .hidden()
-    }
-
-    /// 原列表搜索快捷键继续保留，但只负责打开统一 Search Center 的 Local scope。
-    private var isListRegularSearchEnabled: Bool {
-        selectedPage == .manage
-            && settings.keyboardShortcutsEnabled
-            && settings.regularSearchShortcutEnabled
-    }
-
-    private var smartSearchShortcutButton: some View {
-        Color.clear
-            .frame(width: 0, height: 0)
-            .starcatListSearchCommand(
-                identity: "list-search-\(selectedPage.rawValue)-\(isListRegularSearchEnabled)",
-                isEnabled: isListRegularSearchEnabled
-            ) {
-                onOpenSearchCenter?(.local)
-            }
     }
 
     /// 中栏前景层：navigation / inset / toolbar / 列表内容（叠在 `DetailHeroTintBackground` 上）。
@@ -2860,7 +2840,6 @@ private struct ManageRepoRowContent: View {
             isSelected: isSelected,
             isPinned: viewModel.isRepoPinned(repo.id),
             semanticHit: viewModel.semanticHit(for: repo.id),
-            showStarredCheckmark: viewModel.selection == .myProjects || isKnowledgeLibraryList,
             showLibraryBadge: !isKnowledgeLibraryList,
             hasAISummary: aiSummaryAvailability.contains(repo.id)
         )

@@ -426,8 +426,7 @@ private struct ExploreDiscoveryListView: View {
                         ),
                         isSelected: store.isActive
                             ? store.contains(ghRepoId: repo.repoID)
-                            : (selectedRepoID == repo.repoID),
-                        showStarredCheckmark: true
+                            : (selectedRepoID == repo.repoID)
                     )
                     .id(repoRowIdentity(for: repo))
                 }

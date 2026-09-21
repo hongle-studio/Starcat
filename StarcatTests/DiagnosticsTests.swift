@@ -12,6 +12,27 @@ import Testing
 @Suite("Diagnostics")
 struct DiagnosticsTests {
 
+    @Test("DecodingError 摘要包含 codingPath，而不是只留本地化笼统句")
+    func diagnosticEventSummarizesDecodingErrorPath() throws {
+        struct Box: Decodable {
+            let toy: Toy
+        }
+        enum Toy: String, Decodable {
+            case known
+        }
+
+        let data = Data(#"{"toy":"not-a-real-case"}"#.utf8)
+        do {
+            _ = try JSONDecoder().decode(Box.self, from: data)
+            Issue.record("expected DecodingError")
+        } catch {
+            let summary = DiagnosticEvent.summarize(error)
+            #expect(summary.contains("DecodingError"))
+            #expect(summary.contains("toy"))
+            #expect(summary.contains("not-a-real-case") || summary.contains("dataCorrupted") || summary.contains("typeMismatch"))
+        }
+    }
+
     @Test("诊断事件会脱敏 Bearer token 与 API Key")
     func diagnosticEventRedactsSecrets() {
         let event = DiagnosticEvent(
@@ -87,6 +108,43 @@ struct DiagnosticsTests {
         #expect(
             error.message == RepoAIInsightError.missingAPIKey(String.l10n("ai.taskName.summary")).localizedDescription
         )
+        #expect(!error.shouldRecordDiagnostic)
+    }
+
+    @Test("系统翻译错误不再显示为访问 AI 失败")
+    func userFacingErrorMapsSystemTranslationSeparately() {
+        let error = UserFacingError.map(
+            SystemTranslationError.sessionUnavailable,
+            operation: String.l10n("diagnostics.operation.translateReadme"),
+            service: "系统翻译"
+        )
+
+        #expect(error.message == String.l10n("readme.translate.error.sessionUnavailable"))
+        #expect(!error.message.contains("在访问 AI 时失败"))
+        #expect(error.title == String.l10n("readme.translate.engine.system"))
+    }
+
+    @Test("本地 AI 超上下文不再显示为访问 AI 失败")
+    func userFacingErrorMapsLocalAIContextTooLong() {
+        let error = UserFacingError.map(
+            LocalAIError.contextTooLong,
+            operation: String.l10n("diagnostics.operation.aiChat"),
+            service: "AI"
+        )
+        #expect(error.message == String.l10n("toolbar.localai.contextTooLong"))
+        #expect(!error.message.contains("在访问 AI 时失败"))
+        #expect(!error.shouldRecordDiagnostic)
+    }
+
+    @Test("系统翻译语言包缺失不写入开发者诊断")
+    func userFacingErrorSystemTranslationLanguagePackMissing() throws {
+        let error = UserFacingError.map(
+            SystemTranslationError.languagePackMissing,
+            operation: String.l10n("diagnostics.operation.translateReadme"),
+            service: "系统翻译"
+        )
+
+        #expect(error.message == String.l10n("readme.translate.error.languagePackMissing"))
         #expect(!error.shouldRecordDiagnostic)
     }
 

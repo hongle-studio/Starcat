@@ -95,6 +95,36 @@ struct HomeViewModelPaginationTests {
         String(format: "%04d-12-31T23:59:59Z", 9999 - id)
     }
 
+    /// 搜索 / Companion 打开详情时用的内存快照，不经过 DB。
+    nonisolated private static func makeRepo(id: Int64, name: String, isStarred: Bool) -> Repo {
+        Repo(
+            id: id,
+            owner: "o",
+            name: name,
+            fullName: "o/\(name)",
+            description: nil,
+            language: nil,
+            starsCount: 2,
+            forksCount: 0,
+            watchersCount: 0,
+            topics: nil,
+            license: nil,
+            homepage: nil,
+            htmlUrl: "https://github.com/o/\(name)",
+            cloneUrl: nil,
+            sshUrl: nil,
+            isPrivate: false,
+            isFork: false,
+            isArchived: false,
+            isStarred: isStarred,
+            pushedAt: nil,
+            createdAt: nil,
+            updatedAt: nil,
+            starredAt: nil,
+            cachedAt: nil
+        )
+    }
+
     // MARK: - R-07 基础行为
 
     @Test("外部导航重复打开同一 repo 时仍发出新的滚动请求")
@@ -108,6 +138,46 @@ struct HomeViewModelPaginationTests {
         vm.requestSelectedRepoScroll()
         #expect(vm.repoListScrollRequestRevision == 2,
                 "滚动请求不能依赖 selectedRepoID 变化，否则重复点击同一搜索结果不会定位")
+    }
+
+    @Test("搜索打开未 Star 仓并 Star 后，详情改用列表真源而不是置顶旧快照")
+    func starringPinnedSearchRepoUsesLiveListSnapshotForDetail() async throws {
+        let (vm, db) = try makeSUT()
+        try await insertRepo(db, id: 1, fullName: "o/already-starred", starredAt: starredAt(forID: 1))
+        await vm.reloadItems()
+        #expect(vm.items.contains(where: { $0.id == 1 }))
+
+        let unstarredSnapshot = Self.makeRepo(id: 99, name: "from-search", isStarred: false)
+        vm.pinTemporaryRepo(unstarredSnapshot)
+        vm.selectedRepoID = unstarredSnapshot.id
+        #expect(vm.selectedRepo?.isStarred == false,
+                "仓还不在 All Stars 里时，详情应继续用搜索打开时的置顶快照")
+
+        try await insertRepo(
+            db,
+            id: 99,
+            fullName: "o/from-search",
+            starredAt: "9999-12-31T23:59:59Z"
+        )
+        await vm.reloadItems(forceRefresh: true)
+
+        #expect(vm.items.contains(where: { $0.id == 99 }),
+                "Star 后该仓应进入 All Stars 首屏，列表行改画新数据")
+        #expect(vm.selectedRepo?.isStarred == true,
+                "详情不能继续读置顶快照的 isStarred=false，否则会出现列表实心、详情空心")
+        #expect(vm.selectedRepo?.id == 99)
+    }
+
+    @Test("打开搜索前加载覆盖率：无向量时底栏为未就绪")
+    func reloadSemanticIndexCoverageWithoutVectorsIsNotReady() async throws {
+        let (vm, db) = try makeSUT()
+        try await insertRepo(db, id: 1, fullName: "o/alpha", starredAt: starredAt(forID: 1))
+        try await insertRepo(db, id: 2, fullName: "o/beta", starredAt: starredAt(forID: 2))
+
+        #expect(vm.semanticIndexFooterPhase == .hidden)
+        await vm.reloadSemanticIndexCoverage()
+        #expect(vm.semanticIndexCoverage == SemanticIndexCoverage(indexed: 0, total: 2))
+        #expect(vm.semanticIndexFooterPhase == .notReady)
     }
 
     @Test("DB Paging: 外部导航一次加载到深页目标")

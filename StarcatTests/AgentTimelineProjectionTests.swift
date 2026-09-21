@@ -111,6 +111,85 @@ struct AgentTimelineProjectionTests {
         #expect(items.first(where: { $0.kind == .toolExecution })?.log?.contains("attempt_count=2") == true)
         #expect(items.first(where: { $0.kind == .toolExecution })?.hasExecutionDetails == true)
         #expect(items.first(where: { $0.kind == .assistant })?.reasoning == "需要本地知识证据")
+        #expect(items.first(where: { $0.kind == .assistant })?.messageParts == [
+            .reasoning("需要本地知识证据"),
+            .toolCall(call),
+        ])
+    }
+
+    @Test("带工具调用的单步正文保持过程消息而不是短暂冒充最终答案")
+    func toolPreambleRemainsProcessBeforeResultArrives() {
+        let runID = UUID()
+        let call = AgentToolCall(
+            id: "call-1",
+            name: "knowledge_search",
+            input: .object(["query": .string("Swift")]),
+            sequence: 1
+        )
+        let messages = [
+            AgentMessage(
+                runID: runID,
+                role: .user,
+                turn: 0,
+                sequence: 0,
+                parts: [.text("provider prompt")]
+            ),
+            AgentMessage(
+                runID: runID,
+                role: .assistant,
+                turn: 0,
+                sequence: 1,
+                parts: [
+                    .reasoning("先确定检索范围"),
+                    .text("我先查找相关仓库。"),
+                    .toolCall(call),
+                ]
+            ),
+        ]
+
+        let presentation = AgentTimelineProjection.makePresentation(
+            messages: messages,
+            approvals: [],
+            artifacts: [],
+            userPrompt: "查找仓库",
+            status: .running
+        )
+
+        #expect(presentation.finalAnswer == nil)
+        #expect(presentation.processSections.first?.kind == .progress)
+        #expect(presentation.processSections.first?.items.first?.messageParts == messages[1].parts)
+    }
+
+    @Test("运行中的已结算正文不在过程区与最终答案之间反复搬位")
+    func settledTextStaysInProcessUntilRunCompletes() {
+        let runID = UUID()
+        let messages = [AgentMessage(
+            runID: runID,
+            role: .assistant,
+            turn: 0,
+            sequence: 1,
+            parts: [.reasoning("核对现状"), .text("我已经找到入口。")]
+        )]
+
+        let running = AgentTimelineProjection.makePresentation(
+            messages: messages,
+            approvals: [],
+            artifacts: [],
+            userPrompt: "检查实现",
+            status: .running
+        )
+        #expect(running.finalAnswer == nil)
+        #expect(running.processSections.first?.items.first?.messageParts == messages[0].parts)
+
+        let completed = AgentTimelineProjection.makePresentation(
+            messages: messages,
+            approvals: [],
+            artifacts: [],
+            userPrompt: "检查实现",
+            status: .completed
+        )
+        #expect(completed.finalAnswer?.messageParts == messages[0].parts)
+        #expect(completed.processSections.isEmpty)
     }
 
     @Test("call result 合并、相邻活动聚合且完成态结果优先")

@@ -5,15 +5,36 @@
 //  Agent 工作台的连续任务叙事与最终结果界面。
 //
 //  对话正文继续由 AgentTimelineProjection 负责，执行过程优先消费持久化 Runtime Trace。
-//  原始 reasoning 不进入普通界面；只有 Provider 明确给出的 summary 可以展示和恢复。
+//  未结算的 raw reasoning token 不进入普通界面；Provider 已结算的 reasoning block
+//  与正文按原始顺序展示并可恢复。
 //
 
 import SwiftUI
 
+/// Runtime Trace 与已结算 assistant 消息的轻量合并行。两类事实继续分别持久化，
+/// 工作台只按共享 sequence 一级平铺，不把 Provider 的 parentID 映射成视觉缩进。
+private enum AgentRuntimeNarrativeRow: Identifiable {
+    case trace(AgentTraceEvent)
+    case process(AgentProcessSection)
+
+    var id: String {
+        switch self {
+        case .trace(let event): return "trace-\(event.id)"
+        case .process(let section): return "process-\(section.id)"
+        }
+    }
+
+    var sequence: Int {
+        switch self {
+        case .trace(let event): return event.sequence
+        case .process(let section): return section.items.first?.sequence ?? .max
+        }
+    }
+}
+
 struct AgentMessageTimelineView: View {
     @Environment(\.starcatInterfaceScale) private var interfaceScale
     @State private var expandedItemIDs: Set<String> = []
-    @State private var collapsedTraceGroupIDs: Set<String> = []
     @State private var traceMode: AgentTraceTimelineMode = .process
     @State private var processExpandedOverride: Bool?
     @State private var messageTail = ScrollTailController()
@@ -36,10 +57,12 @@ struct AgentMessageTimelineView: View {
             || viewModel.traceEvents.contains { [.failed, .waiting].contains($0.status) }
     }
 
-    /// Runtime Trace 取代旧过程区后，审批仍必须保留交互入口。这里只复用旧投影中的
-    /// approval section，避免把 tool/message 再展示一遍，也不伪造 Runtime 事件。
-    private var runtimeApprovalSections: [AgentProcessSection] {
-        presentation.processSections.filter { $0.kind == .approval }
+    /// Runtime Trace 取代旧过程区后，已结算 assistant step 与审批仍必须保留入口。
+    /// tool activity 继续只使用 Trace，避免同一工具在两个投影中重复展示。
+    private var runtimeNarrativeSections: [AgentProcessSection] {
+        presentation.processSections.filter { section in
+            section.kind == .progress || section.kind == .approval
+        }
     }
 
     private var traceSnapshot: AgentTraceTimelineSnapshot {
@@ -123,7 +146,6 @@ struct AgentMessageTimelineView: View {
             // 不沿用上一 Run 的手动选择或滚动意图。
             processExpandedOverride = nil
             expandedItemIDs.removeAll()
-            collapsedTraceGroupIDs.removeAll()
             traceMode = .process
             messageTail.resumeFollowing()
         }
@@ -237,12 +259,13 @@ struct AgentMessageTimelineView: View {
     /// Shell 保持一致，内容严格来自当前 backend 的实际事件。这里没有预设“分析/检索/生成”
     /// 阶段，因此无工具任务只出现 reasoning/plan，有工具任务才出现 tool/MCP/web 等行。
     private var runtimeTraceSection: some View {
-        // Snapshot 构建包含父子归组，单次 body 只能计算一次；审计统计若反复读取 computed
-        // property，会在长 Run 上重复遍历整棵事件树，重新引入滚动主线程压力。
+        // Snapshot 已按 sequence 缓存排序。主工作台不再递归展开 parent/child 树，
+        // 避免长 Run 每次刷新都重建层级、改变缩进并触发布局级联。
         let snapshot = traceSnapshot
-        let processRows = AgentTraceTimelinePresentation.processRows(
-            snapshot: snapshot,
-            collapsedNodeIDs: collapsedTraceGroupIDs
+        let narrativeSections = runtimeNarrativeSections
+        let narrativeRows = runtimeNarrativeRows(
+            traceEvents: snapshot.orderedEvents,
+            processSections: narrativeSections
         )
         return VStack(alignment: .leading, spacing: 8) {
             Button {
@@ -257,7 +280,7 @@ struct AgentMessageTimelineView: View {
                     Text("agent.workspace.timeline.execution")
                         .font(interfaceScale.font(.caption, weight: .semibold))
                         .foregroundStyle(.primary)
-                    Text("· \((snapshot.eventCount + runtimeApprovalSections.count).formatted())")
+                    Text("· \((snapshot.eventCount + narrativeSections.count).formatted())")
                         .font(interfaceScale.font(.captionSmall))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -291,21 +314,18 @@ struct AgentMessageTimelineView: View {
                         traceAuditSummary(snapshot)
                     }
 
-                    if traceMode == .process {
-                        ForEach(processRows) { row in
+                    ForEach(narrativeRows) { row in
+                        switch row {
+                        case .trace(let event):
                             traceRow(
-                                row.event,
-                                depth: row.depth,
-                                childCount: row.childCount
+                                event,
+                                showsSequence: traceMode == .allEvents
                             )
+                        case .process(let section):
+                            processRow(section)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 5)
                         }
-                    } else {
-                        ForEach(snapshot.orderedEvents) { event in
-                            traceRow(event, showsSequence: true)
-                        }
-                    }
-                    ForEach(runtimeApprovalSections) { section in
-                        processRow(section)
                     }
                 }
                 .padding(.leading, 20)
@@ -318,6 +338,41 @@ struct AgentMessageTimelineView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 两侧输入都已按 sequence 排列，使用双指针线性合并，避免 SwiftUI 每次求值时
+    /// 再做 O(n log n) 排序。相同 sequence 下 Trace 先展示，顺序稳定且不会搬动旧节点。
+    private func runtimeNarrativeRows(
+        traceEvents: [AgentTraceEvent],
+        processSections: [AgentProcessSection]
+    ) -> [AgentRuntimeNarrativeRow] {
+        var rows: [AgentRuntimeNarrativeRow] = []
+        rows.reserveCapacity(traceEvents.count + processSections.count)
+        var traceIndex = 0
+        var processIndex = 0
+
+        while traceIndex < traceEvents.count || processIndex < processSections.count {
+            if traceIndex == traceEvents.count {
+                rows.append(.process(processSections[processIndex]))
+                processIndex += 1
+                continue
+            }
+            if processIndex == processSections.count {
+                rows.append(.trace(traceEvents[traceIndex]))
+                traceIndex += 1
+                continue
+            }
+            let traceSequence = traceEvents[traceIndex].sequence
+            let processSequence = processSections[processIndex].items.first?.sequence ?? Int.max
+            if traceSequence <= processSequence {
+                rows.append(.trace(traceEvents[traceIndex]))
+                traceIndex += 1
+            } else {
+                rows.append(.process(processSections[processIndex]))
+                processIndex += 1
+            }
+        }
+        return rows
     }
 
     private func traceAuditSummary(_ snapshot: AgentTraceTimelineSnapshot) -> some View {
@@ -368,41 +423,24 @@ struct AgentMessageTimelineView: View {
 
     private func traceRow(
         _ event: AgentTraceEvent,
-        depth: Int = 0,
-        childCount: Int = 0,
         showsSequence: Bool = false
     ) -> some View {
-        let isCollapsed = collapsedTraceGroupIDs.contains(event.id)
-        return Button {
+        Button {
             // 中栏只承担步骤导航，结构化输入输出统一进入右侧检查器；避免大 JSON/Markdown
             // 在主 ScrollView 内展开后重复布局，并保持 Run Surface 的扫描节奏。
             viewModel.selectTraceEvent(event.id)
-            if childCount > 0 {
-                if isCollapsed {
-                    collapsedTraceGroupIDs.remove(event.id)
-                } else {
-                    collapsedTraceGroupIDs.insert(event.id)
-                }
-            }
         } label: {
             traceRowLabel(
                 event,
-                childCount: childCount,
-                isCollapsed: isCollapsed,
                 showsSequence: showsSequence
             )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
-        .accessibilityHint(
-            childCount > 0
-                ? String.l10n(isCollapsed ? "gettingStarted.expand" : "gettingStarted.collapse")
-                : String.l10n("agent.workspace.inspector.step.subtitle")
-        )
+        .accessibilityHint(String.l10n("agent.workspace.inspector.step.subtitle"))
         .padding(.horizontal, 7)
         .padding(.vertical, 5)
-        .padding(.leading, CGFloat(min(depth, 4)) * 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             if viewModel.selectedTraceEventID == event.id {
@@ -418,8 +456,6 @@ struct AgentMessageTimelineView: View {
 
     private func traceRowLabel(
         _ event: AgentTraceEvent,
-        childCount: Int,
-        isCollapsed: Bool,
         showsSequence: Bool
     ) -> some View {
         HStack(alignment: .top, spacing: 8) {
@@ -474,14 +510,7 @@ struct AgentMessageTimelineView: View {
                     .font(interfaceScale.font(.captionSmall))
                     .foregroundStyle(.secondary)
             }
-            if childCount > 0 {
-                Text("\(childCount.formatted())")
-                    .font(interfaceScale.font(.captionSmall))
-                    .foregroundStyle(.secondary)
-            }
-            Image(systemName: childCount > 0
-                ? (isCollapsed ? "chevron.right" : "chevron.down")
-                : "chevron.right")
+            Image(systemName: "chevron.right")
                 .font(interfaceScale.font(.captionSmall, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
@@ -518,11 +547,11 @@ struct AgentMessageTimelineView: View {
                 .font(interfaceScale.font(.captionSmall, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 16, height: 18)
-            Text(item.text)
-                .font(interfaceScale.font(.caption))
-                .foregroundStyle(.primary)
-                .lineSpacing(3)
-                .textSelection(.enabled)
+            AgentAssistantMessageContentView(
+                parts: item.messageParts,
+                fallbackText: item.text
+            )
+            .equatable()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -692,8 +721,12 @@ struct AgentMessageTimelineView: View {
     }
 
     private func finalAnswerRow(_ item: AgentTimelineItem) -> some View {
-        RAGMarkdownText(content: item.text)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        AgentAssistantMessageContentView(
+            parts: item.messageParts,
+            fallbackText: item.text
+        )
+        .equatable()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func inlineArtifactRow(_ item: AgentTimelineItem) -> some View {

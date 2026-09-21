@@ -10,7 +10,10 @@
 //    去重刷新；远端失败不会清空已经显示的缓存曲线。
 //  - 无可用缓存时显示同尺寸骨架；零 Star、私有或 Internal 仓库不读取历史、不展示占位。
 //  - 只输出固定模板和纯文本转义后的内容，远端字段不能成为标签、属性或脚本。
-//  - 全历史在 Snapshot 更新时只建模一次，最多保留 90 个绘制点；滚动期间不做 O(n) 计算。
+//  - 全历史在 Snapshot 更新时只建模一次：折线 ≤90 点，悬停/键盘/标注共用一份 ≤400 点
+//    的细节序列（data-points 与 data-annotations 的 index 必须同源）；滚动期间不做 O(n) 计算。
+//  - 生成在后台线程执行（图标表由主线程预热后传入），输入指纹相同则整段短路；
+//    过期结果按请求序号丢弃，切仓/切账号时指纹一并失效。
 //  - 头像先复用 Kingfisher 本地缓存，作为图片数据随卡片交给 WebView；缺图下载与历史刷新并行。
 //
 
@@ -66,6 +69,21 @@ final class ReadmeStarHistoryViewModel {
         }
     }
 
+    /// 一次卡片生成的输入指纹。
+    ///
+    /// 只有真正影响 HTML 的输入才进指纹。`Repo` 与 `StarHistorySnapshot` 都是
+    /// Equatable，整值比较既覆盖了当前用到的字段，也不会在将来新增字段时漏项
+    /// （手写字段清单一旦漏项，卡片就会停在旧内容上）。`nowDay` 取天粒度：
+    /// 指标里的"年龄/窗口天数"本来就只精确到天，同一天内结果必然相同。
+    struct RenderFingerprint: Equatable {
+        let snapshot: StarHistorySnapshot
+        let repo: Repo
+        let model: StarHistoryChartRenderModel
+        let avatarDataURI: String?
+        let localeIdentifier: String
+        let nowDay: Int
+    }
+
     private let repository: any RepoStarHistoryRepositoryProtocol
     private let projectVisibilityProvider: ProjectVisibilityProvider
     private var generation: UInt64 = 0
@@ -75,6 +93,10 @@ final class ReadmeStarHistoryViewModel {
     private var avatarDataURI: String?
     private var latestSnapshot: StarHistorySnapshot?
     private var isShowingLoading = false
+    /// 上一次已生成（或已判定无需生成）的输入指纹，用于短路重复生成。
+    private var lastRenderedFingerprint: RenderFingerprint?
+    /// 生成请求序号：渲染已经不在主线程，返回时可能已有更新的请求，用它丢弃过期结果。
+    private var renderRequestSequence: UInt64 = 0
 
     private(set) var renderState: ReadmeStarHistoryRenderState = .empty
 
@@ -108,6 +130,9 @@ final class ReadmeStarHistoryViewModel {
             completedIdentity = nil
             avatarDataURI = nil
             latestSnapshot = nil
+            // 指纹必须跟着身份一起失效：否则"切到别的仓库再切回来"时，输入指纹与
+            // 上一次相同会直接短路，而 renderState 已经被清空 —— 卡片就再也不出现了。
+            lastRenderedFingerprint = nil
             // 同仓元数据或语言更新时保留旧卡片，避免 SQLite await 期间先移除 DOM 导致滚动跳动。
             if changesRepository {
                 renderState = ReadmeStarHistoryRenderState(
@@ -168,7 +193,8 @@ final class ReadmeStarHistoryViewModel {
         // 先读持久缓存。即使后续网络较慢或失败，用户到达 README 末尾时也能立即看到旧曲线。
         if let cached = try? await repository.cached(repo: repo, range: .all),
            owns(requestedGeneration, identity: identity) {
-            applyIfVisible(cached, repo: repo, visibility: visibility, identity: identity, locale: locale)
+            await applyIfVisible(cached, repo: repo, visibility: visibility, identity: identity,
+                                 locale: locale, requestedGeneration: requestedGeneration)
         }
 
         // 两个结构化子任务各自发布就绪结果：曲线不等头像下载，头像也不等 History 网络刷新。
@@ -195,7 +221,8 @@ final class ReadmeStarHistoryViewModel {
                 forceRefresh: false
             )
             guard owns(requestedGeneration, identity: identity) else { return }
-            applyIfVisible(refreshed, repo: repo, visibility: visibility, identity: identity, locale: locale)
+            await applyIfVisible(refreshed, repo: repo, visibility: visibility, identity: identity,
+                                 locale: locale, requestedGeneration: requestedGeneration)
             hideLoadingIfNeeded(identity: identity)
         } catch {
             guard owns(requestedGeneration, identity: identity) else { return }
@@ -219,7 +246,8 @@ final class ReadmeStarHistoryViewModel {
         avatarDataURI = dataURI
         // 使用当前最新快照，避免头像晚到时把已刷新的曲线回退成最初的缓存数据。
         if let snapshot = latestSnapshot {
-            applyIfVisible(snapshot, repo: repo, visibility: visibility, identity: identity, locale: locale)
+            await applyIfVisible(snapshot, repo: repo, visibility: visibility, identity: identity,
+                                 locale: locale, requestedGeneration: requestedGeneration)
         }
     }
 
@@ -242,8 +270,9 @@ final class ReadmeStarHistoryViewModel {
         repo: Repo,
         visibility: ProjectVisibility?,
         identity: LoadIdentity,
-        locale: Locale
-    ) {
+        locale: Locale,
+        requestedGeneration: UInt64
+    ) async {
         guard ReadmeStarHistoryVisibilityPolicy.shouldDisplay(
             repo: repo,
             projectVisibility: visibility,
@@ -252,21 +281,48 @@ final class ReadmeStarHistoryViewModel {
 
         latestSnapshot = snapshot
         isShowingLoading = false
+        let createdAt = repo.createdAt.flatMap(ISO8601DateFormatter.githubDate(from:))
         let model = StarHistoryChartRenderModel(
             points: snapshot.points,
             range: .all,
-            repositoryCreatedAt: repo.createdAt.flatMap(ISO8601DateFormatter.githubDate(from:))
+            repositoryCreatedAt: createdAt
         )
-        guard let html = ReadmeStarHistoryHTMLRenderer.render(
+        let now = Date()
+        let fingerprint = RenderFingerprint(
             snapshot: snapshot,
-            model: model,
             repo: repo,
-            locale: locale,
-            avatarDataURI: avatarDataURI
-        ) else { return }
+            model: model,
+            avatarDataURI: avatarDataURI,
+            localeIdentifier: locale.identifier,
+            nowDay: Int((now.timeIntervalSince1970 / 86_400).rounded(.down))
+        )
+        // 网络刷新拿到同一份数据、头像到达但内容不变时，这次生成没有意义。
+        guard fingerprint != lastRenderedFingerprint else { return }
 
+        renderRequestSequence &+= 1
+        let sequence = renderRequestSequence
+        // AppKit 材料（图标、语言色）只能在主线程先取好；render 本身是纯计算。
+        let context = ReadmeStarHistoryHTMLRenderer.ReadmeStarHistoryRenderContext.prepare(language: repo.language)
+        let avatar = avatarDataURI
+        let html = await Task.detached(priority: .utility) {
+            ReadmeStarHistoryHTMLRenderer.render(
+                snapshot: snapshot,
+                model: model,
+                repo: repo,
+                locale: locale,
+                now: now,
+                avatarDataURI: avatar,
+                context: context
+            )
+        }.value
+
+        // 生成期间可能已经有更新的请求或切了仓库：过期结果直接丢弃，由新请求负责写回。
+        guard sequence == renderRequestSequence,
+              owns(requestedGeneration, identity: identity)
+        else { return }
+        lastRenderedFingerprint = fingerprint
         // 描述、Topics、覆盖水位变化也必须更新；相同 HTML 不重复触碰 DOM 和 hover 状态。
-        guard renderState.html != html else { return }
+        guard let html, renderState.html != html else { return }
         renderState = ReadmeStarHistoryRenderState(
             revision: "\(identity.revisionPrefix)|\(UUID().uuidString)",
             html: html
@@ -290,6 +346,7 @@ final class ReadmeStarHistoryViewModel {
     private func clearRenderState(identity: LoadIdentity) {
         latestSnapshot = nil
         isShowingLoading = false
+        lastRenderedFingerprint = nil
         renderState = ReadmeStarHistoryRenderState(
             revision: "\(identity.revisionPrefix)|empty",
             html: nil

@@ -71,6 +71,44 @@ struct SemanticIndexPrefetchLastRun: Codable, Equatable, Sendable {
     var failureMessage: String?
 }
 
+/// 当前 embedding 模型在候选仓（Star + 知识库）里的向量覆盖率。
+///
+/// 这是库存，不是一次刷新任务的 `processed/total`。Search Center 底栏空闲态用它。
+struct SemanticIndexCoverage: Equatable, Sendable {
+    let indexed: Int
+    let total: Int
+}
+
+/// Search Center 底栏向量 chip 的展示阶段。
+///
+/// `hidden`：覆盖率还没查过，避免先闪「未就绪」再跳到 1807/2037。
+enum SemanticIndexFooterPhase: Equatable, Sendable {
+    case hidden
+    case refreshing(processed: Int, total: Int)
+    case coverage(indexed: Int, total: Int)
+    case notReady
+
+    static func resolve(
+        isIndexing: Bool,
+        progress: (processed: Int, total: Int)?,
+        coverage: SemanticIndexCoverage?
+    ) -> SemanticIndexFooterPhase {
+        if isIndexing, let progress {
+            return .refreshing(processed: progress.processed, total: progress.total)
+        }
+        guard let coverage else { return .hidden }
+        if coverage.indexed <= 0 {
+            return .notReady
+        }
+        return .coverage(indexed: coverage.indexed, total: coverage.total)
+    }
+
+    var isRefreshing: Bool {
+        if case .refreshing = self { return true }
+        return false
+    }
+}
+
 /// 语义索引候选范围。
 ///
 /// `all` 是后台预拉的默认值：Starred 和知识库都属于用户主动维护的长期上下文。

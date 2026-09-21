@@ -7,7 +7,7 @@
 //  模块职责：
 //  - 控制“原文 / 分段双语 / 全文译文”的展示；
 //  - 把 WebView 提取的源段落交给 Service，并在每批完成后增量更新 DOM 渲染状态；
-//  - 维护进度、取消、缓存过期和错误提示。
+//  - 维护进度、取消、缓存过期、错误提示和「整篇已是目标语言」轻提示。
 //
 //  关键约束：
 //  - SwiftUI 是翻译状态的单一来源；WKWebView 只执行段落提取和 DOM 注入；
@@ -50,6 +50,9 @@ final class ReadmeTranslationViewModel {
     private(set) var translationErrorKind: TranslationErrorKind = .none
     private(set) var paywallContext: ProPaywallContext?
     private(set) var cacheIsStale = false
+    /// 「整篇已是目标语言」轻提示。同语种跳过对用户完全静默会让按钮像失灵，
+    /// 详情页据此弹一条自动关闭的中性 toast；toast 关闭时调 dismissAlreadyInTargetNotice() 复位。
+    private(set) var showsAlreadyInTargetNotice = false
 
     /// README 用 `readme:owner/name`；通知详情用 `inbox:threadId`。不能只用 repoId：
     /// 未入库通知没有稳定 GitHub id，全是 0 会让切线程时串台。
@@ -72,7 +75,8 @@ final class ReadmeTranslationViewModel {
         repo: Repo?,
         sourceHtml: String?,
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         prepare(
             identity: repo.map { Self.readmeIdentity(for: $0) },
@@ -80,7 +84,8 @@ final class ReadmeTranslationViewModel {
             cacheRepo: repo?.name,
             sourceHtml: sourceHtml,
             targetLanguage: targetLanguage,
-            mode: mode
+            mode: mode,
+            engine: engine
         )
     }
 
@@ -90,7 +95,8 @@ final class ReadmeTranslationViewModel {
         cacheRepo: String?,
         sourceHtml: String?,
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         currentTask?.cancel()
         currentTask = nil
@@ -102,6 +108,7 @@ final class ReadmeTranslationViewModel {
         completedSegmentCount = 0
         totalSegmentCount = 0
         cacheIsStale = false
+        showsAlreadyInTargetNotice = false
 
         guard let identity, let cacheOwner, let cacheRepo else {
             currentIdentity = nil
@@ -131,7 +138,8 @@ final class ReadmeTranslationViewModel {
                     owner: cacheOwner,
                     repo: cacheRepo,
                     targetLanguage: requestedLanguage,
-                    mode: requestedMode
+                    mode: requestedMode,
+                    engine: engine
                 )
                 guard self.isCurrentGeneration(
                     identity: requestedIdentity,
@@ -157,13 +165,15 @@ final class ReadmeTranslationViewModel {
         to language: ReadmeTranslationLanguage,
         repo: Repo?,
         sourceHtml: String?,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         prepare(
             repo: repo,
             sourceHtml: sourceHtml,
             targetLanguage: language,
-            mode: mode
+            mode: mode,
+            engine: engine
         )
     }
 
@@ -171,13 +181,15 @@ final class ReadmeTranslationViewModel {
         to mode: ReadmeTranslationMode,
         repo: Repo?,
         sourceHtml: String?,
-        targetLanguage: ReadmeTranslationLanguage
+        targetLanguage: ReadmeTranslationLanguage,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         prepare(
             repo: repo,
             sourceHtml: sourceHtml,
             targetLanguage: targetLanguage,
-            mode: mode
+            mode: mode,
+            engine: engine
         )
     }
 
@@ -188,7 +200,8 @@ final class ReadmeTranslationViewModel {
         sourceHtml: String,
         sourceSegments: [ReadmeSourceSegment],
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         toggleTranslation(
             identity: Self.readmeIdentity(for: repo),
@@ -198,7 +211,8 @@ final class ReadmeTranslationViewModel {
             sourceHtml: sourceHtml,
             sourceSegments: sourceSegments,
             targetLanguage: targetLanguage,
-            mode: mode
+            mode: mode,
+            engine: engine
         )
     }
 
@@ -210,7 +224,8 @@ final class ReadmeTranslationViewModel {
         sourceHtml: String,
         sourceSegments: [ReadmeSourceSegment],
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         if case .showingTranslation = displayMode {
             displayMode = .showingOriginal
@@ -232,6 +247,7 @@ final class ReadmeTranslationViewModel {
             sourceSegments: sourceSegments,
             targetLanguage: targetLanguage,
             mode: mode,
+            engine: engine,
             force: false
         )
     }
@@ -245,7 +261,8 @@ final class ReadmeTranslationViewModel {
         sourceHtml: String,
         sourceSegments: [ReadmeSourceSegment],
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         guard case .showingTranslation = displayMode, !isTranslating else { return }
         let done = Set(renderState.translations.map(\.id))
@@ -263,6 +280,7 @@ final class ReadmeTranslationViewModel {
             sourceSegments: sourceSegments,
             targetLanguage: targetLanguage,
             mode: mode,
+            engine: engine,
             force: false
         )
     }
@@ -272,7 +290,8 @@ final class ReadmeTranslationViewModel {
         sourceHtml: String,
         sourceSegments: [ReadmeSourceSegment],
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         regenerate(
             identity: Self.readmeIdentity(for: repo),
@@ -282,7 +301,8 @@ final class ReadmeTranslationViewModel {
             sourceHtml: sourceHtml,
             sourceSegments: sourceSegments,
             targetLanguage: targetLanguage,
-            mode: mode
+            mode: mode,
+            engine: engine
         )
     }
 
@@ -294,7 +314,8 @@ final class ReadmeTranslationViewModel {
         sourceHtml: String,
         sourceSegments: [ReadmeSourceSegment],
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine = .ai
     ) {
         startTranslation(
             identity: identity,
@@ -305,6 +326,7 @@ final class ReadmeTranslationViewModel {
             sourceSegments: sourceSegments,
             targetLanguage: targetLanguage,
             mode: mode,
+            engine: engine,
             force: true
         )
     }
@@ -322,6 +344,10 @@ final class ReadmeTranslationViewModel {
     func dismissError() {
         errorMessage = nil
         translationErrorKind = .none
+    }
+
+    func dismissAlreadyInTargetNotice() {
+        showsAlreadyInTargetNotice = false
     }
 
     func dismissPaywall() {
@@ -367,14 +393,19 @@ final class ReadmeTranslationViewModel {
         sourceSegments: [ReadmeSourceSegment],
         targetLanguage: ReadmeTranslationLanguage,
         mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine,
         force: Bool
     ) {
         let pending = TranslationSourceLanguageGate.segmentsNeedingTranslation(
             sourceSegments,
             target: targetLanguage
         )
-        // 全部已是目标语言：不转圈、不打接口。混排时只让 Service 把对不上的段送出去。
-        guard !pending.isEmpty else { return }
+        // 全部已是目标语言：不转圈、不打接口，但置轻提示，否则用户点击像按钮失灵。
+        // 混排时只让 Service 把对不上的段送出去。
+        guard !pending.isEmpty else {
+            showsAlreadyInTargetNotice = true
+            return
+        }
 
         currentTask?.cancel()
         currentIdentity = identity
@@ -398,6 +429,7 @@ final class ReadmeTranslationViewModel {
                 sourceSegments: sourceSegments,
                 targetLanguage: targetLanguage,
                 mode: mode,
+                engine: engine,
                 force: force
             )
         }
@@ -412,6 +444,7 @@ final class ReadmeTranslationViewModel {
         sourceSegments: [ReadmeSourceSegment],
         targetLanguage: ReadmeTranslationLanguage,
         mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine,
         force: Bool
     ) async {
         let requestedIdentity = identity
@@ -423,7 +456,8 @@ final class ReadmeTranslationViewModel {
                 owner: cacheOwner,
                 repo: cacheRepo,
                 targetLanguage: targetLanguage,
-                mode: mode
+                mode: mode,
+                engine: engine
             )
             guard isCurrentGeneration(
                 identity: requestedIdentity,
@@ -464,7 +498,8 @@ final class ReadmeTranslationViewModel {
                     sourceHtml: sourceHtml,
                     sourceSegments: sourceSegments,
                     targetLanguage: targetLanguage,
-                    mode: mode
+                    mode: mode,
+                    engine: engine
                 ),
                 cached: cached,
                 onBatch: { [weak self] rendered, completed, total in
@@ -515,6 +550,11 @@ final class ReadmeTranslationViewModel {
             ) else { return }
             isTranslating = false
             currentTask = nil
+            // 文档级投票判同语种：与 VM 层整篇跳过同一处理，轻提示而非报错。
+            showsAlreadyInTargetNotice = true
+        } catch SystemTranslationError.cancelled {
+            // 系统翻译的取消走自定义错误类型，不继承 CancellationError；
+            // 与上面取消分支同理，状态已由 cancelTranslation 复位，不能弹错误提示。
         } catch {
             guard isCurrentGeneration(
                 identity: requestedIdentity,
@@ -524,17 +564,30 @@ final class ReadmeTranslationViewModel {
             isTranslating = false
             currentTask = nil
             presentPaywallIfNeeded(error)
+            let translationService: String
+            let diagnosticCategory: String
+            switch engine {
+            case .system:
+                translationService = String.l10n("readme.translate.engine.system")
+                diagnosticCategory = "system-translation"
+            case .google:
+                translationService = String.l10n("readme.translate.engine.google")
+                diagnosticCategory = "google-translation"
+            case .ai:
+                translationService = "AI"
+                diagnosticCategory = "ai"
+            }
             let friendly = UserFacingError.map(
                 error,
                 operation: String.l10n("diagnostics.operation.translateReadme"),
-                service: "AI"
+                service: translationService
             )
             errorMessage = friendly.message
             translationErrorKind = classifyError(error)
             friendly.record(
-                category: "ai",
+                category: diagnosticCategory,
                 operation: "readmeTranslation.perform",
-                service: "ai-provider"
+                service: translationService
             )
         }
     }

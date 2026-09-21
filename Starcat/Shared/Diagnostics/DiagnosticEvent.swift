@@ -143,13 +143,45 @@ struct DiagnosticEvent: Codable, Sendable, Equatable {
 
     /// 把任意错误收敛成可导出的最小摘要。GRDB 错误可能在描述中附带 SQL 参数，
     /// 因此只保留类型、domain 与 code；其它错误统一脱敏并截断。
+    ///
+    /// `DecodingError` 的 `localizedDescription` 在中文系统上会收成「未能读取数据，
+    /// 因为它的格式不正确」，丢掉 codingPath。诊断必须留下 path + debugDescription，
+    /// 才能区分「未知 provider」和真正的坏 JSON。
     static func summarize(_ error: Error) -> String {
         let typeName = String(reflecting: type(of: error))
         if typeName.contains("GRDB.DatabaseError") {
             let nsError = error as NSError
             return "\(typeName) domain=\(nsError.domain) code=\(nsError.code)"
         }
+        if let decoding = error as? DecodingError {
+            return sanitize(summarizeDecodingError(decoding), maxLength: 4_096)
+        }
         return sanitize("\(typeName): \(error.localizedDescription)", maxLength: 4_096)
+    }
+
+    private static func summarizeDecodingError(_ error: DecodingError) -> String {
+        switch error {
+        case .typeMismatch(let type, let context):
+            return "Swift.DecodingError.typeMismatch(\(type), path=\(codingPath(context)) \(context.debugDescription))"
+        case .valueNotFound(let type, let context):
+            return "Swift.DecodingError.valueNotFound(\(type), path=\(codingPath(context)) \(context.debugDescription))"
+        case .keyNotFound(let key, let context):
+            return "Swift.DecodingError.keyNotFound(\(key.stringValue), path=\(codingPath(context)) \(context.debugDescription))"
+        case .dataCorrupted(let context):
+            return "Swift.DecodingError.dataCorrupted(path=\(codingPath(context)) \(context.debugDescription))"
+        @unknown default:
+            return "Swift.DecodingError: \(error)"
+        }
+    }
+
+    private static func codingPath(_ context: DecodingError.Context) -> String {
+        let parts = context.codingPath.map { key -> String in
+            if let index = key.intValue {
+                return "[\(index)]"
+            }
+            return key.stringValue
+        }
+        return parts.isEmpty ? "<root>" : parts.joined(separator: ".")
     }
 
     private static func sanitize(_ value: String, maxLength: Int) -> String {

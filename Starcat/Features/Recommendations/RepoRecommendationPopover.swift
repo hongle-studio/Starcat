@@ -18,8 +18,6 @@
 //  v1.1 修订（2026-06-29）：
 //  - items 改为 `[(item, card, hit)]` 预转换三元组，由 Scaffold 在 popover builder 里
 //    用 `StarredRegistry` 一次性转好；popover 不再访问 registry / 不再 `asCardData()` 调用
-//  - UnifiedRepoRow 加 `showStarredCheckmark: true` —— 已 star 的推荐项显示绿 ✓（与
-//    Trending 列表完全同形）
 //  - onOpenInNewWindow 闭包删除（Q3 决策：单击/Cmd/中键 行为统一）
 //
 //  旧版本的 `RepoRecommendationCard` 自定义 layout 已删除（Q4 + 铁律 #1）。
@@ -141,13 +139,10 @@ struct RepoRecommendationPopover: View {
             // 在调用层完成，popover 不关心具体路由。
             onOpen(recommendation.item)
         } label: {
-            // showStarredCheckmark: true 让 UnifiedRepoRow 在已 star 的推荐项上
-            // 渲染绿色 ✓（与 Trending 列表完全同形）
             UnifiedRepoRow(
                 card: recommendation.card,
                 semanticHit: recommendation.hit,
-                semanticScoreFormatKey: "search.detail.score.format",
-                showStarredCheckmark: true
+                semanticScoreFormatKey: "search.detail.score.format"
             )
         }
         .buttonStyle(.plain)

@@ -71,36 +71,14 @@ struct RepoAIInsight: Codable, Equatable, Sendable {
     /// `extractedText` 或 snippet，避免把第三方网页正文长期塞进 AI 摘要缓存。
     var externalContextSources: [AIExternalContextSource]? = nil
 
-    /// Y9.1（2026-06-14）：摘要生成那一刻的"上下文配置快照"。
+    /// Y9.1（2026-06-14）：摘要生成时的上下文配置快照。
     ///
-    /// **为什么需要这个字段**：
-    /// 用 `contextMetadata != nil` 反推「当时是否启用代码上下文」是不可靠的——
-    /// `contextMetadata == nil` 既可能是用户当时关了开关，也可能是当时 RepoContextPacker
-    /// 下载失败 / 仓库私有 / 网络异常等降级路径。两种情况下的"用户意图"完全不同，
-    /// 但靠 insight 现状无法区分。同样地，`externalContextMarkdown == nil` 不能区分
-    /// 「用户当时关了 anysearch」vs「anysearch 调用失败了」。
-    ///
-    /// **解决方案**：在 `generateInsight` 完成时把当时的 settings effective 值快照下来，
-    /// 后续 `isInsightStaleAgainstCurrentSettings` 拿快照与当前 settings 对比，准确判定
-    /// 「用户翻过开关」这一事件。
-    ///
-    /// **向后兼容**：旧缓存 JSON 缺该字段 → Codable 反序列化为 nil → `isStale` 函数
-    /// guard nil 直接返回 false（不报 stale），让历史 insight 自动豁免本次新加的判定，
-    /// 避免出现"用户什么都没动但每次都提示设置已变更"的误报（dong4j 2026-06-14 反馈）。
-    ///
-    /// **存 effective 值而非原始 settings 字段**：
-    ///   - `externalContextEnabled`、`externalSearchAllowPrivateRepos`
-    ///     是相互制约的开关，存原始值会让"是否真的带了外网"
-    ///     的判定散落到调用方；
-    ///   - 直接存"effective allowed = true/false"，stale 判定就是两个 bool 比较，最干净。
+    /// 字段继续保留以维持既有摘要缓存的序列化结构，但界面不再将它与当前设置比较，
+    /// 也不会再因为用户切换代码上下文或外部搜索配置而提示重新生成。
     var generationContextSettings: GenerationContextSettings?
 }
 
-/// Y9.1（2026-06-14）：摘要生成时的"上下文配置快照"，用于精准判定 insight 是否
-/// 与当前 settings 不一致（用户翻过开关）。
-///
-/// **存 effective 值而非原始 settings 字段**：见 `RepoAIInsight.generationContextSettings`
-/// 的注释，避免 stale 判定逻辑散落。
+/// Y9.1（2026-06-14）：摘要生成时写入既有缓存的上下文配置快照。
 struct GenerationContextSettings: Codable, Equatable, Sendable {
     /// 生成时用户是否想要代码上下文（本次覆盖或当时的全局开关）。
     var codeContextEnabled: Bool

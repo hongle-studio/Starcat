@@ -574,7 +574,9 @@ private final class KnowledgeRAGBrowserViewModel {
         workspaceError = RAGWorkspaceError(error: error)
     }
 
-    var embeddingModel: String { dependencies.settings.aiEmbeddingTask.resolvedModelName }
+    var embeddingModel: String {
+        dependencies.settings.resolvedAITask(dependencies.settings.aiEmbeddingTask, type: .embedding).resolvedModelName
+    }
     var configuredEmbeddingModelName: String? { dependencies.settings.configuredEmbeddingModelName }
     var embeddingConfigurationIssue: AIEmbeddingError? { dependencies.settings.embeddingConfigurationIssue }
     var selectedCandidate: RAGRepoCandidate? { candidates.first(where: { $0.repo.id == selectedRepoID }) }

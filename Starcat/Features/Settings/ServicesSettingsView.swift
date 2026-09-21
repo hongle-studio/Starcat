@@ -153,7 +153,7 @@ struct ServicesSettingsTab: View {
                             ProgressView().controlSize(.small)
                         } else {
                             Image(systemName: "network")
-                                .font(.system(size: 15, weight: .medium))
+                                .font(SettingsIconMetrics.standardGlyph)
                         }
                         Text("settings.services.testConnection")
                     }
@@ -165,8 +165,7 @@ struct ServicesSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 service.titleKey,
-                systemImage: service.systemImage,
-                style: .prominent
+                systemImage: service.systemImage
             )
         }
     }
@@ -271,7 +270,7 @@ struct ServicesSettingsTab: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 15, weight: .medium))
+                .font(SettingsIconMetrics.standardGlyph)
                 .frame(
                     width: ServiceFieldLayout.iconSlotSize,
                     height: ServiceFieldLayout.iconSlotSize

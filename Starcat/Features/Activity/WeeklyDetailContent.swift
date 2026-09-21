@@ -12,6 +12,7 @@
 //
 //  本 ContentView 负责：
 //  - `ReadmeStateView`：README WebView 渲染
+//  - 已 star 时经 `RepoDetailInsightsHost` 露出 README / 洞察切换
 //  - **不**渲染贡献者列（trending 独有;weekly 没有 contributors 字段）
 //  - **不**渲染 weekly issue 按钮（由 Scaffold 的 trailingActions 接入）
 //
@@ -65,41 +66,45 @@ struct WeeklyDetailContent: View {
     @Environment(AppSettings.self) private var settings
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !sourceEvents.isEmpty {
-                WeeklySourceEventsSection(events: sourceEvents)
-                Divider()
+        // 已 star 时与星标详情共用 README / 洞察切换；来源时间线只出现在 README 模式。
+        RepoDetailInsightsHost(repo: repo, onScrollReport: onScrollReport) {
+            VStack(spacing: 0) {
+                if !sourceEvents.isEmpty {
+                    WeeklySourceEventsSection(events: sourceEvents)
+                    Divider()
+                }
+                ReadmeStateView(
+                    state: readmeVM.state,
+                    contentScope: .trending(owner: repo.owner, repo: repo.name),
+                    // 与其他详情页共用目录型 base URL，末尾 `/` 是相对链接保留 HEAD 的关键。
+                    baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
+                    onScrollReportChange: onScrollReport,
+                    // R-01 v1.0 设计 ⑬：翻译按钮覆盖所有 repo 详情。
+                    // 仅本地命中（repo.id != 0）才接入——ephemeral repo 用 id=0 走翻译
+                    // 缓存会撞坏 `readme_translations(repo_id)` 命名空间。
+                    translationControl: repo.id != 0 ? ReadmeTranslationControl(
+                        repo: repo,
+                        translationVM: translationVM,
+                        settings: settings
+                    ) : nil,
+                    starHistoryRepo: repo
+                ) {
+                    // HOM-201 P1-4（2026-06-14）:onRetry 是用户主动刷新(底部 cacheFooter 刷新按钮),
+                    // 必须绕过 softTtl 短路,否则按 6h TTL 6 小时内会被忽略不刷新。
+                    readmeVM.loadTrending(
+                        owner: repo.owner,
+                        repo: repo.name,
+                        isLoggedIn: authSession.state.isAuthenticated,
+                        forceRefresh: true
+                    )
+                } onLogin: {
+                    // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
+                    // （让用户在 sheet 内可选 Device Flow / PAT，详见 AuthSession.requestLoginSheet 注释）
+                    authSession.requestLoginSheet()
+                }
+                .environment(readmeVM)
             }
-            ReadmeStateView(
-                state: readmeVM.state,
-                contentScope: .trending(owner: repo.owner, repo: repo.name),
-                // 与其他详情页共用目录型 base URL，末尾 `/` 是相对链接保留 HEAD 的关键。
-                baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
-                onScrollReportChange: onScrollReport,
-                // R-01 v1.0 设计 ⑬：翻译按钮覆盖所有 repo 详情。
-                // 仅本地命中（repo.id != 0）才接入——ephemeral repo 用 id=0 走翻译
-                // 缓存会撞坏 `readme_translations(repo_id)` 命名空间。
-                translationControl: repo.id != 0 ? ReadmeTranslationControl(
-                    repo: repo,
-                    translationVM: translationVM,
-                    settings: settings
-                ) : nil
-            ) {
-                // HOM-201 P1-4（2026-06-14）:onRetry 是用户主动刷新(底部 cacheFooter 刷新按钮),
-                // 必须绕过 softTtl 短路,否则按 6h TTL 6 小时内会被忽略不刷新。
-                readmeVM.loadTrending(
-                    owner: repo.owner,
-                    repo: repo.name,
-                    isLoggedIn: authSession.state.isAuthenticated,
-                    forceRefresh: true
-                )
-            } onLogin: {
-                // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
-                // （让用户在 sheet 内可选 Device Flow / PAT，详见 AuthSession.requestLoginSheet 注释）
-                authSession.requestLoginSheet()
-            }
-            .environment(readmeVM)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -7,7 +7,7 @@
 //  模块职责：
 //  - 把 repo 元数据 / README / AI 摘要 / 用户笔记拼成 `IndexedSnapshot`，调用 embedding API
 //    向量化后落 SQLite；
-//  - 搜索时只生成 query 向量；repo 向量缺失或 diff 超阈值时按批补索引；
+//  - 搜索时优先复用会话内同一句 + 同一模型的 query 向量；repo 向量缺失或 diff 超阈值时按批补索引；
 //  - 用 cosine similarity 在 Swift 内存里排名（不依赖 sqlite-vss / vec 扩展）。
 //
 //  关键约束：
@@ -16,7 +16,7 @@
 //  - "要不要重建向量"由 `IndexedTextDiff.shouldRebuild` 决定，**不再**走旧的 `content_hash`
 //    全等比对——避免 stars / forks 等高频字段误触发；
 //  - `refreshIndex(for:force:)`：`force: true` 给设置页全量重建；`force: false` 给
-//    工具栏刷新，只补缺 / 过期，不整表重打。
+//    Search Center 底栏向量 chip 刷新，只补缺 / 过期，不整表重打。
 //  - `refreshIndexIfChanged(for:)` = 单 repo 路径，供 README 加载完毕 / AI 摘要生成 /
 //    用户笔记保存等触发。debounce / 节流由调用方负责。
 //
@@ -52,6 +52,45 @@ struct CosineSimilarityQuery: Sendable {
     }
 }
 
+/// 会话级 query 向量短缓存。同一句 + 同一 embedding 模型只打一次 API。
+///
+/// Search Center 切全部 / 本地会反复搜同一句；显式提交同一句也会命中。
+/// 容量有上限，避免用户换了很多 query 后缓存无限涨。
+struct QueryEmbeddingSessionCache: Equatable, Sendable {
+    struct Key: Hashable, Sendable {
+        let query: String
+        let model: String
+    }
+
+    private var values: [Key: [Float]] = [:]
+    private var recency: [Key] = []
+    let limit: Int
+
+    init(limit: Int = 32) {
+        self.limit = max(1, limit)
+    }
+
+    mutating func value(for key: Key) -> [Float]? {
+        guard values[key] != nil else { return nil }
+        touch(key)
+        return values[key]
+    }
+
+    mutating func store(_ vector: [Float], for key: Key) {
+        values[key] = vector
+        touch(key)
+        while recency.count > limit {
+            let evicted = recency.removeFirst()
+            values[evicted] = nil
+        }
+    }
+
+    private mutating func touch(_ key: Key) {
+        recency.removeAll { $0 == key }
+        recency.append(key)
+    }
+}
+
 struct SemanticSearchHit: Equatable, Sendable {
     let repo: Repo
     /// 原始 cosine similarity，[-1, 1]，文本 embedding 实际范围 ~[0.3, 0.95]。
@@ -59,7 +98,7 @@ struct SemanticSearchHit: Equatable, Sendable {
     let score: Double
     /// A 重标定后的展示分（2026-06-14 dong4j 改造）：
     /// 经验区间 `[0.30, 0.95]` 线性归一到 `[0, 1]`，再叠加 B 字面命中 boost
-    /// （fullName/description/topics 包含 query → 强制 ≥ 0.95）。
+    /// （fullName/description/topics/已索引 body 包含 query → 强制 ≥ 0.95）。
     /// **HomeViewModel 阈值过滤的判定字段就是它**——让设置页 75% 滑杆与列表 75% 数字
     /// 同语义。FTS hit 的 +0.15 boost 不计入 displayScore（FTS 命中是召回信号，
     /// 不是相似度本身），只在排序阶段生效。
@@ -85,7 +124,7 @@ enum SemanticSearchError: Error, LocalizedError, Equatable {
     }
 }
 
-/// 工具栏刷新进度：已完成仓数 = diff 跳过 + 已写入 embedding。
+/// 底栏向量 chip 刷新进度：已完成仓数 = diff 跳过 + 已写入 embedding。
 ///
 /// 必须是 class：`ensureIndexed` 会在多次 `await` 之间更新进度。若用 struct，
 /// Swift 6 会把跨挂起点的 `mutating` 判成并发捕获局部变量，直接编不过。
@@ -145,6 +184,8 @@ final class SemanticSearchService {
     private let keychain: any KeychainManaging
     private let batchSize: Int
     private let entitlementGate: EntitlementGate?
+    /// 同一句 + 同一模型的 query 向量只打一次 embedding API。
+    private var queryEmbeddingCache = QueryEmbeddingSessionCache()
 
     init(
         embeddingRepository: any RepoEmbeddingRepositoryProtocol,
@@ -195,7 +236,7 @@ final class SemanticSearchService {
         limit: Int = 80,
         usageContext: AIUsageContext = AIUsageContext(feature: .semanticSearch, phase: "query")
     ) async throws -> [SemanticSearchHit] {
-        try entitlementGate?.requirePro(.semanticSearch)
+        try entitlementGate?.requirePro(.semanticSearch, usesLocalOnly: settings.isEmbeddingTaskResolvedToLocalAI)
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         guard !candidates.isEmpty else { return [] }
@@ -209,7 +250,7 @@ final class SemanticSearchService {
         )
         guard !stored.isEmpty else { throw SemanticSearchError.noVectors }
 
-        let queryVector = try await client.embedding(input: trimmed, model: model)
+        let queryVector = try await embedding(forQuery: trimmed, model: model, client: client)
         let cosineQuery = CosineSimilarityQuery(queryVector)
 
         // 用 (hit, sortScore) 元组临时承载排序分；最终输出只暴露 hit。
@@ -220,8 +261,17 @@ final class SemanticSearchService {
             let cosine = cosineQuery.similarity(to: vector)
             guard cosine.isFinite else { return nil }
 
-            // B：字面命中 boost。effectiveScore 用于 displayScore 计算 + 排序基础。
-            let literalHit = Self.hasLiteralMatch(repo: repo, query: trimmed)
+            // B：字面命中 boost。先看仓卡片字段；没命中再解码 snapshot，扫已索引的
+            // body（摘要+README）和简介。README 标题这类句子不在 FTS 里，只能走这里。
+            let snapshot: IndexedSnapshot?
+            let literalHit: Bool
+            if Self.hasLiteralMatch(repo: repo, query: trimmed) {
+                snapshot = nil
+                literalHit = true
+            } else {
+                snapshot = try? IndexedSnapshot.decode(json: row.snapshotJson)
+                literalHit = Self.hasLiteralMatch(repo: repo, query: trimmed, snapshot: snapshot)
+            }
             let effectiveScore = literalHit ? max(cosine, Self.literalBoostFloor) : cosine
 
             // C：FTS hit 仅给排序加权，不影响 displayScore（FTS 是召回信号不是相似度）。
@@ -242,7 +292,8 @@ final class SemanticSearchService {
                     query: trimmed,
                     displayScore: displayScore,
                     literalHit: literalHit,
-                    ftsHit: ftsHitIDs.contains(repo.id)
+                    ftsHit: ftsHitIDs.contains(repo.id),
+                    snapshot: snapshot
                 )
             )
             return (hit, sortScore)
@@ -255,7 +306,7 @@ final class SemanticSearchService {
     ///
     /// - `force: true`：跳过 diff，每个仓都重打 embedding。设置页「全量重建」用。
     /// - `force: false`：只处理本地没有当前模型向量、或 snapshot diff 超阈值的仓。
-    ///   工具栏刷新按钮走这条，避免已经齐的库被整表重烧配额。
+    ///   Search Center 底栏向量 chip 走这条，避免已经齐的库被整表重烧配额。
     ///
     /// 搜索时缺失索引也会走 `ensureIndexed(force: false)` 自动补缺。
     ///
@@ -266,7 +317,7 @@ final class SemanticSearchService {
         force: Bool = true,
         onProgress: ((Int, Int) -> Void)? = nil
     ) async throws -> Int {
-        try entitlementGate?.requirePro(.semanticSearch)
+        try entitlementGate?.requirePro(.semanticSearch, usesLocalOnly: settings.isEmbeddingTaskResolvedToLocalAI)
         guard !repos.isEmpty else { return 0 }
         let (client, model) = try makeClient(
             usageContext: AIUsageContext(feature: .semanticSearch, phase: "indexing")
@@ -310,7 +361,7 @@ final class SemanticSearchService {
     @discardableResult
     func refreshIndexIfChanged(for repos: [Repo]) async -> Int {
         do {
-            try entitlementGate?.requirePro(.semanticSearch)
+            try entitlementGate?.requirePro(.semanticSearch, usesLocalOnly: settings.isEmbeddingTaskResolvedToLocalAI)
             let (client, model) = try makeClient(
                 usageContext: AIUsageContext(feature: .semanticSearch, phase: "indexing")
             )
@@ -334,7 +385,7 @@ final class SemanticSearchService {
             throw AIEmbeddingError.missingAPIKey
         }
 
-        return (try OpenAIClient(configuration: AIClientConfiguration(
+        return (try AIClientFactory.make(configuration: AIClientConfiguration(
             providerID: selection.profile.id,
             provider: selection.profile.provider,
             apiKey: apiKey,
@@ -344,6 +395,33 @@ final class SemanticSearchService {
             timeoutInterval: selection.parameters.timeoutSeconds,
             usageContext: usageContext
         )), selection.modelName)
+    }
+
+    /// 同一句 + 同一模型命中会话缓存；未命中才打 embedding API。
+    private func embedding(
+        forQuery query: String,
+        model: String,
+        client: any AIClientProtocol
+    ) async throws -> [Float] {
+        let key = QueryEmbeddingSessionCache.Key(query: query, model: model)
+        if let cached = queryEmbeddingCache.value(for: key) {
+            return cached
+        }
+        let vector = try await client.embedding(input: query, model: model)
+        queryEmbeddingCache.store(vector, for: key)
+        return vector
+    }
+
+    /// 当前 embedding 模型在候选仓里已有向量的条数。解析模型失败时返回 0，由 UI 显示「未就绪」。
+    func indexedCount(repoIDs: [Int64]) async throws -> Int {
+        let model: String
+        do {
+            model = try settings.resolveEmbeddingSelection().modelName
+        } catch {
+            return 0
+        }
+        guard !model.isEmpty else { return 0 }
+        return try await embeddingRepository.countEmbeddings(model: model, repoIDs: repoIDs)
     }
 
     /// 核心：确保 `repos` 的向量索引存在且最新。
@@ -532,8 +610,8 @@ final class SemanticSearchService {
     nonisolated static let displayScoreHighAnchor: Double = 0.95
 
     /// B 字面命中 boost 阈值。effectiveScore = max(cosine, literalBoostFloor)。
-    /// 0.95 是经验值：字面命中的 repo 至少和"高度相关"同档，避免出现"我搜的词就在 description
-    /// 里，但相似度才 60%" 的反直觉体验。
+    /// 0.95 是经验值：字面命中的 repo 至少和"高度相关"同档，避免出现"我搜的词就在
+    /// description / 已索引 README 里，但相似度才 60%" 的反直觉体验。
     nonisolated static let literalBoostFloor: Double = 0.95
 
     /// C FTS hit 排序加权系数。固定加在 sortScore 上（非 displayScore）。
@@ -564,13 +642,26 @@ final class SemanticSearchService {
         return 1
     }
 
-    /// 判定 query 字符串是否字面出现在 repo 的 fullName / description / topics 任一字段。
+    /// 判定 query 是否字面出现在仓卡片字段，或已索引 snapshot 的 body / 简介。
+    ///
+    /// `snapshot` 来自 `repo_embeddings.snapshot_json`：刷新后 body 含摘要+README。
     /// 用 `localizedLowercase + contains` 做大小写不敏感子串匹配；不做分词、不做正则。
-    nonisolated static func hasLiteralMatch(repo: Repo, query: String) -> Bool {
+    /// 不扫笔记：笔记已走 FTS，且不应把私有笔记字面命中抬到 95% 展示分。
+    nonisolated static func hasLiteralMatch(
+        repo: Repo,
+        query: String,
+        snapshot: IndexedSnapshot? = nil
+    ) -> Bool {
         let lowerQuery = query.localizedLowercase
         if repo.fullName.localizedLowercase.contains(lowerQuery) { return true }
         if let description = repo.description, description.localizedLowercase.contains(lowerQuery) { return true }
         if let topics = repo.topics, topics.localizedLowercase.contains(lowerQuery) { return true }
+        guard let snapshot else { return false }
+        if snapshot.body.localizedLowercase.contains(lowerQuery) { return true }
+        if let description = snapshot.metadata.description,
+           description.localizedLowercase.contains(lowerQuery) {
+            return true
+        }
         return false
     }
 
@@ -581,7 +672,8 @@ final class SemanticSearchService {
         query: String,
         displayScore: Double,
         literalHit: Bool,
-        ftsHit: Bool
+        ftsHit: Bool,
+        snapshot: IndexedSnapshot? = nil
     ) -> String {
         let scoreText = "\(Int((max(0, min(displayScore, 1)) * 100).rounded()))%"
         let lowerQuery = query.localizedLowercase
@@ -593,6 +685,15 @@ final class SemanticSearchService {
         }
         if let topics = repo.topics, topics.localizedLowercase.contains(lowerQuery) {
             return String(format: String.l10n("ai.semanticSearch.reason.topicsMatchFormat"), scoreText)
+        }
+        if let snapshot {
+            if snapshot.body.localizedLowercase.contains(lowerQuery) {
+                return String(format: String.l10n("ai.semanticSearch.reason.contentMatchFormat"), scoreText)
+            }
+            if let description = snapshot.metadata.description,
+               description.localizedLowercase.contains(lowerQuery) {
+                return String(format: String.l10n("ai.semanticSearch.reason.descriptionMatchFormat"), scoreText)
+            }
         }
         if ftsHit {
             return String(format: String.l10n("ai.semanticSearch.reason.notesMatchFormat"), scoreText)

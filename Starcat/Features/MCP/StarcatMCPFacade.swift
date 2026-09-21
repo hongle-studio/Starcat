@@ -366,7 +366,8 @@ final class StarcatMCPFacade {
         // 未完成 Provider 验证时仍使用用户已选择的模型名计算索引健康度；如果模型名为空，
         // 用明确哨兵让历史 ready 向量进入 stale，而不是谎报为当前模型可用。
         let selectedModel = settings.configuredEmbeddingModelName
-            ?? settings.aiEmbeddingTask.resolvedModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? settings.resolvedAITask(settings.aiEmbeddingTask, type: .embedding)
+                .resolvedModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         let embeddingModel = selectedModel.isEmpty ? "unconfigured" : selectedModel
         return try await KnowledgeBaseMetadataSnapshotProvider(
             database: database,

@@ -161,6 +161,8 @@ xcodebuild \
     -configuration Release \
     -sdk macosx \
     -arch arm64 \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
     -derivedDataPath "$DERIVED_DIR" \
     MARKETING_VERSION="$MARKETING_VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \

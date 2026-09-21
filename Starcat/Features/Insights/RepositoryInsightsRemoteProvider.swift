@@ -953,7 +953,8 @@ struct DefaultRepositoryRemoteInsightsProvider: RepositoryRemoteInsightsProvidin
             )
             let colors = ["purple", "blue", "pink", "green", "orange"]
             let value = RepositoryContributorsInsight(
-                contributors: response.value.map { metric in
+                contributors: response.value.compactMap { metric in
+                    guard !metric.login.isEmpty else { return nil }
                     let colorIndex = metric.login.unicodeScalars.reduce(0) {
                         ($0 + Int($1.value)) % colors.count
                     }
@@ -968,15 +969,20 @@ struct DefaultRepositoryRemoteInsightsProvider: RepositoryRemoteInsightsProvidin
                 },
                 generatedAt: fetchedAt
             )
-            try await cache.store(
-                value,
-                repoId: repoID,
-                dataset: .contributors,
-                range: .all,
-                fetchedAt: fetchedAt,
-                responseETag: response.etag,
-                defaultBranchSHA: nil
-            )
+            do {
+                try await cache.store(
+                    value,
+                    repoId: repoID,
+                    dataset: .contributors,
+                    range: .all,
+                    fetchedAt: fetchedAt,
+                    responseETag: response.etag,
+                    defaultBranchSHA: nil
+                )
+            } catch {
+                // `repo_insights_snapshots.repo_id` 外键指向 `repos.id`。趋势页 ephemeral
+                // repo 没有本地行，写缓存会 SQLITE_CONSTRAINT；网络样本仍要交给 Hero。
+            }
             return value
         } catch GitHubRepositoryMetricsError.notModified(let responseETag) {
             do {

@@ -75,6 +75,8 @@ struct RAGQdrantConfiguration: Codable, Equatable, Sendable {
 enum RAGRerankProvider: String, CaseIterable, Codable, Sendable, Identifiable {
     case huggingFaceTEI = "huggingface_tei"
     case cohereCompatible = "cohere_compatible"
+    /// 内置本地 MLX 重排序（Qwen3-Reranker，进程内推理）。无端点、无 Key。
+    case localMLX = "local_mlx"
 
     var id: String { rawValue }
 
@@ -82,6 +84,7 @@ enum RAGRerankProvider: String, CaseIterable, Codable, Sendable, Identifiable {
         switch self {
         case .huggingFaceTEI: return "http://127.0.0.1:8080/rerank"
         case .cohereCompatible: return "https://api.cohere.com/v2/rerank"
+        case .localMLX: return ""
         }
     }
 
@@ -108,6 +111,8 @@ struct RAGRerankConfiguration: Codable, Equatable, Sendable {
 
     var validationMessage: String? {
         let value = normalized
+        // 本地 MLX 无端点 / 无 Key / 模型名固定，只受「模型是否已安装」约束（运行期校验）。
+        if value.provider == .localMLX { return nil }
         guard let url = URL(string: value.endpoint),
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme),

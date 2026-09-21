@@ -457,8 +457,9 @@ private actor ExternalAgentEventProjector {
     private let backend: AgentRuntimeBackend
     private let runRepository: (any AgentRunRepositoryProtocol)?
     private let continuation: AsyncStream<AgentRunEvent>.Continuation
+    /// 消息、Trace 与 Artifact 共用一条展示序列，才能在恢复历史时把单步正文稳定插回
+    /// 对应工具之前；不同表允许 sequence 有空洞，不要求各自从 0 连续增长。
     private var sequence = 0
-    private var traceSequence = 0
     private var traceSequences: [String: Int] = [:]
     private var traceStartedAt: [String: Date] = [:]
     private var traceSummaries: [String: String] = [:]
@@ -466,6 +467,11 @@ private actor ExternalAgentEventProjector {
     private var traceUsages: [String: AgentUsage] = [:]
     private var assistantText = ""
     private var finalAssistantText: String?
+    private var pendingAssistantStepMessage: ExternalAgentAssistantStepMessage?
+    private var pendingAssistantStepUsage: AgentUsage?
+    private var consumedAssistantStepMessageIDs: Set<String> = []
+    private var latestAssistantMessageID: UUID?
+    private var latestAssistantText: String?
     private var runtimeModelName: String?
     private var latestUsage: AgentUsage?
     private var artifactCount = 0
@@ -529,6 +535,13 @@ private actor ExternalAgentEventProjector {
         guard !isTerminal else { return }
         switch event {
         case .trace(let providerEvent):
+            if let pendingAssistantStepMessage,
+               pendingAssistantStepMessage.parentTraceID == providerEvent.id,
+               providerEvent.status != .running {
+                // 无工具 step 也必须在自己的 step/end 之前落库；否则等到下一条消息才提交，
+                // sequence 会倒置，SwiftUI 还需要把已经显示的整行重新搬位。
+                await flushPendingAssistantStepMessage()
+            }
             await projectTrace(providerEvent)
         case .assistantDelta(let delta):
             assistantText += delta
@@ -542,7 +555,30 @@ private actor ExternalAgentEventProjector {
             if let usage {
                 replaceUsage(usage)
             }
+        case .assistantStepMessage(let message, let usage):
+            guard consumedAssistantStepMessageIDs.insert(message.providerMessageID).inserted else { return }
+            // 同一 Run 的下一条 settled message 证明上一条不是最终回答。先落库后替换
+            // pending，历史与实时展示因此使用完全相同的消息顺序。
+            await flushPendingAssistantStepMessage()
+            pendingAssistantStepMessage = message
+            pendingAssistantStepUsage = usage
+            if let usage {
+                replaceUsage(usage)
+            }
         case .toolCall(let id, let name, let input, let rawInput):
+            let call = AgentToolCall(
+                id: id,
+                name: name,
+                input: input,
+                rawInput: rawInput,
+                sequence: sequence
+            )
+            // Harness 先结算 assistant/message，再发布 tool/call。把权威 call 补入 pending
+            // 消息后一次落库，既固定“思考 → 正文 → 工具”的顺序，也避免重复调用记录。
+            let consumedPendingMessage = pendingAssistantStepMessage != nil
+            if consumedPendingMessage {
+                await flushPendingAssistantStepMessage(appending: call)
+            }
             await projectTrace(ExternalAgentTraceEvent(
                 id: "tool:\(id)",
                 kind: .tool,
@@ -556,16 +592,15 @@ private actor ExternalAgentEventProjector {
                 )],
                 startedAt: Date()
             ))
-            _ = await appendMessage(
-                role: .assistant,
-                parts: [.toolCall(AgentToolCall(
+            if !consumedPendingMessage {
+                _ = await appendMessage(role: .assistant, parts: [.toolCall(AgentToolCall(
                     id: id,
                     name: name,
                     input: input,
                     rawInput: rawInput,
                     sequence: sequence
-                ))]
-            )
+                ))])
+            }
         case .toolResult(let id, let name, let output, let isError):
             let resultSummary = Self.nonBlank(output.objectValue?["summary"]?.stringValue)
             if requiredCompletionToolNames.contains(name) {
@@ -633,10 +668,12 @@ private actor ExternalAgentEventProjector {
         case .completed:
             await complete()
         case .cancelled:
+            await flushPendingAssistantStepMessage()
             isTerminal = true
             await persistTerminal(status: .cancelled, errorMessage: nil)
             continuation.yield(.runCancelled)
         case .failed(let message):
+            await flushPendingAssistantStepMessage()
             if !hasTerminalErrorTrace {
                 await projectFailureTrace(message)
             }
@@ -652,6 +689,7 @@ private actor ExternalAgentEventProjector {
 
     func cancelIfNeeded() async {
         guard !isTerminal else { return }
+        await flushPendingAssistantStepMessage()
         isTerminal = true
         await persistTerminal(status: .cancelled, errorMessage: nil)
         continuation.yield(.runCancelled)
@@ -659,6 +697,7 @@ private actor ExternalAgentEventProjector {
 
     func failIfNeeded(_ message: String) async {
         guard !isTerminal else { return }
+        await flushPendingAssistantStepMessage()
         await projectFailureTrace(message)
         isTerminal = true
         await persistTerminal(status: .failed, errorMessage: message)
@@ -690,6 +729,7 @@ private actor ExternalAgentEventProjector {
 
     private func complete() async {
         guard !isTerminal else { return }
+        await flushPendingAssistantStepMessage()
         if !requiredCompletionToolNames.isEmpty,
            (!completionToolSucceeded || artifactCount == 0) {
             let message = completionToolFailure
@@ -703,35 +743,69 @@ private actor ExternalAgentEventProjector {
         let text = finalAssistantText ?? assistantText
         if !text.isEmpty {
             let messageID = await appendMessage(role: .assistant, parts: [.text(text)], usage: latestUsage)
-            if definition.artifactTypes.contains(.markdown), artifactCount == 0 {
-                let artifact = AgentArtifact(
-                    type: .markdown,
-                    title: definition.artifactTitle ?? definition.title,
-                    content: text,
-                    messageID: messageID,
-                    sequence: sequence
-                )
-                if let runRepository {
-                    try? await runRepository.appendArtifact(artifact, runID: runID)
-                }
-                continuation.yield(.artifactCreated(artifact))
+            latestAssistantMessageID = messageID
+            latestAssistantText = text
+        }
+        if definition.artifactTypes.contains(.markdown),
+           artifactCount == 0,
+           let text = Self.nonBlank(latestAssistantText),
+           let messageID = latestAssistantMessageID {
+            let artifact = AgentArtifact(
+                type: .markdown,
+                title: definition.artifactTitle ?? definition.title,
+                content: text,
+                messageID: messageID,
+                sequence: sequence
+            )
+            if let runRepository {
+                try? await runRepository.appendArtifact(artifact, runID: runID)
             }
+            continuation.yield(.artifactCreated(artifact))
         }
         isTerminal = true
         await persistTerminal(status: .completed, errorMessage: nil)
         continuation.yield(.runCompleted)
     }
 
+    /// DeepSeek 的 settled message 暂存到下一条 tool/call 或 Run 终态再提交：前者把调用
+    /// 合并进同一条 assistant 消息，后者自然成为最终答案。这样不会先把工具前导正文
+    /// 错画成最终答案，再在几十毫秒后搬回过程区并触发两次大范围布局。
+    private func flushPendingAssistantStepMessage(appending toolCall: AgentToolCall? = nil) async {
+        guard let pendingAssistantStepMessage else { return }
+        var parts = pendingAssistantStepMessage.parts
+        if let toolCall { parts.append(.toolCall(toolCall)) }
+        let usage = pendingAssistantStepUsage
+        self.pendingAssistantStepMessage = nil
+        pendingAssistantStepUsage = nil
+
+        let messageID = await appendMessage(
+            role: .assistant,
+            turn: pendingAssistantStepMessage.turn,
+            parts: parts,
+            usage: usage
+        )
+        let text = parts.compactMap { part -> String? in
+            guard case .text(let value) = part else { return nil }
+            return value
+        }.joined(separator: "\n\n")
+        if toolCall == nil {
+            // 带 tool call 的正文是过程前导，不能被工具型 Agent 当成最终 Markdown artifact。
+            latestAssistantMessageID = messageID
+            latestAssistantText = Self.nonBlank(text)
+        }
+    }
+
     @discardableResult
     private func appendMessage(
         role: AgentMessageRole,
+        turn: Int = 0,
         parts: [AgentMessagePart],
         usage: AgentUsage? = nil
     ) async -> UUID {
         let message = AgentMessage(
             runID: runID,
             role: role,
-            turn: 0,
+            turn: turn,
             sequence: sequence,
             parts: parts,
             usage: usage
@@ -754,8 +828,8 @@ private actor ExternalAgentEventProjector {
         if let existing = traceSequences[providerEvent.id] {
             assignedSequence = existing
         } else {
-            assignedSequence = traceSequence
-            traceSequence += 1
+            assignedSequence = sequence
+            sequence += 1
             traceSequences[providerEvent.id] = assignedSequence
         }
         let startedAt = traceStartedAt[providerEvent.id] ?? providerEvent.startedAt ?? Date()

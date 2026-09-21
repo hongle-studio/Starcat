@@ -116,7 +116,7 @@ struct AIPromptPlaceholderPopover: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "curlybraces")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
                 Text("settings.ai.prompt.placeholders.title")
@@ -128,7 +128,7 @@ struct AIPromptPlaceholderPopover: View {
                 ForEach(catalog.items) { item in
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: item.systemImage)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .frame(width: 14, alignment: .center)
                             .padding(.top, 2)

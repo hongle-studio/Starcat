@@ -351,25 +351,38 @@ struct HomeView: View {
         .overlayPreferenceValue(GettingStartedAnchorPreferenceKey.self) { anchors in
             gettingStartedOverlay(anchors: anchors)
         }
-        .overlay {
-            if searchCenterViewModel.isPresented {
-                SearchCenterView(
-                    viewModel: searchCenterViewModel,
-                    languages: viewModel.languageStats,
-                    onOpenCandidate: openSearchCandidate,
-                    onOpenURL: openSearchRepositoryURL,
-                    onCopyURL: copySearchRepositoryURL,
-                    onOpenAI: openSearchRepositoryAI,
-                    onToggleStar: toggleSearchRepositoryStar,
-                    isStarred: { dependencies.starredRegistry.contains(ghRepoId: $0) },
-                    isGitHubAuthenticated: authSession.state.isAuthenticated
-                )
-                .environment(viewModel)
-                .zIndex(100)
+        .onChange(of: searchCenterViewModel.isPresented) { _, isPresented in
+            if isPresented {
+                Task { await viewModel.reloadSemanticIndexCoverage() }
+                presentSearchCenterWindow()
+            } else {
+                SearchCenterWindowController.dismiss()
             }
         }
-        // 弹出/关闭：纯淡入淡出，贴近 Spotlight / 命令面板；不再叠加 scale 弹入。
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: searchCenterViewModel.isPresented)
+        )
+    }
+
+    /// 把全局搜索放进覆盖主窗口内容区的 child window，避免它和详情 README 共用 cursor rect。
+    ///
+    /// 搜索 ViewModel 仍由 HomeView 持有；窗口控制器只保留 hosting tree 和几何关系，
+    /// 这样点击遮罩、Esc、打开详情等现有路径仍然只通过 `isPresented` 驱动。
+    private func presentSearchCenterWindow() {
+        SearchCenterWindowController.present(
+            content: SearchCenterView(
+                viewModel: searchCenterViewModel,
+                languages: viewModel.languageStats,
+                onOpenCandidate: openSearchCandidate,
+                onOpenURL: openSearchRepositoryURL,
+                onCopyURL: copySearchRepositoryURL,
+                onOpenAI: openSearchRepositoryAI,
+                onToggleStar: toggleSearchRepositoryStar,
+                isStarred: { dependencies.starredRegistry.contains(ghRepoId: $0) },
+                isGitHubAuthenticated: authSession.state.isAuthenticated
+            )
+            // AppKit child window 不会自动继承 WindowGroup 的 environment；必须复用主窗口
+            // 同一套注入链，否则搜索结果的详情、收藏和命令路由会在运行时丢失依赖。
+            .appHostEnvironment(dependencies, homeViewModel: viewModel),
+            reduceMotion: reduceMotion
         )
     }
 
@@ -1481,7 +1494,8 @@ struct HomeView: View {
                 repo: nil,
                 sourceHtml: nil,
                 targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                mode: settings.readmeTranslationMode
+                mode: settings.readmeTranslationMode,
+                engine: settings.readmeTranslationEngine
             )
         }
     }
@@ -1507,7 +1521,8 @@ struct HomeView: View {
                 repo: nil,
                 sourceHtml: nil,
                 targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                mode: settings.readmeTranslationMode
+                mode: settings.readmeTranslationMode,
+                engine: settings.readmeTranslationEngine
             )
         }
     }
@@ -2112,7 +2127,7 @@ struct HomeView: View {
     /// 未分组中栏横幅「开始整理」：先过 Pro 门控，再打开现有 GitHub Lists 审核 sheet。
     private func startGitHubStarListAIGrouping() {
         do {
-            try dependencies.entitlementGate.requirePro(.batchAI)
+            try dependencies.entitlementGate.requirePro(.batchAI, usesLocalOnly: dependencies.settings.isGenerationTasksResolvedToLocalAI)
             PerformanceTracer.shared.mark(.gitHubStarListAIGroupingRequested)
             showGitHubStarListAIGroupingSheet = true
         } catch {
@@ -2123,7 +2138,7 @@ struct HomeView: View {
     /// Manage 多选入口复用现有审核窗口，只把本次点击时冻结的仓库作为整理范围。
     private func startSelectedGitHubStarListAIGrouping(repositories: [Repo]) {
         do {
-            try dependencies.entitlementGate.requirePro(.batchAI)
+            try dependencies.entitlementGate.requirePro(.batchAI, usesLocalOnly: dependencies.settings.isGenerationTasksResolvedToLocalAI)
         } catch {
             paywallContext = ProPaywallContext(feature: .batchAI, message: error.localizedDescription)
             return
@@ -2177,7 +2192,7 @@ struct HomeView: View {
     /// 失败时按钮仍可继续点（dependencies 状态未变，第二次点击会重试）。
     private func startBatchAIIntegration(scope: BatchAIRepositoryScope) async -> Bool {
         do {
-            try dependencies.entitlementGate.requirePro(.batchAI)
+            try dependencies.entitlementGate.requirePro(.batchAI, usesLocalOnly: dependencies.settings.isGenerationTasksResolvedToLocalAI)
         } catch {
             paywallContext = ProPaywallContext(feature: .batchAI, message: error.localizedDescription)
             return false

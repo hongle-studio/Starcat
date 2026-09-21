@@ -90,8 +90,10 @@ struct GitHubStarListRemoteMembership: Equatable, Sendable {
 enum GitHubStarListColor {
     static let defaultHex = "#0A84FF"
 
+    /// 与 `TagColorPalette.presets` 同步。黄色槽不用系统浅黄 `#FFD60A`，
+    /// 改芥末金 `#C9A406`，避免亮色主题下色点发飘。
     private static let palette = [
-        "#FF453A", "#FF9F0A", "#FFD60A", "#30D158",
+        "#FF453A", "#FF9F0A", "#C9A406", "#30D158",
         "#66D4CF", "#40C8E0", "#64D2FF", "#0A84FF",
         "#5E5CE6", "#BF5AF2", "#FF375F", "#AC8E68"
     ]

@@ -94,42 +94,30 @@ enum AppLocale: String, CaseIterable, Identifiable, Sendable {
     /// 字样，与同 Section 下的"语言"标题、说明文字风格一致；它不存在"看不懂找不到入口"
     /// 风险，因为语言选项始终保留各自的母语名称。
     ///
-    /// 菜单展示请用 `menuTitle`：跟随系统用 🌐 与各国旗同一列，但文案仍走本 key，
-    /// 不能把地球写进 Catalog，否则 18 种语言都要改 `Localizable.xcstrings`。
+    /// 设置页语言菜单直接用本属性：跟随系统走 Catalog key，其余用母语名称。
+    /// 语言不是国家，菜单不加国旗；母语名也不进 Catalog，避免被当前界面语言改写。
     var displayName: LocalizedStringKey {
         switch self {
         case .system:              return "settings.general.language.system"
-        case .english:             return LocalizedStringKey("🇺🇸 English")
-        case .simplifiedChinese:   return LocalizedStringKey("🇨🇳 简体中文")
-        case .traditionalChinese:  return LocalizedStringKey("🇨🇳 繁體中文")
-        case .japanese:            return LocalizedStringKey("🇯🇵 日本語")
-        case .korean:              return LocalizedStringKey("🇰🇷 한국어")
-        case .german:              return LocalizedStringKey("🇩🇪 Deutsch")
-        case .french:              return LocalizedStringKey("🇫🇷 Français")
-        case .spanish:             return LocalizedStringKey("🇪🇸 Español")
-        case .brazilianPortuguese: return LocalizedStringKey("🇧🇷 Português (Brasil)")
-        case .italian:             return LocalizedStringKey("🇮🇹 Italiano")
-        case .russian:             return LocalizedStringKey("🇷🇺 Русский")
-        case .dutch:               return LocalizedStringKey("🇳🇱 Nederlands")
-        case .polish:              return LocalizedStringKey("🇵🇱 Polski")
-        case .ukrainian:           return LocalizedStringKey("🇺🇦 Українська")
-        case .turkish:             return LocalizedStringKey("🇹🇷 Türkçe")
-        case .vietnamese:          return LocalizedStringKey("🇻🇳 Tiếng Việt")
-        case .indonesian:          return LocalizedStringKey("🇮🇩 Bahasa Indonesia")
-        case .arabic:              return LocalizedStringKey("🇸🇦 العربية")
+        case .english:             return LocalizedStringKey("English")
+        case .simplifiedChinese:   return LocalizedStringKey("简体中文")
+        case .traditionalChinese:  return LocalizedStringKey("繁體中文")
+        case .japanese:            return LocalizedStringKey("日本語")
+        case .korean:              return LocalizedStringKey("한국어")
+        case .german:              return LocalizedStringKey("Deutsch")
+        case .french:              return LocalizedStringKey("Français")
+        case .spanish:             return LocalizedStringKey("Español")
+        case .brazilianPortuguese: return LocalizedStringKey("Português (Brasil)")
+        case .italian:             return LocalizedStringKey("Italiano")
+        case .russian:             return LocalizedStringKey("Русский")
+        case .dutch:               return LocalizedStringKey("Nederlands")
+        case .polish:              return LocalizedStringKey("Polski")
+        case .ukrainian:           return LocalizedStringKey("Українська")
+        case .turkish:             return LocalizedStringKey("Türkçe")
+        case .vietnamese:          return LocalizedStringKey("Tiếng Việt")
+        case .indonesian:          return LocalizedStringKey("Bahasa Indonesia")
+        case .arabic:              return LocalizedStringKey("العربية")
         }
-    }
-
-    /// 设置页语言菜单的一行。
-    ///
-    /// 具体语言已经把国旗写进 `displayName`；跟随系统没有对应国家，用地球 emoji
-    /// 占同一列，避免菜单第一项左边空一格。文案继续走 SwiftUI 查表，这样切界面
-    /// 语言后「跟随系统」仍会本地化（`String.l10n` 走 Bundle，跟不上 in-app locale）。
-    var menuTitle: Text {
-        if self == .system {
-            return Text("🌐 ") + Text(displayName)
-        }
-        return Text(displayName)
     }
 
     /// SwiftUI `.environment(\.locale, _)` 实际写入的 Locale 值。

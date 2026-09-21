@@ -1046,13 +1046,6 @@ struct RepoAIWindowContentView: View {
 
     @ViewBuilder
     private func insightContent(_ insight: RepoAIInsight, vm: RepoAIInsightViewModel) -> some View {
-        // Y9（2026-06-14，决议 D=d2）：用户翻完快捷菜单 / Settings 开关后，已展示的
-        // insight 用的可能不是当前 settings 的物料；显示克制提示让用户自行决定是否
-        // 重新生成（不自动作废 / 不自动 regenerate，遵循"AI 保守"原则）。
-        if isInsightStaleAgainstCurrentSettings(insight: insight, hasDegradation: vm.contextDegradationReason != nil) {
-            staleSettingsBanner(vm: vm)
-        }
-
         RepoAISummaryMarkdownView(markdown: insight.summaryMarkdown ?? insight.summary)
 
         if let sources = insight.externalContextSources, !sources.isEmpty {
@@ -1125,93 +1118,6 @@ struct RepoAIWindowContentView: View {
             .focusEffectDisabled()
         }
         .padding(.top, 6)
-    }
-
-    /// Y9.1（2026-06-14）：判定当前展示的 insight 是否与"用户当前 settings 想要的物料"
-    /// 不一致——基于 insight 持久化的 `generationContextSettings` 快照精准判定。
-    ///
-    /// **演进背景**：Y9 初版用 `contextMetadata != nil` / `externalContextMarkdown != nil`
-    /// 反推"生成时配置"，但这种间接推断不可靠——`contextMetadata == nil` 既可能是
-    /// 用户当时关了开关，也可能是当时下载失败降级。用户反馈"什么都没动每次都提示设置
-    /// 已变更"（dong4j 2026-06-14）即由此引发。
-    ///
-    /// **当前算法（Y9.1）**：
-    ///   1. **缺快照（老 insight）**：`generationContextSettings == nil` → 直接返回 false
-    ///      不报 stale。这让所有 Y9.1 之前生成的 insight 自动豁免本次新加的判定。
-    ///   2. **代码维度**：`snap.codeContextEnabled != settings.aiRepoContextEnabled`
-    ///      - 用户翻了代码上下文开关 → 报 stale；
-    ///   3. **外网维度**：`snap.externalContextAllowed != currentExternalAllowed`
-    ///      - 用户翻了 anysearch / external context / 私仓允许 任一开关 → 报 stale；
-    ///
-    /// `hasDegradation` 参数保留但**不再使用**（快照机制下，降级路径会让快照如实记录
-    /// 当时的"用户意图 = 想要代码"，但 insight.contextMetadata 仍为 nil；这是预期行为，
-    /// 不参与 stale 判定。降级 banner 由 `vm.contextDegradationReason` 单独负责显示）。
-    private func isInsightStaleAgainstCurrentSettings(
-        insight: RepoAIInsight,
-        hasDegradation _: Bool
-    ) -> Bool {
-        guard let snap = insight.generationContextSettings else {
-            // 老 insight 没快照：保守不报，避免误报。下次用户主动 regenerate 后会写入快照。
-            return false
-        }
-
-        if snap.codeContextEnabled != settings.aiRepoContextEnabled {
-            return true
-        }
-
-        let currentExternalAllowed = ExternalSearchContextProvider.allowsExternalContext(
-            repoIsPrivate: repo.isPrivate,
-            enabled: settings.externalContextEnabled,
-            allowPrivate: settings.externalSearchAllowPrivateRepos
-        )
-        if snap.externalContextAllowed != currentExternalAllowed {
-            return true
-        }
-
-        return false
-    }
-
-    /// Y9：「设置已变更」提示行 + [重新生成] 按钮。
-    ///
-    /// 视觉风格（Y9.2 dong4j 2026-06-14 反馈玻璃态适配）：
-    ///   - icon 用 `.yellow` 标识"信息提示"色彩；
-    ///   - 文字 `.primary` 跟随主题黑/白，避免浅色主题下黄字对比度不足；
-    ///   - 背景从 `yellow.opacity(0.10)` 提到 `0.18` —— 在 NSVisualEffectView popover 玻璃态
-    ///     下 0.10 几乎被材质吃掉看不出黄色块；
-    ///   - 加 `strokeBorder(yellow.opacity(0.35))` 让 banner 在玻璃态下有清晰轮廓。
-    ///
-    /// 按钮调用与摘要面板右上角 Menu 同款 generate(includeTags:)，include flags 由当前
-    /// starredAtOpen 决定，与既有路径保持一致。
-    private func staleSettingsBanner(vm: RepoAIInsightViewModel) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "info.circle.fill")
-                .foregroundStyle(.yellow)
-            Text("ai.assistant.summary.staleSettings.message")
-                .font(interfaceScale.font(.caption))
-            Spacer(minLength: 8)
-            Button {
-                dependencies.repoAIInsightSessionStore.startGeneration(
-                    for: repo,
-                    includeTags: starredAtOpen == true
-                )
-            } label: {
-                Text("ai.assistant.summary.staleSettings.regenerate")
-                    .font(interfaceScale.font(.caption, weight: .medium))
-            }
-            .buttonStyle(.borderless)
-            .focusEffectDisabled()
-            .disabled(vm.isGenerating)
-        }
-        .foregroundStyle(.primary)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.yellow.opacity(0.18))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.yellow.opacity(0.35), lineWidth: 1)
-                )
-        )
     }
 
     /// 推荐标签列表。多条建议必须能扫读，所以做成斑马纹行，而不是一张卡片里用 Divider 硬隔。
@@ -1874,7 +1780,7 @@ struct RepoAIWindowContentView: View {
     ///   - "新建并承接"：调 `chat.startNewSessionAfterOverflow(repo:)`，把末尾 6 条
     ///     摘要塞进新 session 的 carriedOverSummary；
     ///   - 关闭：仅 dismiss banner，不创建新 session。
-    /// 视觉沿用 staleSettingsBanner / contextDegradationBanner 同款黄色 info 系。
+    /// 视觉沿用 contextDegradationBanner 的黄色 info 系。
     private func contextOverflowBanner(chat: RepoAIChatViewModel) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -2109,8 +2015,7 @@ struct RepoAIWindowContentView: View {
     /// Y9.2（2026-06-14 dong4j 反馈玻璃态主题适配）：
     ///   - 原方案整段 `foregroundStyle(.yellow)` 让文字在浅色 / 玻璃态下都成淡黄看不清；
     ///   - 改为 icon 留 `.yellow` 当色彩标识，文字用 `.primary` 跟随主题；
-    ///   - 背景 0.10 → 0.18 + strokeBorder 让 banner 在玻璃态下有清晰轮廓
-    ///     （与 staleSettingsBanner 保持同款风格）。
+    ///   - 背景 0.10 → 0.18 + strokeBorder 让 banner 在玻璃态下有清晰轮廓。
     /// 文案 5 case 全部走 i18n key（在 Y4 一并补 Localizable.xcstrings）。
     private func contextDegradationBanner(_ reason: ContextDegradationReason) -> some View {
         HStack(spacing: 8) {

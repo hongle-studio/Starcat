@@ -218,6 +218,118 @@ struct ReadmeTranslationViewModelTests {
     }
 }
 
+// MARK: - 同语种轻提示
+
+@MainActor
+@Suite("ReadmeTranslationViewModel 同语种轻提示")
+struct ReadmeTranslationNoticeTests {
+
+    @Test("整篇已是目标语言时点击翻译：置轻提示、不转圈、不打翻译接口")
+    func sameLanguageToggleSetsNoticeInsteadOfSilentNoop() async {
+        let (vm, fake) = makeHarness()
+        let text = "This whole README is already written in English so no translation is needed here."
+        let segment = ReadmeSourceSegment(id: "p-0", text: text)
+        let identity = "readme:alpha/same"
+
+        vm.prepare(
+            identity: identity,
+            cacheOwner: "alpha",
+            cacheRepo: "same",
+            sourceHtml: "<p>\(text)</p>",
+            targetLanguage: .english,
+            mode: .segmented
+        )
+        await settle()
+        vm.toggleTranslation(
+            identity: identity,
+            cacheOwner: "alpha",
+            cacheRepo: "same",
+            sourceHtml: "<p>\(text)</p>",
+            sourceSegments: [segment],
+            targetLanguage: .english,
+            mode: .segmented
+        )
+        await settle()
+
+        #expect(vm.showsAlreadyInTargetNotice)
+        #expect(!vm.isTranslating)
+        #expect(!vm.renderState.isVisible)
+        #expect(vm.errorMessage == nil)
+        fake.finishHangingWork()
+    }
+
+    @Test("服务层同语种短路：捕获 alreadyInTargetLanguage 置轻提示而非报错")
+    func serviceAlreadyInTargetLanguageSetsNotice() async {
+        let (vm, fake) = makeHarness()
+        // 段落本身识别为英语，VM 层不会提前跳过；短路发生在服务层文档级投票。
+        let text = "Hello world this is a repository description for the service level short circuit."
+        let segment = ReadmeSourceSegment(id: "p-0", text: text)
+        let identity = "readme:alpha/svc"
+        fake.throwAlreadyInTarget = true
+
+        vm.prepare(
+            identity: identity,
+            cacheOwner: "alpha",
+            cacheRepo: "svc",
+            sourceHtml: "<p>\(text)</p>",
+            targetLanguage: .simplifiedChinese,
+            mode: .segmented
+        )
+        await settle()
+        vm.toggleTranslation(
+            identity: identity,
+            cacheOwner: "alpha",
+            cacheRepo: "svc",
+            sourceHtml: "<p>\(text)</p>",
+            sourceSegments: [segment],
+            targetLanguage: .simplifiedChinese,
+            mode: .segmented
+        )
+        await waitUntil { vm.showsAlreadyInTargetNotice }
+
+        #expect(!vm.isTranslating)
+        #expect(vm.errorMessage == nil)
+
+        // 切仓 prepare 必须复位提示，不能把旧提示带进新详情页。
+        vm.prepare(
+            identity: "readme:bravo/next",
+            cacheOwner: "bravo",
+            cacheRepo: "next",
+            sourceHtml: "<p>next</p>",
+            targetLanguage: .simplifiedChinese,
+            mode: .segmented
+        )
+        #expect(!vm.showsAlreadyInTargetNotice)
+        fake.finishHangingWork()
+    }
+
+    // MARK: 辅助
+
+    private func makeHarness() -> (ReadmeTranslationViewModel, HangingReadmeTranslationServiceStub) {
+        let fake = HangingReadmeTranslationServiceStub()
+        return (ReadmeTranslationViewModel(service: fake), fake)
+    }
+
+    private func waitUntil(_ condition: @MainActor () -> Bool) async {
+        for step in 0..<50 {
+            if condition() { return }
+            if step < 10 {
+                await Task.yield()
+            } else {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        Issue.record("条件在超时前未满足")
+    }
+
+    private func settle() async {
+        for _ in 0..<8 {
+            await Task.yield()
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 private struct TranslationTestPage {
     let owner: String
     let repo: String
@@ -260,6 +372,8 @@ private final class HangingReadmeTranslationServiceStub: ReadmeTranslationServic
     private var records: [String: ReadmeTranslation] = [:]
     private var parkedOwners: Set<String> = []
     var hangTranslate = false
+    /// 置 true 时 translate 抛 alreadyInTargetLanguage，覆盖服务层同语种短路路径。
+    var throwAlreadyInTarget = false
 
     func park(owner: String) {
         parkedOwners.insert(owner)
@@ -324,7 +438,8 @@ private final class HangingReadmeTranslationServiceStub: ReadmeTranslationServic
         owner: String,
         repo: String,
         targetLanguage: ReadmeTranslationLanguage,
-        mode: ReadmeTranslationMode
+        mode: ReadmeTranslationMode,
+        engine: ReadmeTranslationEngine
     ) async throws -> ReadmeTranslation? {
         if parkedOwners.contains(owner) {
             await withCheckedContinuation { continuation in
@@ -358,6 +473,9 @@ private final class HangingReadmeTranslationServiceStub: ReadmeTranslationServic
         onBatch: ReadmeTranslationBatchProgressHandler?
     ) async throws -> ReadmeTranslation {
         latestBatchHandler = onBatch
+        if throwAlreadyInTarget {
+            throw ReadmeTranslationError.alreadyInTargetLanguage
+        }
         if hangTranslate {
             return try await withCheckedThrowingContinuation { continuation in
                 translateWaiters.append(continuation)

@@ -34,6 +34,8 @@ struct GitHubNotificationDetailView: View {
     @State private var aiErrorToastNeedsSettings = false
     /// 评论菜单复制成功。和 AI 错误 toast 分开，避免互相顶掉。
     @State private var copyToast: String?
+    /// 「已是目标语言」轻提示。同语种整篇跳过在 README 详情页会弹中性 toast，这里对齐。
+    @State private var translationNoticeToast: String?
 
     private var inbox: GitHubNotificationInboxService {
         dependencies.githubNotificationInboxService
@@ -58,8 +60,11 @@ struct GitHubNotificationDetailView: View {
             .background(.background)
     }
 
+    @ViewBuilder
     private func populatedDetail(_ item: ActivityItem) -> some View {
-        VStack(spacing: 0) {
+        // 观察者 / toast 必须挂在独立子表达式：下面这条链已顶到 Swift 类型检查器上限，
+        // 直接内联新 modifier 会让整个 VStack 报 "unable to type-check in reasonable time"。
+        let content = VStack(spacing: 0) {
             // 仓库名占中栏筛选条同一高度，横线才能和中栏对齐。
             if let payload = item.notification {
                 headerRepoRow(payload)
@@ -138,73 +143,104 @@ struct GitHubNotificationDetailView: View {
         // 标题进系统导航栏，和中栏「活动 > 通知」同一层；横线上方只留仓库名。
         .navigationTitle(item.title)
         .navigationSubtitle(navigationSubtitle(item))
-        .onChange(of: item.notification?.threadId) { _, _ in
-            isComposerExpanded = false
-            isDoneHelpPresented = false
-            doneError = nil
-            aiErrorToast = nil
-            aiErrorToastNeedsSettings = false
-            copyToast = nil
-            timelineTranslationComments = []
-            prepareTranslation(for: item)
-        }
-        .onChange(of: settings.githubIssueEventTimelineEnabled) { _, _ in
-            // 开关切换后补对侧数据：开事件流预热 timeline；关则补 comments_json。
-            if let threadId = item.notification?.threadId {
-                Task { await inbox.hydrate(id: threadId) }
-            }
-            prepareTranslation(for: item)
-        }
-        .onChange(of: settings.readmeTranslationLanguage) { _, _ in
-            prepareTranslation(for: item)
-        }
-        .onChange(of: locale.identifier) { _, _ in
-            guard settings.readmeTranslationLanguage == .auto else { return }
-            prepareTranslation(for: item)
-        }
-        .onChange(of: settings.readmeTranslationMode) { _, _ in
-            prepareTranslation(for: item)
-        }
-        .onChange(of: translationHydrationSignature(item)) { oldValue, _ in
-            // 评论后到时不要把已显示的对照打回原文；正文编辑条数不变，靠 body 指纹收回对照。
-            refreshTranslationSourceIfNeeded(for: item, previousSignature: oldValue)
-        }
-        .onAppear {
-            prepareTranslation(for: item)
-        }
-        // 对齐 README 翻译：错误走右下角 toast，配置类错误带「前往设置」。
-        .toast(
-            message: $aiErrorToast,
-            icon: "exclamationmark.triangle.fill",
-            iconColor: .orange,
-            bottomPadding: isComposerExpanded ? 20 : 56,
-            autoDismiss: false,
-            actionLabel: aiErrorToastActionLabel,
-            onAction: aiErrorToastOnAction
+
+        withDetailObservers(content, item: item)
+    }
+
+    /// populatedDetail 的观察者与 toast 挂载（切条目重置、翻译预热、错误 / 复制 toast）。
+    private func withDetailObservers<V: View>(_ content: V, item: ActivityItem) -> some View {
+        withAlreadyInTargetNoticeToast(
+            content
+                .onChange(of: item.notification?.threadId) { _, _ in
+                    isComposerExpanded = false
+                    isDoneHelpPresented = false
+                    doneError = nil
+                    aiErrorToast = nil
+                    aiErrorToastNeedsSettings = false
+                    copyToast = nil
+                    translationNoticeToast = nil
+                    timelineTranslationComments = []
+                    prepareTranslation(for: item)
+                }
+                .onChange(of: settings.githubIssueEventTimelineEnabled) { _, _ in
+                    // 开关切换后补对侧数据：开事件流预热 timeline；关则补 comments_json。
+                    if let threadId = item.notification?.threadId {
+                        Task { await inbox.hydrate(id: threadId) }
+                    }
+                    prepareTranslation(for: item)
+                }
+                .onChange(of: settings.readmeTranslationLanguage) { _, _ in
+                    prepareTranslation(for: item)
+                }
+                .onChange(of: locale.identifier) { _, _ in
+                    guard settings.readmeTranslationLanguage == .auto else { return }
+                    prepareTranslation(for: item)
+                }
+                .onChange(of: settings.readmeTranslationMode) { _, _ in
+                    prepareTranslation(for: item)
+                }
+                .onChange(of: translationHydrationSignature(item)) { oldValue, _ in
+                    // 评论后到时不要把已显示的对照打回原文；正文编辑条数不变，靠 body 指纹收回对照。
+                    refreshTranslationSourceIfNeeded(for: item, previousSignature: oldValue)
+                }
+                .onAppear {
+                    prepareTranslation(for: item)
+                }
+                // 对齐 README 翻译：错误走右下角 toast，5 秒自动关闭，配置类错误带「前往设置」。
+                .toast(
+                    message: $aiErrorToast,
+                    icon: "exclamationmark.triangle.fill",
+                    duration: 5,
+                    iconColor: .orange,
+                    bottomPadding: isComposerExpanded ? 20 : 56,
+                    actionLabel: aiErrorToastActionLabel,
+                    onAction: aiErrorToastOnAction
+                )
+                .toast(
+                    message: $copyToast,
+                    icon: "doc.on.clipboard",
+                    bottomPadding: isComposerExpanded ? 20 : 56
+                )
+                .onReceive(NotificationCenter.default.publisher(for: .githubNotificationCopiedToPasteboard)) { note in
+                    guard let message = note.userInfo?[GitHubNotificationMapper.copiedPasteboardMessageKey] as? String,
+                          !message.isEmpty
+                    else { return }
+                    copyToast = message
+                }
+                .onChange(of: translationVM?.errorMessage) { _, newValue in
+                    if let msg = newValue {
+                        aiErrorToastNeedsSettings = translationVM?.translationErrorKind == .aiConfiguration
+                        aiErrorToast = msg
+                    }
+                }
+                .onChange(of: aiErrorToast) { _, newValue in
+                    if newValue == nil {
+                        translationVM?.dismissError()
+                        aiErrorToastNeedsSettings = false
+                    }
+                }
         )
-        .toast(
-            message: $copyToast,
-            icon: "doc.on.clipboard",
-            bottomPadding: isComposerExpanded ? 20 : 56
-        )
-        .onReceive(NotificationCenter.default.publisher(for: .githubNotificationCopiedToPasteboard)) { note in
-            guard let message = note.userInfo?[GitHubNotificationMapper.copiedPasteboardMessageKey] as? String,
-                  !message.isEmpty
-            else { return }
-            copyToast = message
-        }
-        .onChange(of: translationVM?.errorMessage) { _, newValue in
-            if let msg = newValue {
-                aiErrorToastNeedsSettings = translationVM?.translationErrorKind == .aiConfiguration
-                aiErrorToast = msg
+    }
+
+    /// 「已是目标语言」轻提示 toast + VM 状态联动。
+    /// 与错误 toast 分开挂：中性 checkmark 图标、不带「前往设置」；5 秒自动关闭对齐错误 toast。
+    private func withAlreadyInTargetNoticeToast<V: View>(_ content: V) -> some View {
+        content
+            .toast(
+                message: $translationNoticeToast,
+                icon: "checkmark.circle.fill",
+                duration: 5,
+                bottomPadding: isComposerExpanded ? 20 : 56
+            )
+            .onChange(of: translationVM?.showsAlreadyInTargetNotice == true) { _, shown in
+                guard shown else { return }
+                translationNoticeToast = "readme.translate.notice.alreadyInTarget"
             }
-        }
-        .onChange(of: aiErrorToast) { _, newValue in
-            if newValue == nil {
-                translationVM?.dismissError()
-                aiErrorToastNeedsSettings = false
+            .onChange(of: translationNoticeToast) { _, newValue in
+                if newValue == nil {
+                    translationVM?.dismissAlreadyInTargetNotice()
+                }
             }
-        }
     }
 
     /// 仅 AI 配置不完整时显示「前往设置」，其它错误只给关闭。
@@ -569,7 +605,8 @@ struct GitHubNotificationDetailView: View {
                 cacheRepo: nil,
                 sourceHtml: nil,
                 targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                mode: settings.readmeTranslationMode
+                mode: settings.readmeTranslationMode,
+                engine: settings.readmeTranslationEngine
             )
             return
         }
@@ -580,7 +617,8 @@ struct GitHubNotificationDetailView: View {
             cacheRepo: GitHubNotificationTranslation.cacheRepo(threadId: payload.threadId),
             sourceHtml: document.sourceText,
             targetLanguage: settings.effectiveReadmeTranslationLanguage,
-            mode: settings.readmeTranslationMode
+            mode: settings.readmeTranslationMode,
+            engine: settings.readmeTranslationEngine
         )
     }
 
@@ -636,7 +674,8 @@ struct GitHubNotificationDetailView: View {
             sourceHtml: document.sourceText,
             sourceSegments: document.segments,
             targetLanguage: settings.effectiveReadmeTranslationLanguage,
-            mode: settings.readmeTranslationMode
+            mode: settings.readmeTranslationMode,
+            engine: settings.readmeTranslationEngine
         )
     }
 
@@ -1625,6 +1664,8 @@ private struct GitHubNotificationTranslationControls: View {
     let reduceMotion: Bool
 
     @State private var isHoveringWhileTranslating = false
+    /// 当前可展示的翻译引擎。与 README footer 同一规则：未配置 / 不可用的引擎直接不出现。
+    @State private var availableEngines: [ReadmeTranslationEngine] = []
 
     private var isShowingTranslation: Bool {
         if case .showingTranslation = viewModel.displayMode { return true }
@@ -1648,7 +1689,8 @@ private struct GitHubNotificationTranslationControls: View {
                         sourceHtml: document.sourceText,
                         sourceSegments: document.segments,
                         targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                        mode: settings.readmeTranslationMode
+                        mode: settings.readmeTranslationMode,
+                        engine: settings.readmeTranslationEngine
                     )
                 }
             } label: {
@@ -1677,6 +1719,26 @@ private struct GitHubNotificationTranslationControls: View {
                 : "readme.translate.action"))
 
             Menu {
+                if !availableEngines.isEmpty {
+                    Picker(selection: Binding(
+                        get: { settings.readmeTranslationEngine },
+                        set: { settings.readmeTranslationEngine = $0 }
+                    )) {
+                        ForEach(availableEngines) { engine in
+                            Label(
+                                LocalizedStringKey(engine.displayNameKey),
+                                systemImage: engine.systemImage
+                            )
+                            .tag(engine)
+                        }
+                    } label: {
+                        Text("readme.translate.menu.engine")
+                    }
+                    .pickerStyle(.inline)
+
+                    Divider()
+                }
+
                 Picker(selection: Binding(
                     get: { settings.readmeTranslationMode },
                     set: { settings.readmeTranslationMode = $0 }
@@ -1717,7 +1779,8 @@ private struct GitHubNotificationTranslationControls: View {
                         sourceHtml: document.sourceText,
                         sourceSegments: document.segments,
                         targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                        mode: settings.readmeTranslationMode
+                        mode: settings.readmeTranslationMode,
+                        engine: settings.readmeTranslationEngine
                     )
                 } label: {
                     Label("readme.translate.menu.regenerate", systemImage: "arrow.clockwise")
@@ -1739,6 +1802,28 @@ private struct GitHubNotificationTranslationControls: View {
             .focusEffectDisabled()
             .clickablePointer()
             .help("readme.translate.menu.tooltip")
+            .task(id: settings.effectiveReadmeTranslationLanguage) {
+                await refreshAvailableEngines()
+            }
+        }
+    }
+
+    /// 与 README footer 的 `refreshAvailableEngines` 同一规则：可用列表 + 默认值回落，
+    /// 目标语言变化时重探（系统翻译的可用性随目标语种变化）。
+    @MainActor
+    private func refreshAvailableEngines() async {
+        let available = await ReadmeTranslationEngineAvailability.availableEngines(
+            targetLanguage: settings.effectiveReadmeTranslationLanguage,
+            settings: settings,
+            keychain: KeychainManager.shared
+        )
+        availableEngines = available
+        let resolved = ReadmeTranslationEngineAvailability.resolvedDefault(
+            current: settings.readmeTranslationEngine,
+            available: available
+        )
+        if resolved != settings.readmeTranslationEngine, !available.isEmpty {
+            settings.readmeTranslationEngine = resolved
         }
     }
 
@@ -1799,7 +1884,8 @@ private struct GitHubNotificationTranslationControls: View {
             return "readme.translate.tooltip.stop"
         }
         if isShowingTranslation { return "readme.translate.tooltip.showOriginal" }
-        return "readme.translate.tooltip.translate"
+        // 引擎可变后文案不再写死 AI，统一指向「所选翻译服务」。
+        return "readme.translate.tooltip.translateService"
     }
 }
 

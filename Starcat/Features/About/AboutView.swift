@@ -1121,6 +1121,12 @@ private struct AboutDependency: Identifiable {
         // 严格按 CLAUDE.md「开源致谢同步规则」第 2 条「嵌入式资源」登记。
 
         AboutDependency(
+            name: "Claude Spark Logo",
+            license: "Brand Asset",
+            copyright: "Anthropic PBC — used for inference backend identification only",
+            url: URL(string: "https://www.anthropic.com/news")
+        ),
+        AboutDependency(
             name: "DeepWiki Logo",
             license: "Brand Asset",
             copyright: "Cognition Labs, Inc. — used for source identification only",

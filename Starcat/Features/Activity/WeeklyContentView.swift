@@ -496,8 +496,7 @@ struct WeeklyContentView: View {
                         ),
                         isSelected: multiStore.isActive
                             ? multiStore.contains(ghRepoId: project.ghRepoId)
-                            : (selection.selectedItem?.id == project.id),
-                        showStarredCheckmark: true
+                            : (selection.selectedItem?.id == project.id)
                     )
                 }
                 .buttonStyle(.plain)

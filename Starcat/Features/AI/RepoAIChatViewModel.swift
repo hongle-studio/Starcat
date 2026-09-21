@@ -698,7 +698,9 @@ final class RepoAIChatViewModel {
                 paywallContext = ProPaywallContext(feature: gateError.feature, message: error.localizedDescription)
             }
             errorMessage = description
-            if Self.looksLikeContextOverflow(rawDescription) {
+            if error as? LocalAIError == .contextTooLong
+                || Self.looksLikeContextOverflow(rawDescription)
+                || Self.looksLikeContextOverflow(description) {
                 isContextOverflow = true
             }
             friendly.record(category: "ai", operation: "chat.stream", service: "ai-provider")
@@ -930,10 +932,13 @@ final class RepoAIChatViewModel {
             "token limit",
             "tokens exceed",
             "exceeds the maximum",
+            "8,192",
+            "8192",
             "上下文长度",
             "上下文窗口",
             "tokens超过",
-            "超出最大上下文"
+            "超出最大上下文",
+            "缩短上下文"
         ]
         return keywords.contains { lower.contains($0) }
     }

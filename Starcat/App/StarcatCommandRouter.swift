@@ -59,7 +59,6 @@ final class StarcatCommandRouter {
     private var listRefreshAction: RegisteredAction?
     private var detailRefreshAction: RegisteredAction?
     private var repositoryAIAction: RegisteredAction?
-    private var listSearchAction: RegisteredAction?
     private var readmeFindAction: RegisteredAction?
 
     private(set) var activeRefreshPane: StarcatRefreshPane = .list
@@ -181,15 +180,6 @@ final class StarcatCommandRouter {
         repositoryAIAction = nil
     }
 
-    func registerListSearchAction(_ action: StarcatCommandAction, ownerID: UUID) {
-        listSearchAction = RegisteredAction(ownerID: ownerID, action: action)
-    }
-
-    func unregisterListSearchAction(ownerID: UUID) {
-        guard listSearchAction?.ownerID == ownerID else { return }
-        listSearchAction = nil
-    }
-
     func registerReadmeFindAction(_ action: StarcatCommandAction, ownerID: UUID) {
         readmeFindAction = RegisteredAction(ownerID: ownerID, action: action)
     }
@@ -197,17 +187,6 @@ final class StarcatCommandRouter {
     func unregisterReadmeFindAction(ownerID: UUID) {
         guard readmeFindAction?.ownerID == ownerID else { return }
         readmeFindAction = nil
-    }
-
-    /// 列表常规搜索入口。独立窗没有列表搜索的 FocusedValue 时回退到主窗口已登记动作。
-    func performListSearch(preferred action: StarcatCommandAction? = nil) {
-        let resolved = action?.isEnabled == true ? action : listSearchAction?.action
-        guard let resolved, resolved.isEnabled else { return }
-        resolved.perform()
-    }
-
-    func isListSearchAvailable(preferred action: StarcatCommandAction? = nil) -> Bool {
-        action?.isEnabled == true || listSearchAction?.action.isEnabled == true
     }
 
     /// README 页内查找入口。独立 README 窗必须先走本窗 FocusedValue，不能掉进主窗口残留动作。
@@ -244,10 +223,6 @@ private struct StarcatReadmeFindActionFocusedValueKey: FocusedValueKey {
     typealias Value = StarcatCommandAction
 }
 
-private struct StarcatListSearchActionFocusedValueKey: FocusedValueKey {
-    typealias Value = StarcatCommandAction
-}
-
 extension FocusedValues {
     /// key window 在主窗口时，优先遵守真实 first responder 所在列。
     var starcatRefreshAction: StarcatCommandAction? {
@@ -265,12 +240,6 @@ extension FocusedValues {
     var starcatReadmeFindAction: StarcatCommandAction? {
         get { self[StarcatReadmeFindActionFocusedValueKey.self] }
         set { self[StarcatReadmeFindActionFocusedValueKey.self] = newValue }
-    }
-
-    /// 主窗口中栏列表常规搜索。独立 README 窗没有这个值。
-    var starcatListSearchAction: StarcatCommandAction? {
-        get { self[StarcatListSearchActionFocusedValueKey.self] }
-        set { self[StarcatListSearchActionFocusedValueKey.self] = newValue }
     }
 }
 
@@ -345,40 +314,6 @@ private struct StarcatRepositoryAICommandModifier: ViewModifier {
     }
 }
 
-/// 中栏列表搜索快捷键。Manage 才启用，并统一打开 Search Center 的 Local scope；
-/// 探索页仍发布 disabled 动作，让菜单项不会误触发主窗口残留闭包。
-private struct StarcatListSearchCommandModifier: ViewModifier {
-    @Environment(StarcatCommandRouter.self) private var router
-    @State private var ownerID = UUID()
-
-    let identity: String
-    let isEnabled: Bool
-    let action: @MainActor @Sendable () -> Void
-
-    func body(content: Content) -> some View {
-        let command = StarcatCommandAction(
-            title: String.l10n("commands.actions.findInList"),
-            isEnabled: isEnabled,
-            perform: action
-        )
-
-        content
-            .focusedValue(\.starcatListSearchAction, command)
-            .onAppear {
-                router.registerListSearchAction(command, ownerID: ownerID)
-            }
-            .onChange(of: identity) { _, _ in
-                router.registerListSearchAction(command, ownerID: ownerID)
-            }
-            .onChange(of: isEnabled) { _, _ in
-                router.registerListSearchAction(command, ownerID: ownerID)
-            }
-            .onDisappear {
-                router.unregisterListSearchAction(ownerID: ownerID)
-            }
-    }
-}
-
 /// README 页内查找。滚动仍记为详情栏，供 `⌘R` 判断刷新目标。
 private struct StarcatReadmeFindCommandModifier: ViewModifier {
     @Environment(StarcatCommandRouter.self) private var router
@@ -447,19 +382,6 @@ extension View {
         action: @escaping @MainActor @Sendable () -> Void
     ) -> some View {
         modifier(StarcatRepositoryAICommandModifier(
-            identity: identity,
-            isEnabled: isEnabled,
-            action: action
-        ))
-    }
-
-    /// 发布中栏列表常规搜索。`isEnabled` 为 false 时仍登记，让探索页菜单项保持禁用。
-    func starcatListSearchCommand(
-        identity: String,
-        isEnabled: Bool,
-        action: @escaping @MainActor @Sendable () -> Void
-    ) -> some View {
-        modifier(StarcatListSearchCommandModifier(
             identity: identity,
             isEnabled: isEnabled,
             action: action

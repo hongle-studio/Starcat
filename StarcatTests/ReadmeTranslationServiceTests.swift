@@ -91,6 +91,21 @@ struct ReadmeTranslationServiceStaticTests {
         #expect(decoded[1].translatedText == "使用 `npm install`")
     }
 
+    @Test("makeAIRequest：翻译明确关闭思考并保持非流式 JSON")
+    func translationRequestDisablesThinking() throws {
+        let request = try ReadmeTranslationService.makeAIRequest(
+            batch: [ReadmeSourceSegment(id: "segment-1", text: "Hello")],
+            targetLanguage: .simplifiedChinese,
+            mode: .segmented,
+            prompt: AIDefaultPrompts.translation,
+            model: "local-test-model",
+            parameters: .translationDefault)
+
+        #expect(request.disableThinking)
+        #expect(!request.parameters.streamEnabled)
+        #expect(request.responseFormat == .jsonObject)
+    }
+
     @Test("decodeBatchResponse：缺失、重复或未知 id 时拒绝结果")
     func rejectsUnsafeSegmentAlignment() {
         let source = [
@@ -486,14 +501,21 @@ struct AppSettingsTranslationTaskTests {
         return AppSettings(defaults: defaults)
     }
 
-    @Test("首次升级：未持久化时 aiTranslationTask 默认值与 aiSummaryTask 共享 provider+model")
+    @Test("首次升级：翻译默认保持 legacy provider，不跟随本地 AI 摘要默认")
     func defaultsAlignWithSummaryProviderAndModel() {
+        // 2026-09-12 本地 AI 默认只覆盖 summary/tags/chat/embedding 四任务；
+        // 翻译不在本地 AI v1 范围，未持久化时仍指向 legacy OpenAI-compatible 默认。
         let settings = makeSettings()
-        let summary = settings.aiSummaryTask
         let translation = settings.aiTranslationTask
 
-        #expect(translation.providerID == summary.providerID, "翻译默认 provider 应与摘要一致")
-        #expect(translation.modelID == summary.modelID, "翻译默认 model 应与摘要一致")
+        if LocalAIHardwareSupport.isLocalAIAvailable {
+            #expect(settings.aiSummaryTask.providerID == LocalAIModelCatalog.builtInProfileID)
+            #expect(translation.providerID != LocalAIModelCatalog.builtInProfileID,
+                    "翻译默认不指向本地 AI")
+        } else {
+            #expect(translation.providerID == settings.aiSummaryTask.providerID,
+                    "翻译默认 provider 应与摘要一致")
+        }
     }
 
     @Test("首次升级：aiTranslationTask 默认参数 = AIModelParameters.translationDefault（低温度 + 大 maxToken）")
@@ -623,17 +645,18 @@ struct ReadmeTranslationLanguageTests {
         )
     }
 
-    @Test("展示名包含国旗且 promptName 非空")
+    @Test("展示名为母语名称且不含国旗，promptName 非空")
     func promptNamesAreReadable() {
-        #expect(ReadmeTranslationLanguage.auto.displayName.hasPrefix("🌐"))
-        for lang in ReadmeTranslationLanguage.allCases where lang != .auto {
-            #expect(!lang.promptName.isEmpty)
+        #expect(ReadmeTranslationLanguage.auto.displayName.contains("🌐") == false)
+        #expect(!ReadmeTranslationLanguage.auto.displayName.isEmpty)
+        #expect(ReadmeTranslationLanguage.simplifiedChinese.displayName == "简体中文")
+        #expect(ReadmeTranslationLanguage.english.displayName == "English")
+        for lang in ReadmeTranslationLanguage.allCases {
             #expect(!lang.displayName.isEmpty)
-            let leadingScalars = lang.displayName.unicodeScalars.prefix(2)
-            #expect(
-                leadingScalars.count == 2
-                    && leadingScalars.allSatisfy { (0x1F1E6...0x1F1FF).contains($0.value) }
-            )
+            #expect(lang.displayName.unicodeScalars.contains { (0x1F1E6...0x1F1FF).contains($0.value) } == false)
+            if lang != .auto {
+                #expect(!lang.promptName.isEmpty)
+            }
         }
     }
 }

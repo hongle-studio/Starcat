@@ -34,6 +34,19 @@ enum AIModelCapability: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    /// 未知 capability 归到 `.unknown`，避免整条 profile 因新目录标签解码失败。
+    /// 写回时会变成 `"unknown"`，不再保留原始未来值；服务商级未知 enum 仍走跳过 + 原片段回写。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        self = AIModelCapability(rawValue: raw) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     var displayName: String {
         switch self {
         case .chat:      return "Chat"
@@ -205,8 +218,18 @@ struct AIModelDescriptor: Codable, Identifiable, Equatable, Sendable {
     /// `parameters == nil`，或落库值与 capability 默认语义等价（含打开弹窗误写回的默认值副本），都不算自定义。
     var hasCustomizedParameters: Bool {
         guard let parameters else { return false }
-        return !parameters.isEffectivelyDefault(for: capability)
+        return !parameters.isEffectivelyEqual(to: defaultParameters)
     }
+
+    /// 本地模型有各自采样默认值；不能把远程摘要的低温参数套给所有 MLX 模型。
+    var defaultParameters: AIModelParameters {
+        if providerID == LocalAIModelCatalog.builtInProfileID {
+            return LocalAIGenerationPolicy.defaultParameters(model: name, capability: capability)
+        }
+        return .defaults(for: capability)
+    }
+
+    var effectiveParameters: AIModelParameters { parameters ?? defaultParameters }
 }
 
 /// 一个可调用的 AI 服务商配置。
@@ -267,11 +290,15 @@ struct AIProviderProfile: Codable, Identifiable, Equatable, Sendable {
     /// - 按 `name` 去重，避免 ForEach 重复 `id` 触发 SwiftUI 布局异常；
     /// - 保留用户已有的启用态 / capability 修正 / 参数覆盖；
     /// - 大目录不全开；超过 `maxStoredModels` 时优先保留已启用与 Chat/Embedding。
-    mutating func mergeDiscoveredModels(_ incoming: [AIModelDescriptor]) {
+    mutating func mergeDiscoveredModels(
+        _ incoming: [AIModelDescriptor],
+        referencedModelNames: Set<String> = []
+    ) {
         models = Self.mergedDiscoveredModels(
             existing: models,
             incoming: incoming,
-            providerID: id
+            providerID: id,
+            referencedModelNames: referencedModelNames
         )
     }
 
@@ -279,7 +306,8 @@ struct AIProviderProfile: Codable, Identifiable, Equatable, Sendable {
     static func mergedDiscoveredModels(
         existing: [AIModelDescriptor],
         incoming: [AIModelDescriptor],
-        providerID: String
+        providerID: String,
+        referencedModelNames: Set<String> = []
     ) -> [AIModelDescriptor] {
         var seenNames = Set<String>()
         var uniqueIncoming: [AIModelDescriptor] = []
@@ -338,32 +366,72 @@ struct AIProviderProfile: Codable, Identifiable, Equatable, Sendable {
             }
         }
 
-        guard merged.count > maxStoredModels else { return merged }
+        let truncated: [AIModelDescriptor]
+        if merged.count > maxStoredModels {
+            // 超额时优先保住用户已启用与任务相关能力，再按原顺序补齐。
+            var kept: [AIModelDescriptor] = []
+            kept.reserveCapacity(maxStoredModels)
+            var keptNames = Set<String>()
 
-        // 超额时优先保住用户已启用与任务相关能力，再按原顺序补齐。
-        var kept: [AIModelDescriptor] = []
-        kept.reserveCapacity(maxStoredModels)
-        var keptNames = Set<String>()
-
-        func appendPreferentially(from items: [AIModelDescriptor]) {
-            for model in items where kept.count < maxStoredModels {
-                if keptNames.insert(model.name).inserted {
-                    kept.append(model)
+            func appendPreferentially(from items: [AIModelDescriptor]) {
+                for model in items where kept.count < maxStoredModels {
+                    if keptNames.insert(model.name).inserted {
+                        kept.append(model)
+                    }
                 }
             }
+
+            appendPreferentially(from: merged.filter(\.isEnabled))
+            appendPreferentially(from: merged.filter {
+                $0.capability == .chat || $0.capability == .unknown
+            })
+            appendPreferentially(from: merged.filter { $0.capability == .embedding })
+            appendPreferentially(from: merged)
+            truncated = kept
+        } else {
+            truncated = merged
         }
 
-        appendPreferentially(from: merged.filter(\.isEnabled))
-        appendPreferentially(from: merged.filter {
-            $0.capability == .chat || $0.capability == .unknown
-        })
-        appendPreferentially(from: merged.filter { $0.capability == .embedding })
-        appendPreferentially(from: merged)
-        return kept
+        // 旧版 merge 会把已全开的大目录原样保留；再次测试或启动消毒都走这里收口。
+        return cappingExcessEnabledModels(truncated, referencedNames: referencedModelNames)
     }
 
-    /// 读库后的轻量消毒：去重 + 截断。不改用户启用态，只防止历史脏数据再次卡死设置页。
-    func sanitizedForStorage() -> AIProviderProfile {
+    /// 大目录启用数超过 `autoEnableModelLimit` 时，收口到首次拉取额度。
+    ///
+    /// 任务仍在引用的模型始终保住，避免冷启动把正在用的 Chat / Embedding 关掉。
+    static func cappingExcessEnabledModels(
+        _ models: [AIModelDescriptor],
+        referencedNames: Set<String> = []
+    ) -> [AIModelDescriptor] {
+        guard models.count > autoEnableModelLimit else { return models }
+        let enabledCount = models.reduce(into: 0) { count, model in
+            if model.isEnabled { count += 1 }
+        }
+        guard enabledCount > autoEnableModelLimit else { return models }
+
+        var remainingChat = firstFetchAutoEnableCount
+        var keepFirstEmbedding = true
+        return models.map { model in
+            guard model.isEnabled else { return model }
+            if referencedNames.contains(model.name) {
+                return model
+            }
+            if model.capability == .embedding, keepFirstEmbedding {
+                keepFirstEmbedding = false
+                return model
+            }
+            if (model.capability == .chat || model.capability == .unknown), remainingChat > 0 {
+                remainingChat -= 1
+                return model
+            }
+            var disabled = model
+            disabled.isEnabled = false
+            return disabled
+        }
+    }
+
+    /// 读库后的轻量消毒：去重、截断，并把历史「大目录全开」收口到首次拉取额度。
+    func sanitizedForStorage(referencedModelNames: Set<String> = []) -> AIProviderProfile {
         var copy = self
         var seen = Set<String>()
         var unique: [AIModelDescriptor] = []
@@ -373,7 +441,10 @@ struct AIProviderProfile: Codable, Identifiable, Equatable, Sendable {
             unique.append(model)
             if unique.count >= Self.maxStoredModels { break }
         }
-        copy.models = unique
+        copy.models = Self.cappingExcessEnabledModels(
+            unique,
+            referencedNames: referencedModelNames
+        )
         return copy
     }
 }
@@ -406,13 +477,54 @@ enum AIChatSelectionError: Error, Equatable, Sendable {
 }
 
 extension AppSettings {
+    /// 指定任务当前解析到的服务商是否为内置本地 AI（`.localAI`）。
+    ///
+    /// 门控口径（本地 AI 免费，dong4j 2026-09-12 拍板）：任务解析到本地 provider 的
+    /// 调用走进程内 MLX、无远程 AI 成本，`EntitlementGate.requirePro(_:usesLocalOnly:)`
+    /// 据此放行。这里只看 provider 类型，不做已安装校验——未下载模型时的失败由
+    /// selection 解析报「配置不可用」，而不是付费墙。
+    func isTaskResolvedToLocalAI(_ task: AIModelTaskConfiguration) -> Bool {
+        aiProviderProfiles.first { $0.id == task.providerID }?.provider == .localAI
+    }
+
+    var isChatTaskResolvedToLocalAI: Bool { isTaskResolvedToLocalAI(aiChatTask) }
+    var isSummaryTaskResolvedToLocalAI: Bool { isTaskResolvedToLocalAI(aiSummaryTask) }
+    var isTagsTaskResolvedToLocalAI: Bool { isTaskResolvedToLocalAI(aiTagsTask) }
+    var isEmbeddingTaskResolvedToLocalAI: Bool { isTaskResolvedToLocalAI(aiEmbeddingTask) }
+
+    /// 任一普通 AI 任务指向内置 Local AI。设置页下拉只表示「正在编辑哪家」，
+    /// 不能用来判断运行时会不会走 MLX。
+    var usesLocalAIForAnyTask: Bool {
+        isChatTaskResolvedToLocalAI
+            || isSummaryTaskResolvedToLocalAI
+            || isTagsTaskResolvedToLocalAI
+            || isEmbeddingTaskResolvedToLocalAI
+            || isTaskResolvedToLocalAI(aiTranslationTask)
+    }
+
+    /// 知识库 Rerank 已开启且走进程内 MLX。远程 TEI/Cohere 不占用本地重排序槽。
+    var usesLocalAIRerank: Bool {
+        let rerank = ragRerankConfiguration.normalized
+        return rerank.isEnabled && rerank.provider == .localMLX
+    }
+
+    /// 摘要 + 标签任务都指向本地模型（批量 AI / 自动整理的免费判定口径）。
+    var isGenerationTasksResolvedToLocalAI: Bool {
+        isSummaryTaskResolvedToLocalAI && isTagsTaskResolvedToLocalAI
+    }
+
+    /// 对话 + 向量化任务都指向本地模型（知识库 RAG / Agent 工作台入口的免费判定口径）。
+    var isRAGPipelineResolvedToLocalAI: Bool {
+        isChatTaskResolvedToLocalAI && isEmbeddingTaskResolvedToLocalAI
+    }
+
     /// 设置页「模型配置 → 对话」是否已经指向一个可用模型。
     ///
     /// Agent 与知识库 RAG 都依赖对话模型，因此入口只依据此处的用户显式选择放行。
     /// 不能读取 API Key：本地 Provider 可以合法地没有 Key，且连接测试结果已经是
     /// Provider 可用性的单一设置真源。
     var hasConfiguredChatModel: Bool {
-        let task = aiChatTask
+        let task = resolvedAITask(aiChatTask)
         let resolvedName = task.resolvedModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !resolvedName.isEmpty,
               let profile = aiProviderProfiles.first(where: { $0.id == task.providerID }),
@@ -439,6 +551,7 @@ extension AppSettings {
     /// 创建客户端的业务服务负责。自定义模型没有 descriptor，只要 Provider 已验证且
     /// 名称非空即可放行；实际端点兼容性由请求期错误负责。
     func resolveChatSelection(for task: AIModelTaskConfiguration) throws -> AIChatSelection {
+        let task = resolvedAITask(task)
         guard let profile = aiProviderProfiles.first(where: { $0.id == task.providerID }) else {
             throw AIChatSelectionError.missingProvider
         }
@@ -468,7 +581,7 @@ extension AppSettings {
     /// 这里仅检查无需网络请求即可确定的错误；自定义模型在 Provider 已验证且名称非空时放行，
     /// 它是否真正支持 embeddings 由请求期错误映射负责判断。
     func resolveEmbeddingSelection() throws -> AIEmbeddingSelection {
-        let task = aiEmbeddingTask
+        let task = resolvedAITask(aiEmbeddingTask, type: .embedding)
         guard let profile = aiProviderProfiles.first(where: { $0.id == task.providerID }) else {
             throw AIEmbeddingError.missingProvider
         }
@@ -498,7 +611,7 @@ extension AppSettings {
         return AIEmbeddingSelection(
             profile: profile,
             modelName: modelName,
-            parameters: effectiveParameters(for: task)
+            parameters: task.parameters
         )
     }
 
@@ -548,6 +661,16 @@ enum AIModelTask: String, Codable, CaseIterable, Identifiable, Sendable {
     case chat
 
     var id: String { rawValue }
+
+    /// AI 服务页「模型配置」与「Prompt」两区 segmented picker 的任务列表（单一来源）。
+    ///
+    /// 翻译任务的 Provider / 模型 / Prompt 已迁入「翻译服务」设置页
+    /// （TranslationSettingsView），不再出现在 AI 服务页；顺序统一为
+    /// 摘要 / 标签 / 对话 / 向量化。枚举 case 与 `aiTranslationTask` 存储
+    /// 必须保留——翻译设置页与运行时仍消费它们，删掉会重置用户已存配置。
+    static var aiSettingsPageTasks: [AIModelTask] {
+        [.summary, .tags, .chat, .embedding]
+    }
 
     /// HOM-126 follow-up (dong4j 反馈 2026-06-07，「模型配置」/「Prompt」segmented picker 显得拥挤)：
     /// 任务名收紧为单字/双字，避免在 4 个 tab 横排的 segmented picker 里被截断。
@@ -1273,15 +1396,15 @@ enum AIDefaultPrompts {
     /// - `{topics}` — `IndexedTextBuilder.normalizeTopics()` 处理后的逗号分隔列表
     /// - `{license}` — SPDX 标识
     /// - `{homepage}` — 主页 URL
-    /// - `{body}` — 三级降级主体（AI 摘要 > README 纯文本 > description+topics 兜底）
+    /// - `{body}` — 主体（AI 摘要与 README 并存，都没有才用 description+topics）
     /// - `{notes}` — 用户私有笔记
     ///
     /// **删占位符 = 不注入对应数据**：dict 里有 key 但 value 是空字符串 → 替换为空；
     /// 模板中删掉占位符那行（连同 label）→ 输出根本不渲染对应内容。
     ///
-    /// **`{body}` 不拆细的原因**：三级降级是稳定性兜底（dong4j 2026-06-12 决策 D）。
-    /// 如果拆成 `{summary}` / `{readme}` 让用户控制，用户写 `{summary}` 但 repo
-    /// 没生成过摘要 → 输入退化为只有元数据 → 搜索效果烂。
+    /// **`{body}` 不拆细的原因**：摘要和 README 由 `IndexedTextBuilder` 决定并存顺序，
+    /// 不暴露 `{summary}` / `{readme}`。否则用户只写 `{summary}` 而该仓没有摘要时，
+    /// 输入会退化成只有元数据，搜索效果变差。
     ///
     /// **已知约束**：用户改 prompt template 后，老 vector 是用旧 template 喂出来的，
     /// 跟新 template 不可比；diff 判定（`IndexedTextDiff.shouldRebuild`）只看
@@ -1562,13 +1685,15 @@ extension AIServiceProvider {
         case .zhipu:            return String.l10n("ai.provider.zhipu.name")
         case .zai:              return "Z.AI"
         case .orcaRouter:       return "OrcaRouter"
+        case .localAI:          return "Starcat Local AI"
+        case .anthropic:        return "Anthropic"
         }
     }
 
     /// 是否允许 API Key 为空（本地服务用）。
     var allowsEmptyAPIKey: Bool {
         switch self {
-        case .ollama, .lmStudio:
+        case .ollama, .lmStudio, .localAI:
             return true
         default:
             return false

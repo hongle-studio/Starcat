@@ -80,8 +80,7 @@ struct MCPSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.mcp.section.service",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    style: .prominent
+                    systemImage: "point.3.connected.trianglepath.dotted"
                 )
             }
 
@@ -120,8 +119,7 @@ struct MCPSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.mcp.section.writes",
-                    systemImage: "pencil.and.list.clipboard",
-                    style: .prominent
+                    systemImage: "pencil.and.list.clipboard"
                 )
             }
 
@@ -158,8 +156,7 @@ struct MCPSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.mcp.agentSetup.cli.title",
-                    systemImage: "terminal",
-                    style: .prominent
+                    systemImage: "terminal"
                 )
             }
 
@@ -188,8 +185,7 @@ struct MCPSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.mcp.agentSetup.pair.title",
-                    systemImage: "link.badge.plus",
-                    style: .prominent
+                    systemImage: "link.badge.plus"
                 )
             } footer: {
                 Text("settings.mcp.agentSetup.security.help")
@@ -231,8 +227,7 @@ struct MCPSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.mcp.agentSetup.mcp.title",
-                    systemImage: "server.rack",
-                    style: .prominent
+                    systemImage: "server.rack"
                 )
             } footer: {
                 Text("settings.mcp.agentSetup.mcp.configuration.help")
@@ -264,8 +259,7 @@ struct MCPSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.mcp.agentSetup.skill.title",
-                    systemImage: "wand.and.stars",
-                    style: .prominent
+                    systemImage: "wand.and.stars"
                 )
             }
 
@@ -290,8 +284,7 @@ struct MCPSettingsTab: View {
                 } header: {
                     SettingsSectionHeader(
                         "settings.mcp.section.devices",
-                        systemImage: "laptopcomputer.and.iphone",
-                        style: .prominent
+                        systemImage: "laptopcomputer.and.iphone"
                     )
                 }
             }

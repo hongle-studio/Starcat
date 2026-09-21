@@ -66,14 +66,14 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
     /// Scaffold 已读取的知识库状态；Release stat 复用它，避免首屏重复查 repo_notes。
     let libraryState: LibraryState
     let onLanguageTapped: ((String) -> Void)?
+    /// 默认展示 Hero 贡献者列。目前所有详情场景都开。
+    let showsContributorsStat: Bool
     private let trailingActions: TrailingActions
 
     /// OpenSSF 与 Repo Health 都放在 `full_name` 同行。
     /// OpenSSF 是公开安全信号，所有详情页可见；Repo Health 是 Manage 专属 Pro 能力，
     /// 由 Scaffold 通过 `showsRepoHealthEntry` 明确放行。
     @Environment(AppDependencies.self) private var dependencies
-    /// Forks / Watchers 的语义色按 colorScheme 切换 —— 见 StatSemanticColor。
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.starcatInterfaceScale) private var interfaceScale
     @State private var showOpenSSFScoreSheet = false
     @State private var showRepoHealthSheet = false
@@ -87,6 +87,7 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
         showsRepoHealthEntry: Bool = false,
         libraryState: LibraryState = .outsideLibrary,
         onLanguageTapped: ((String) -> Void)? = nil,
+        showsContributorsStat: Bool = true,
         onStarTapped: @escaping () async throws -> Void,
         @ViewBuilder trailingActions: () -> TrailingActions
     ) {
@@ -97,6 +98,7 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
         self.showsRepoHealthEntry = showsRepoHealthEntry
         self.libraryState = libraryState
         self.onLanguageTapped = onLanguageTapped
+        self.showsContributorsStat = showsContributorsStat
         self.onStarTapped = onStarTapped
         self.trailingActions = trailingActions()
     }
@@ -197,9 +199,6 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
             if repo.isArchived {
                 RepoBadgeChip(text: "repo.archived", systemImage: "archivebox", tint: .orange)
             }
-            if repo.isFork {
-                RepoBadgeChip(text: "repo.fork", systemImage: "tuningfork", tint: .gray)
-            }
             if repo.isPrivate {
                 RepoBadgeChip(text: "repo.private", systemImage: "lock.fill", tint: .purple)
             }
@@ -226,6 +225,12 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
                     systemImage: "scale.3d",
                     tint: .secondary
                 )
+            }
+            // fork 来源不再单独占第三行，也不再用灰色 Fork 胶囊占位。
+            // 有 parent 时接到 license 后面，点名字打开上游。
+            if repo.isFork {
+                ForkedFromCaption(repo: repo)
+                    .layoutPriority(-1)
             }
         }
         .lineLimit(1)
@@ -260,7 +265,8 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
     }
 
     private var statsSection: some View {
-        HStack(alignment: .center, spacing: 24) {
+        // 贡献者列头像 22pt，比同行 14pt 数字略高；底对齐让 Stars / 贡献者等 caption 仍在一条线上。
+        HStack(alignment: .bottom, spacing: 24) {
             // R-01 §3.2.3 状态机：StarStatChipButton 封装 idle / loading /
             // shake / error-flash 4 状态。已 star → ⭐ 实心黄；未 star →
             // ☆ 空心灰；API 进行中 → ProgressView；失败 → 抖动 + 短暂红色。
@@ -273,24 +279,9 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
             )
             .gettingStartedAnchor(.unstarRepo)
 
-            Button {
-                if let url = URL(string: "\(repo.htmlUrl)/fork") {
-                    NSWorkspace.shared.open(url)
-                }
-            } label: {
-                // Forks 用 StatSemanticColor.fork 蓝(light/dark 双主题),
-                // 与 SearchCenter 详情卡 fork 配色同源,详情页与其他 stat 形成视觉差。
-                RepoStatItem(
-                    label: "repo.forks",
-                    value: repo.forksCount,
-                    systemImage: "tuningfork",
-                    tint: StatSemanticColor.fork.resolved(colorScheme: colorScheme)
-                )
-            }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .pressableHover()
-            .help("repo.forkAction")
+            // Forks 按所有权分流：别人的仓打开 /fork，自己的原创仓打开网络页，
+            // 自己的 fork 出上游 / Contribute / Sync 菜单。见 ForksMenu。
+            ForksMenu(repo: repo)
 
             WatchersMenu(repo: repo)
 
@@ -300,6 +291,15 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
             // 与 Stars / Forks / Watchers / Created / Updated 同行展示。详见
             // `Starcat/Features/Releases/RepoReleaseSection.swift` 文件头 v2.0 演化说明。
             RepoReleaseStatItem(repo: repo, libraryState: libraryState)
+            if showsContributorsStat {
+                RepoContributorsStatItem(
+                    repo: repo,
+                    service: RepositoryContributorHeroService(
+                        remote: dependencies.repositoryRemoteInsightsProvider,
+                        access: dependencies.repositoryRemoteInsightsAccessProvider
+                    )
+                )
+            }
         }
     }
 }
@@ -1170,7 +1170,7 @@ private struct RepoRawBadgeChip: View {
     }
 }
 
-private struct RepoStatItem: View {
+struct RepoStatItem: View {
     let label: LocalizedStringKey
     let value: Int
     let systemImage: String

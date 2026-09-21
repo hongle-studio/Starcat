@@ -570,7 +570,7 @@ final class KnowledgeRAGIndexBuilder {
     private func performRebuildKnowledgeBase(recordsRefreshSummary: Bool) async throws {
         guard beginOperation() else { throw CancellationError() }
         defer { endOperation() }
-        try entitlementGate.requirePro(.knowledgeRAG)
+        try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         let repos = try await repoRepository.fetchKnowledgeRepos()
         if recordsRefreshSummary {
             refreshSummary = RAGIndexRefreshSummary(
@@ -605,7 +605,7 @@ final class KnowledgeRAGIndexBuilder {
     private func performRebuildRepository(_ repo: Repo) async throws {
         guard beginOperation() else { throw CancellationError() }
         defer { endOperation() }
-        try entitlementGate.requirePro(.knowledgeRAG)
+        try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         guard try await noteRepository.fetchLibraryState(repoId: repo.id) == .inLibrary else { return }
 
         let summary = try await summaryRepository.fetchLatest(repoId: repo.id)
@@ -621,7 +621,7 @@ final class KnowledgeRAGIndexBuilder {
         guard beginOperation() else { return }
         defer { endOperation() }
         do {
-            try entitlementGate.requirePro(.knowledgeRAG)
+            try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
             guard try await noteRepository.fetchLibraryState(repoId: repo.id) == .inLibrary else { return }
             let summary = sources.contains(.summary)
                 ? try await summaryRepository.fetchLatest(repoId: repo.id)
@@ -642,7 +642,7 @@ final class KnowledgeRAGIndexBuilder {
     private func performEmbedEditedChunks(_ chunks: [RAGDeletedChunkIdentity]) async throws {
         guard beginOperation() else { throw CancellationError() }
         defer { endOperation() }
-        try entitlementGate.requirePro(.knowledgeRAG)
+        try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         // 人工编辑与恢复不经过 source diff；先登记 ID，Metadata 才能直接 upsert，
         // 普通正文则会在本轮 embedding ready 后用同一 ID 覆盖 pending 变更。
         externalIndexChanges.recordUpserts(chunks.map(\.id))
@@ -660,7 +660,7 @@ final class KnowledgeRAGIndexBuilder {
         guard beginOperation() else { return }
         defer { endOperation() }
         do {
-            try entitlementGate.requirePro(.knowledgeRAG)
+            try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
             let repos = try await repoRepository.fetchKnowledgeRepos()
             for repo in repos {
                 try Task.checkCancellation()
@@ -1177,7 +1177,7 @@ final class KnowledgeRAGIndexBuilder {
         guard !apiKey.isEmpty || selection.profile.provider.allowsEmptyAPIKey else {
             throw AIEmbeddingError.missingAPIKey
         }
-        let client = try OpenAIClient(configuration: AIClientConfiguration(
+        let client = try AIClientFactory.make(configuration: AIClientConfiguration(
             providerID: selection.profile.id,
             provider: selection.profile.provider,
             apiKey: apiKey,
@@ -1191,7 +1191,8 @@ final class KnowledgeRAGIndexBuilder {
     }
 
     private func resolvedEmbeddingModel() -> String {
-        settings.aiEmbeddingTask.resolvedModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.resolvedAITask(settings.aiEmbeddingTask, type: .embedding).resolvedModelName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var isCurrentWorkGeneration: Bool {

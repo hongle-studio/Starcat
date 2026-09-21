@@ -67,7 +67,7 @@ struct AIModelParametersPopover: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.name)
+                Text(AnthropicModelCatalog.displayName(forAPIID: model.name))
                     .font(.headline)
                     .lineLimit(2)
                     .truncationMode(.middle)

@@ -51,9 +51,15 @@ esac
 starcat_select_stable_xcode
 starcat_prepare_debug_derived_data "$PROJECT_ROOT" "$DERIVED_DATA" "direct-debug"
 
-BUILD_VERSION="$(git -C "$PROJECT_ROOT" rev-list --count HEAD 2>/dev/null || true)"
+# Direct 渠道的 build 号统一用 yyyyMMddHHmm 时间戳，与 package-direct.sh 同口径。
+# 不能用 git commit count：线上 appcast 的 sparkle:version 就是发版时间戳，Sparkle 拿它
+# 和运行中 App 的 CFBundleVersion 做数值比较，commit count（四位）恒小于发版时间戳
+# （十二位），本地 Direct 包会被判定「比线上旧」，弹窗把 1.7.0 的调试包引导去装 1.6.1
+# （dong4j 2026-09-15）。时间戳口径下本地包恒新于已发布版本。
+# 需要复现/固定某个号时用 STARCAT_DIRECT_BUILD_NUMBER，与 package-direct.sh 共用钩子。
+BUILD_VERSION="${STARCAT_DIRECT_BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 if ! [[ "$BUILD_VERSION" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ERROR: 无法从 git commit count 生成有效的 Direct Debug build version。"
+  echo "ERROR: Direct Debug build version 必须是纯数字，当前: ${BUILD_VERSION:-<empty>}"
   exit 1
 fi
 
@@ -133,15 +139,21 @@ echo "==> 生成 Xcode 工程..."
 xcodegen generate
 
 echo "==> 构建 StarcatDirect Debug（Direct / 非 App Store 模式）..."
+# STARCAT_BUILD_VERSION_OVERRIDE 必须与 CURRENT_PROJECT_VERSION 同值：宿主和 Widget 的
+# postBuildScripts 都会跑 bump-version.sh，该脚本优先用 BUILD_OVERRIDE 改写产物
+# CFBundleVersion，不传就会被改回 git commit count，与下面的产物校验冲突。
 xcodebuild \
   -scheme StarcatDirect \
   -configuration Debug \
   -sdk macosx \
   -arch arm64 \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
   -derivedDataPath "$DERIVED_DATA" \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM_ID" \
   CODE_SIGN_IDENTITY="Apple Development" \
   CURRENT_PROJECT_VERSION="$BUILD_VERSION" \
+  STARCAT_BUILD_VERSION_OVERRIDE="$BUILD_VERSION" \
   ENABLE_DEBUG_DYLIB=NO \
   build
 

@@ -29,10 +29,10 @@ struct RAGInferenceBackendCard: View {
 
                     VStack(alignment: .leading, spacing: interfaceScale.scaled(2)) {
                         Text(LocalizedStringKey(backend.titleKey))
-                            .font(ragFont(.body, scale: interfaceScale, weight: .semibold))
+                            .font(.callout.weight(.medium))
                             .foregroundStyle(.primary)
                         Text(LocalizedStringKey(backend.hintKey))
-                            .font(ragFont(.caption, scale: interfaceScale))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
@@ -41,7 +41,9 @@ struct RAGInferenceBackendCard: View {
                     statusBadge
 
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(interfaceScale.font(size: 17, weight: .semibold))
+                        // 17pt semibold 在卡片行里比标题和状态 pill 都重，收到
+                        // 15pt medium 与设置页 icon-only glyph 同级。
+                        .font(interfaceScale.font(size: 15, weight: .medium))
                         .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                         .accessibilityHidden(true)
                 }
@@ -79,9 +81,28 @@ struct RAGInferenceBackendCard: View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.08))
-            Image(systemName: backend.systemImage)
-                .font(interfaceScale.font(size: 16, weight: .semibold))
-                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            switch backend {
+            case .api:
+                Image(systemName: backend.systemImage)
+                    .font(interfaceScale.font(size: 16, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            case .codexCLI:
+                // OpenAI 未公开独立 Codex 矢量标识，因此复用官方 Blossom，并以模板模式适配明暗主题。
+                Image("chatgpt")
+                    .renderingMode(.template)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .foregroundStyle(.primary)
+                    .frame(width: interfaceScale.scaled(22), height: interfaceScale.scaled(22))
+            case .claudeCLI:
+                // 卡片标题已显示产品名，这里使用 Anthropic 官方 Claude Spark，避免重复完整字标。
+                Image("claudecode")
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: interfaceScale.scaled(22), height: interfaceScale.scaled(22))
+            }
         }
         .frame(width: interfaceScale.scaled(36), height: interfaceScale.scaled(36))
         .accessibilityHidden(true)
@@ -103,7 +124,7 @@ struct RAGInferenceBackendCard: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("rag.workspace.inference.status.checking")
-                        .font(ragFont(.caption, scale: interfaceScale, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
             case .available:
@@ -133,19 +154,20 @@ struct RAGInferenceBackendCard: View {
         switch inspection ?? .checking {
         case .checking:
             Text("rag.workspace.inference.status.checkingDetail")
-                .font(ragFont(.caption, scale: interfaceScale))
+                .font(.caption)
                 .foregroundStyle(.secondary)
         case .available(let executableURL, let version):
             VStack(alignment: .leading, spacing: interfaceScale.scaled(5)) {
                 Label {
                     Text(verbatim: version)
+                        .font(.caption.monospaced())
                         .lineLimit(1)
                 } icon: {
                     Image(systemName: "checkmark.seal")
                 }
                 Label {
                     Text(verbatim: executableURL.path)
-                        .font(ragFont(.caption, scale: interfaceScale, design: .monospaced))
+                        .font(.caption.monospaced())
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(executableURL.path)
@@ -153,7 +175,7 @@ struct RAGInferenceBackendCard: View {
                     Image(systemName: "terminal")
                 }
             }
-            .font(ragFont(.caption, scale: interfaceScale))
+            .font(.caption)
             .foregroundStyle(.secondary)
         case .notInstalled:
             unavailableMetadata(
@@ -175,7 +197,7 @@ struct RAGInferenceBackendCard: View {
         VStack(alignment: .leading, spacing: interfaceScale.scaled(6)) {
             HStack(alignment: .firstTextBaseline, spacing: interfaceScale.scaled(8)) {
                 Text(detailKey)
-                    .font(ragFont(.caption, scale: interfaceScale))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -184,14 +206,14 @@ struct RAGInferenceBackendCard: View {
                 if let installationURL = backend.installationURL {
                     Link(destination: installationURL) {
                         Label("rag.workspace.inference.installGuide", systemImage: "arrow.up.right.square")
-                            .font(ragFont(.caption, scale: interfaceScale, weight: .medium))
+                            .font(.caption.weight(.medium))
                     }
                 }
             }
 
             if let technicalDetail, !technicalDetail.isEmpty {
                 Text(verbatim: technicalDetail)
-                    .font(ragFont(.caption, scale: interfaceScale, design: .monospaced))
+                    .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .textSelection(.enabled)
@@ -199,7 +221,7 @@ struct RAGInferenceBackendCard: View {
 
             if isSelected && !isSelectable {
                 Label("rag.workspace.inference.status.selectedUnavailable", systemImage: "exclamationmark.triangle.fill")
-                    .font(ragFont(.caption, scale: interfaceScale, weight: .medium))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(Color.orange)
             }
         }
@@ -214,10 +236,11 @@ private struct RAGBackendStatusBadge: View {
 
     var body: some View {
         Text(titleKey)
-            .font(ragFont(.caption, scale: interfaceScale, weight: .semibold))
+            .font(.caption.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, interfaceScale.scaled(8))
-            .padding(.vertical, interfaceScale.scaled(4))
+            // 垂直内边距 4→3：卡片里和 15pt 勾选图标并排时胶囊更轻，不抢选中态。
+            .padding(.vertical, interfaceScale.scaled(3))
             .background(tint.opacity(0.12), in: Capsule())
     }
 }

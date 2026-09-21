@@ -21,7 +21,7 @@ extension RepoRecommendationItem {
     /// 字段映射策略：
     /// - `owner` / `repo` 从 `fullName` 用 "/" 拆出（推荐接口只给完整名）
     /// - `isStarred` 从 `registry.contains(ghRepoId:)` 查 → 用于 `UnifiedRepoRow`
-    ///   的绿色 ✓ 标记（与 Trending / Weekly 列表的 `showStarredCheckmark` 行为一致）
+    ///   Stars 徽章的实/空心表达（与 Trending / Weekly 列表行为一致）
     /// - 所有「场景独有徽章」字段传 nil —— 推荐列表不是 trending / weekly / activity
     /// - `avatarURL` = nil —— 推荐接口不返回 owner 头像，由 UnifiedRepoRow 用 owner login 拼
     /// - `openSSFScore` / `healthBadge` = nil —— 详情页才查，列表行不查

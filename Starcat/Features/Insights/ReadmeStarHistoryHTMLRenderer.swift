@@ -12,8 +12,35 @@ import Foundation
 import SwiftUI
 
 /// 将不可变历史快照投影成 HTML；不触发网络请求，也不访问用户数据库。
-@MainActor
+///
+/// 整个渲染器是 nonisolated：卡片生成是纯字符串计算，没有理由占着主线程 ——
+/// 它正好落在用户滚动 README 的时候。所有 AppKit 依赖（NSImage 栅格化、NSColor
+/// 颜色空间转换）都收敛进 `ReadmeStarHistoryRenderContext.prepare(language:)`：
+/// 调用方在主线程把材料取成不可变值，渲染期只做字典读取与字符串拼接。
 enum ReadmeStarHistoryHTMLRenderer {
+    /// 悬停 / 键盘 / 标注共用的细节序列上限。
+    ///
+    /// 400 是"载荷 vs 悬停精度"的取舍点：630 周仓库原本要把全部 4410 个日点序列化进
+    /// data-points（约 86 KB JSON），现在压到 ≤400 点（约 8 KB），而 LTTB 只会挑选
+    /// 真实存在的历史点，用户悬停到的仍是真的数据，只是可停靠的粒度变粗。
+    static let hoverPointLimit = 400
+
+    /// 图标 data URI 表。AppKit 栅格化必须发生在主线程，因此这里只负责"取一次"，
+    /// 渲染（可能在其他线程）只消费返回的不可变字典。
+    @MainActor
+    static func iconTable() -> [String: String] {
+        if let cached = cachedIconTable { return cached }
+        var table: [String: String] = [:]
+        for name in iconNames {
+            if let url = rasterizedIcon(name) { table[name] = url }
+        }
+        cachedIconTable = table
+        return table
+    }
+
+    @MainActor private static var cachedIconTable: [String: String]?
+    private static let iconNames = ["github", "star.fill", "clock", "sparkles", "chart.bar.fill", "calendar", "arrow.up.right"]
+
     /// 无可用缓存时使用固定结构占位，避免短 README 底部在网络等待期间完全空白。
     ///
     /// 骨架不包含仓库数据，也不触发图表脚本；外层 `aria-busy` 让辅助功能知道该区域
@@ -56,7 +83,8 @@ enum ReadmeStarHistoryHTMLRenderer {
         repo: Repo,
         locale: Locale,
         now: Date = Date(),
-        avatarDataURI: String? = nil
+        avatarDataURI: String? = nil,
+        context: ReadmeStarHistoryRenderContext
     ) -> String? {
         let points = snapshot.points.filter { $0.count >= 0 }.sorted { $0.date < $1.date }
         let hasChart = points.count >= 2 && points.first!.date < points.last!.date && model.renderedPoints.count >= 2
@@ -69,10 +97,10 @@ enum ReadmeStarHistoryHTMLRenderer {
             to: points, range: .all, repositoryCreatedAt: createdAt
         )
         // 先识别语义事件再抽样，所有候选标注锚点都必须出现在最终折线上，且仍限制在 90 点内。
-        let anchorIDs = Set(journey.chartEvents.compactMap { $0.point?.id })
-        let anchors = plottingPoints.filter { anchorIDs.contains($0.id) }
-        let baseIDs = Set(model.renderedPoints.map(\.id))
-        let missingAnchors = anchors.filter { !baseIDs.contains($0.id) }
+        let anchorKeys = Set(journey.chartEvents.compactMap { $0.point?.key })
+        let anchors = plottingPoints.filter { anchorKeys.contains($0.key) }
+        let baseKeys = Set(model.renderedPoints.map(\.key))
+        let missingAnchors = anchors.filter { !baseKeys.contains($0.key) }
         var rendered = model.renderedPoints
         if rendered.count + missingAnchors.count > StarHistoryChartSeriesBuilder.allRangePointLimit {
             rendered = StarHistoryChartSeriesBuilder.renderedPoints(
@@ -80,8 +108,11 @@ enum ReadmeStarHistoryHTMLRenderer {
                 maximumPointCount: StarHistoryChartSeriesBuilder.allRangePointLimit - anchors.count
             )
         }
-        let renderedIDs = Set(rendered.map(\.id))
-        rendered = (rendered + anchors.filter { !renderedIDs.contains($0.id) }).sorted { $0.date < $1.date }
+        let renderedKeys = Set(rendered.map(\.key))
+        rendered = (rendered + anchors.filter { !renderedKeys.contains($0.key) }).sorted { $0.date < $1.date }
+        // 悬停 / 键盘 / 标注索引共用同一份"细节序列"：卡片上的 data-points 与
+        // data-annotations 的 index 必须同源，否则标注会指到别的日子上。
+        let hoverPoints = hoverSeries(points: points, anchors: anchors, createdAt: createdAt)
         let metrics = ReadmeStarHistoryMetrics(snapshot: snapshot, createdAt: createdAt, now: now)
         let axis = ReadmeStarHistoryAxis(peak: points.map(\.count).max() ?? 0)
         let total = max(0, repo.starsCount)
@@ -132,12 +163,12 @@ enum ReadmeStarHistoryHTMLRenderer {
         // 两行读数始终保留；宽卡片在右侧补充趋势图，窄栏由 CSS 隐藏，不增加卡片高度。
         let cardMetrics = [
             metric(icon: "chart.bar.fill", color: "green", value: dailyAverage, label: text("readme.starHistory.dailyAverage"),
-                   hint: [String.l10n("readme.starHistory.dailyAverage"), dailyHint, growthPeriod, daysHint, growthHint].filter { !$0.isEmpty }.joined(separator: "\n"), graphic: miniatures.daily),
-            metric(icon: "calendar", color: "purple", value: age, label: text("readme.starHistory.age"), hint: sinceDetail, graphic: miniatures.age),
+                   hint: [String.l10n("readme.starHistory.dailyAverage"), dailyHint, growthPeriod, daysHint, growthHint].filter { !$0.isEmpty }.joined(separator: "\n"), graphic: miniatures.daily, context: context),
+            metric(icon: "calendar", color: "purple", value: age, label: text("readme.starHistory.age"), hint: sinceDetail, graphic: miniatures.age, context: context),
             metric(icon: "star.fill", color: "gold", value: growth, label: text("readme.starHistory.newStars"),
-                   hint: [growthPeriod, growthHint].filter { !$0.isEmpty }.joined(separator: "\n"), graphic: miniatures.growth),
+                   hint: [growthPeriod, growthHint].filter { !$0.isEmpty }.joined(separator: "\n"), graphic: miniatures.growth, context: context),
             metric(icon: "arrow.up.right", color: "pink", value: rate, label: text("readme.starHistory.growth"),
-                   hint: [ratePeriod, fullRate, rateHint].filter { !$0.isEmpty }.joined(separator: "\n"), graphic: miniatures.rate)
+                   hint: [ratePeriod, fullRate, rateHint].filter { !$0.isEmpty }.joined(separator: "\n"), graphic: miniatures.rate, context: context)
         ].joined(separator: "\n")
 
         let description = repo.description.flatMap { value -> String? in
@@ -152,8 +183,8 @@ enum ReadmeStarHistoryHTMLRenderer {
         let avatarImage = avatarDataURI.map {
             "<img src=\"\(escape($0))\" alt=\"\" width=\"72\" height=\"72\" loading=\"eager\" decoding=\"sync\">"
         } ?? ""
-        let chart = hasChart ? chartHTML(points: plottingPoints, rendered: rendered, axis: axis, locale: locale,
-                                        annotations: chartAnnotations(journey, points: plottingPoints, locale: locale)) : ""
+        let chart = hasChart ? chartHTML(points: hoverPoints, rendered: rendered, axis: axis, locale: locale,
+                                        annotations: chartAnnotations(journey, points: hoverPoints, locale: locale)) : ""
 
         return """
         <section class="starcat-star-history" aria-label="\(chartTitle)">
@@ -164,15 +195,15 @@ enum ReadmeStarHistoryHTMLRenderer {
                   \(avatarImage)
                 </span>
                 <div class="starcat-star-history-card-copy">
-                  <span class="starcat-star-history-card-kicker">\(icon("github"))\(chartTitle)</span>
+                  <span class="starcat-star-history-card-kicker">\(icon("github", icons: context.icons))\(chartTitle)</span>
                   <h3 title="\(escape(repo.fullName))">\(escape(repo.fullName))</h3>
                   \(description)
-                  \(tags(repo: repo))
+                  \(tags(repo: repo, context: context))
                 </div>
               </div>
               <div class="starcat-star-history-current" title="\(escape(totalHint))" aria-label="\(totalLabel) \(escape(totalFull))">
                 <div class="starcat-star-history-current-value">
-                  <span class="starcat-star-history-current-star">\(icon("star.fill"))</span>
+                  <span class="starcat-star-history-current-star">\(icon("star.fill", icons: context.icons))</span>
                   <strong>\(escape(totalText))</strong>
                 </div>
                 <span class="starcat-star-history-current-label">\(totalLabel)</span>
@@ -183,10 +214,11 @@ enum ReadmeStarHistoryHTMLRenderer {
             \(journeyHTML(journey, locale: locale))
             <footer class="starcat-star-history-footer">
               <div class="starcat-star-history-source">
-                \(icon("clock"))<span>\(escape(historyUpdated))</span>
+                \(icon("clock", icons: context.icons))<span>\(escape(historyUpdated))</span>
               </div>
               <div class="starcat-star-history-footer-actions">
-                <span class="starcat-star-history-attribution">\(icon("sparkles"))\(text("readme.starHistory.poweredByPrefix")) <strong>Starcat</strong></span>
+                <!-- 署名整段指向 history-api 开源仓库；ReadmeWebView 的 linkActivated 会转系统浏览器打开。 -->
+                <a class="starcat-star-history-attribution" href="https://github.com/starcat-app/starcat-history-api">\(icon("sparkles", icons: context.icons))\(text("readme.starHistory.poweredByPrefix")) <strong>Starcat</strong></a>
               </div>
             </footer>
           </div>
@@ -329,12 +361,33 @@ enum ReadmeStarHistoryHTMLRenderer {
         return parts.joined(separator: "\n")
     }
 
+    /// 构建悬停 / 键盘 / 标注共用的细节序列。
+    ///
+    /// 与折线（≤90 点）分开：折线只求视觉拐点，而悬停要能落到具体某一天，
+    /// 因此细节序列更密（≤400 点）。两者都必须保留语义锚点，且索引必须与
+    /// `data-points` 同一份数组 —— `data-annotations` 里的 index 就是指向它的下标。
+    private static func hoverSeries(
+        points: [StarHistoryPoint],
+        anchors: [StarHistoryPoint],
+        createdAt: Date?
+    ) -> [StarHistoryPoint] {
+        // 锚点先占名额，抽样上限相应扣减，最终总数不超过 hoverPointLimit。
+        let limit = max(2, hoverPointLimit - anchors.count)
+        let sampled = StarHistoryChartSeriesBuilder.renderedPoints(
+            points, range: .all, repositoryCreatedAt: createdAt, maximumPointCount: limit
+        )
+        let sampledKeys = Set(sampled.map(\.key))
+        let missing = anchors.filter { !sampledKeys.contains($0.key) }
+        guard !missing.isEmpty else { return sampled }
+        return (sampled + missing).sorted { $0.date < $1.date }
+    }
+
     /// Chart 独立筛选最多四个事件。气泡显示原点读数，跨阈值语义保留在交互提示里。
     private static func chartAnnotations(_ journey: ReadmeStarJourney, points: [StarHistoryPoint], locale: Locale) -> String {
         var annotations: [[String: Any]] = []
         var used = Set<Int>()
         for event in journey.chartEvents {
-            guard let point = event.point, let index = points.firstIndex(where: { $0.id == point.id }),
+            guard let point = event.point, let index = points.firstIndex(where: { $0.key == point.key }),
                   used.insert(index).inserted else { continue }
             let subtitle = event.kind == .current ? nil : eventSubtitle(event, locale: locale)
             annotations.append([
@@ -348,10 +401,10 @@ enum ReadmeStarHistoryHTMLRenderer {
         return escape(json)
     }
 
-    private static func metric(icon symbol: String, color: String, value: String, label: String, hint: String, graphic: String) -> String {
+    private static func metric(icon symbol: String, color: String, value: String, label: String, hint: String, graphic: String, context: ReadmeStarHistoryRenderContext) -> String {
         """
         <div class="starcat-star-history-metric" title="\(escape(hint))">
-          <span class="starcat-star-history-metric-icon starcat-star-history-\(color)" aria-hidden="true">\(icon(symbol))</span>
+          <span class="starcat-star-history-metric-icon starcat-star-history-\(color)" aria-hidden="true">\(icon(symbol, icons: context.icons))</span>
           <div class="starcat-star-history-metric-copy"><strong>\(escape(value))</strong><span>\(label)</span></div>
           \(graphic)
         </div>
@@ -418,11 +471,11 @@ enum ReadmeStarHistoryHTMLRenderer {
                 metrics.growthRate != nil && baseline > 0 ? line(divisor: Double(baseline), color: "pink") : "")
     }
 
-    private static func tags(repo: Repo) -> String {
+    private static func tags(repo: Repo, context: ReadmeStarHistoryRenderContext) -> String {
         var chips: [String] = []
         if let language = repo.language, !language.isEmpty {
-            let color = NSColor(LanguageColor.color(for: language)).usingColorSpace(.sRGB) ?? .systemBlue
-            let hex = String(format: "#%02X%02X%02X", Int(color.redComponent * 255), Int(color.greenComponent * 255), Int(color.blueComponent * 255))
+            // 语言色在主线程算好（NSColor 颜色空间转换不在后台线程做），这里只拼字符串。
+            let hex = context.languageHex ?? "#007AFF"
             chips.append("<span class=\"starcat-star-history-tag starcat-star-history-tag-language\" title=\"\(escape(language))\"><i style=\"background:\(hex)\"></i><span>\(escape(language))</span></span>")
         }
         let topics = repo.topicsArray.filter { !$0.isEmpty && $0.caseInsensitiveCompare(repo.language ?? "") != .orderedSame }
@@ -459,11 +512,30 @@ enum ReadmeStarHistoryHTMLRenderer {
     private static func text(_ key: String) -> String { escape(String.l10n(key)) }
     private static func format(_ key: String, _ value: String) -> String { String(format: String.l10n(key), value) }
 
+    /// 复用的日期 formatter 缓存。
+    ///
+    /// 卡片渲染可能不在主线程，而 DateFormatter 不是线程安全的，因此按 locale 缓存
+    /// 实例并用锁保护读取；单次渲染有十几处日期文案，重建 formatter 是纯浪费
+    /// （实测新建 + 格式化 15 次约 0.47 ms，复用后 0.012 ms）。
+    private static let dateFormatterLock = NSLock()
+    // nonisolated(unsafe)：访问全部经过上面的锁，编译器的严格并发检查看不到这一点。
+    nonisolated(unsafe) private static var dateFormatters: [String: DateFormatter] = [:]
+
     private static func dateText(_ date: Date, locale: Locale) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateStyle = .medium
+        let key = locale.identifier
+        dateFormatterLock.lock()
+        let formatter: DateFormatter
+        if let cached = dateFormatters[key] {
+            formatter = cached
+        } else {
+            let created = DateFormatter()
+            created.locale = locale
+            created.timeZone = TimeZone(secondsFromGMT: 0)
+            created.dateStyle = .medium
+            dateFormatters[key] = created
+            formatter = created
+        }
+        dateFormatterLock.unlock()
         return formatter.string(from: date)
     }
 
@@ -471,28 +543,59 @@ enum ReadmeStarHistoryHTMLRenderer {
         String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
     }
 
-    /// 系统符号和已有 GitHub 资产转成 alpha mask，CSS 统一控制主题色；固定小集合只栅格化一次。
-    private static var iconURLs: [String: String] = [:]
-    private static func icon(_ name: String) -> String {
-        if iconURLs[name] == nil {
-            let source = name == "github" ? NSImage(named: "github") : NSImage(systemSymbolName: name, accessibilityDescription: nil)
-            if let source {
-                let canvas = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
-                    let ratio = min(rect.width / source.size.width, rect.height / source.size.height)
-                    let size = NSSize(width: source.size.width * ratio, height: source.size.height * ratio)
-                    source.draw(in: NSRect(x: (rect.width - size.width) / 2, y: (rect.height - size.height) / 2,
-                                          width: size.width, height: size.height))
-                    return true
-                }
-                if let tiff = canvas.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiff),
-                   let png = bitmap.representation(using: .png, properties: [:]) {
-                    iconURLs[name] = "data:image/png;base64," + png.base64EncodedString()
-                }
-            }
+    /// 渲染期需要的、必须在主线程准备好的 AppKit 材料。
+    ///
+    /// 卡片生成整体挪到后台线程后，剩下的两处 AppKit 依赖（NSImage 栅格化、NSColor
+    /// 颜色空间转换）都不适合在后台调用，因此统一在主线程算成不可变值再传进去。
+    struct ReadmeStarHistoryRenderContext: Sendable {
+        let icons: [String: String]
+        /// 语言标签色，形如 "#007AFF"；nil 表示仓库没有语言。
+        let languageHex: String?
+
+        /// 在主线程收集渲染材料。
+        @MainActor
+        static func prepare(language: String?) -> ReadmeStarHistoryRenderContext {
+            ReadmeStarHistoryRenderContext(
+                icons: ReadmeStarHistoryHTMLRenderer.iconTable(),
+                languageHex: languageHex(for: language)
+            )
         }
-        guard let url = iconURLs[name] else { return "" }
+
+        @MainActor
+        private static func languageHex(for language: String?) -> String? {
+            guard let language, !language.isEmpty else { return nil }
+            let color = NSColor(LanguageColor.color(for: language)).usingColorSpace(.sRGB) ?? .systemBlue
+            return String(format: "#%02X%02X%02X",
+                          Int(color.redComponent * 255), Int(color.greenComponent * 255), Int(color.blueComponent * 255))
+        }
+    }
+
+    /// 图标标记：表里存的是 data URI，这里包回 mask 用的 span。
+    ///
+    /// 纯字符串拼接，因此渲染可以在任意线程执行；AppKit 只出现在 `rasterizedIcon`。
+    private static func icon(_ name: String, icons: [String: String]) -> String {
+        guard let url = icons[name] else { return "" }
         return "<span class=\"starcat-star-history-icon\" aria-hidden=\"true\" style=\"-webkit-mask-image:url('\(url)')\"></span>"
+    }
+
+    /// 系统符号和已有 GitHub 资产转成 alpha mask，CSS 统一控制主题色；固定小集合只栅格化一次。
+    ///
+    /// 只在主线程被 `iconTable()` 调用：NSImage 绘制不是线程安全的。
+    @MainActor
+    private static func rasterizedIcon(_ name: String) -> String? {
+        let source = name == "github" ? NSImage(named: "github") : NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        guard let source else { return nil }
+        let canvas = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            let ratio = min(rect.width / source.size.width, rect.height / source.size.height)
+            let size = NSSize(width: source.size.width * ratio, height: source.size.height * ratio)
+            source.draw(in: NSRect(x: (rect.width - size.width) / 2, y: (rect.height - size.height) / 2,
+                                  width: size.width, height: size.height))
+            return true
+        }
+        guard let tiff = canvas.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return "data:image/png;base64," + png.base64EncodedString()
     }
 
     /// 同时用于文本和 attribute；远端描述、Topics 和名称只能作为纯文本进入模板。

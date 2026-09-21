@@ -35,8 +35,8 @@ import Foundation
 /// ```
 struct IndexedSnapshot: Codable, Equatable, Sendable {
 
-    /// 主体内容：AI 摘要 > README 纯文本 > description+topics 三级降级后的结果。
-    /// 行级 diff 在这里跑。
+    /// 主体内容：AI 摘要与 README 并存（摘要在前），都没有才用 description+topics。
+    /// 行级 diff 在这里跑；Search Center 字面加分也会扫 `body`。
     var body: String
 
     /// 用户私有笔记纯文本（可空）；与 body 单独 diff，阈值更宽松（默认 20%）。

@@ -2,6 +2,31 @@
 
 Release notes for the Mac App Store edition of Starcat.
 
+## 1.7.0
+
+### New
+
+- Local AI: Built-in on-device models power summarization, tagging, and chat without an API key, free to use and enabled by default on first launch. Manage local models by category with Hugging Face and ModelScope downloads, enable a local reranker for Knowledge Base retrieval, and check model status and memory in the toolbar status panel. Real-time run logs can be viewed and cleared.
+- Anthropic and CC Switch: Anthropic joins the AI provider list through the Messages API, and existing provider configurations can be imported from CC Switch in one click.
+- Settings reorganization: Notifications and Keyboard Shortcuts become separate pages, the general page groups are reorganized, and the legacy search shortcut is removed.
+- README translation services: Adds System Translation and Google Translation, per-notification engine selection, and centralized translation settings with system language pack management.
+- Contributors row: Repository details gain a contributors row with three overlapping avatars and an overflow count; click to view the full list.
+- Insight redesign: My Insights and activity overview cards follow the new prototype, and insights now open from Explore, Trending, Weekly, and Activity details.
+- Own forks: Forks are grouped by ownership, your fork shows its upstream, and ahead/behind decides Contribute and one-click sync.
+- Private group badge: Private groups keep a green shield after their name in the sidebar, independent of hover.
+
+### Improvements
+
+- Star status badge: Lists use filled and outlined star badges to show Star state instead of the green checkmark.
+- Language menu: Now shows each language in its native name only.
+- Semantic search feedback: The search footer shows retrieval progress, semantic match scores, and vector coverage, and semantic recall now includes README content.
+
+### Fixes
+
+- AI panel cursor isolation: Fixes the AI summary and global search panels inheriting cursor behavior from main-window content underneath.
+- Interface rendering: Fixes low-contrast yellow tag dots in light mode and metadata pills clipped in narrow columns.
+- Star history cards: Fixes card detection behind GitHub camo image proxying and duplicate injection when a README already embeds a history card.
+
 ## 1.6.1
 
 Starcat 1.6.1 focuses on issues found after the 1.6.0 release across interface layout, filtering, search, and authorization, while refining macOS 26 Liquid Glass, Star history, and AI organization.

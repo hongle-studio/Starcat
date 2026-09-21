@@ -12,6 +12,8 @@
 //
 //  本 ContentView 负责 body slot 内容：
 //  - `ReadmeStateView`：README WebView + 内嵌 cacheFooter（翻译/刷新按钮）
+//  - 洞察切换抽到 `RepoDetailInsightsHost`：跟探索 / Trending / 周刊 / 动态共用，
+//    门禁只看 `Repo.isStarred`，不再绑死 Manage 模块。
 //
 //  R-01 v1.5 修订（2026-06-10 下午, dong4j bug 反馈）：
 //  - tags / notes / release 三段（`RepoLocalSections`）**从 ContentView 迁回 Scaffold
@@ -53,50 +55,6 @@
 
 import SwiftUI
 
-/// Manage 详情正文的两种互斥模式。
-///
-/// 把模式与切换副作用留在视图外部，主详情和独立详情复用同一个
-/// `ManageDetailContent` 时会自然共享同一套规则，测试也不必依赖 SwiftUI 私有状态。
-enum ManageDetailContentMode: String, CaseIterable, Identifiable {
-    case readme
-    case insights
-
-    var id: String { rawValue }
-
-    var titleKey: LocalizedStringKey {
-        switch self {
-        case .readme:
-            "insights.repo.mode.readme"
-        case .insights:
-            "insights.repo.mode.insights"
-        }
-    }
-
-    /// 切换模式时需要执行的资源管理动作。
-    ///
-    /// README 模式必须取消洞察请求；洞察模式需要先重置 Hero 滚动位置。
-    var transitionEffect: ManageDetailContentTransitionEffect {
-        switch self {
-        case .readme:
-            .cancelInsights
-        case .insights:
-            .resetScroll
-        }
-    }
-}
-
-/// 模式切换带来的最小副作用契约，避免 README 与洞察在后台同时占用资源。
-enum ManageDetailContentTransitionEffect: Equatable {
-    case cancelInsights
-    case resetScroll
-}
-
-/// 仓库和数据库作用域共同决定洞察任务身份；账号切换不能沿用旧 ViewModel 冷却。
-private struct RepositoryInsightsLoadIdentity: Hashable {
-    let repoID: Int64
-    let databaseScopeRevision: UInt64
-}
-
 /// README Star History 预加载身份。
 ///
 /// 完整 Repo 参与身份可覆盖同仓星标数、描述和 Topics 更新；手动刷新 revision 则确保
@@ -124,101 +82,17 @@ struct ManageDetailContent: View {
     /// v2.1（2026-06-11）：onRetry 闭包同时刷 README + 整个 repo 视图数据(缓存 repo +
     /// tags + notes + release 计数等)。详见文件头 v2.1 修订段。
     @Environment(HomeViewModel.self) private var viewModel
-    @Environment(\.starcatReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
-    @State private var contentMode: ManageDetailContentMode = .readme
-    @State private var repositoryInsightsViewModel: RepositoryInsightsViewModel?
-    @State private var starHistoryViewModel: StarHistoryViewModel?
     @State private var readmeStarHistoryViewModel: ReadmeStarHistoryViewModel?
     @State private var readmeStarHistoryTask: Task<Void, Never>?
     @State private var readmeStarHistoryManualRefreshRevision: UInt64 = 0
-    @State private var loadedInsightsDatabaseScopeRevision: UInt64?
 
     var body: some View {
-        VStack(spacing: 0) {
-            modeSwitcherChrome
-
-            // README ↔ 洞察与我的洞察同款「轻轻落下」；顶栏胶囊固定，不参与内容重建。
-            ZStack(alignment: .topLeading) {
-                modeBody
-                    .id(contentMode)
-                    .detailContentTransition()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: contentMode)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: contentMode) { _, newMode in
-            switch newMode.transitionEffect {
-            case .cancelInsights:
-                repositoryInsightsViewModel?.cancelRemoteLoading()
-                starHistoryViewModel?.cancel()
-            case .resetScroll:
-                cancelReadmeStarHistory()
-                // README 可能在切换前已把 Hero 折叠；洞察页首帧先恢复顶部 Metadata，
-                // 后续再由自己的 ScrollView 持续上报 offset。
-                onScrollReport(RepoDetailScrollReport(offsetY: 0, scrollOverflow: 0))
-            }
-        }
-        .onChange(of: repo.id) { _, _ in
-            // Scaffold 现在跨 repo 复用，必须显式结束旧仓洞察并回到 README。
-            // 禁用这里的 mode transition，仓库级轻量 reveal 已由 Scaffold 统一提供。
-            repositoryInsightsViewModel?.cancelRemoteLoading()
-            starHistoryViewModel?.cancel()
-            cancelReadmeStarHistory()
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                contentMode = .readme
-            }
-            onScrollReport(RepoDetailScrollReport(offsetY: 0, scrollOverflow: 0))
-        }
-        .onChange(of: dependencies.databaseScopeRevision) { _, _ in
-            // 同一个 repo id 在账号切换后属于另一份数据库，旧摘要不能跨作用域复用。
-            cancelReadmeStarHistory()
-        }
-        .onDisappear {
-            cancelReadmeStarHistory()
-        }
-    }
-
-    /// README / 洞察切换行。高度通过 PreferenceKey 上报给 Scaffold，
-    /// 让 AI 浮层顶边贴在本行底部分隔线下方，而不是盖住 tab。
-    private var modeSwitcherChrome: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Spacer(minLength: 12)
-
-                // 复用 Starcat 自绘胶囊控件，避免 macOS 原生 segmented Picker
-                // 在详情页中显得厚重；右对齐后也不会抢占 README 阅读区的视觉焦点。
-                // horizontal 24 与 RepoLocalSections / Hero 一致，让「AI 生成」与「洞察」右缘齐平。
-                PillSegmentedControl(
-                    items: ManageDetailContentMode.allCases,
-                    selection: $contentMode,
-                    title: \.titleKey,
-                    size: .compact
-                )
-                .accessibilityLabel(Text("insights.repo.mode.label"))
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 8)
-
-            Divider()
-        }
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: RepoDetailAIOverlayTopInsetPreference.self,
-                    value: proxy.size.height
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var modeBody: some View {
-        if contentMode == .readme {
+        RepoDetailInsightsHost(
+            repo: repo,
+            onScrollReport: onScrollReport,
+            onLeaveReadme: cancelReadmeStarHistory
+        ) {
             // v1.5 修订（2026-06-10）：RepoLocalSections 已迁回 Scaffold metadataPanel，
             // README 继续直接上报滚动，让 hero 折叠行为保持不变。
             ReadmeStateView(
@@ -249,62 +123,16 @@ struct ManageDetailContent: View {
                 // 自动取消任务；Repository 仍可完成已共享的请求并把结果写入 SQLite。
                 await preloadReadmeStarHistoryIfNeeded()
             }
-        } else {
-            insightsBody
         }
-    }
-
-    @ViewBuilder
-    private var insightsBody: some View {
-        Group {
-            if let repositoryInsightsViewModel, let starHistoryViewModel {
-                RepositoryInsightsView(
-                    repo: repo,
-                    viewModel: repositoryInsightsViewModel,
-                    starHistoryViewModel: starHistoryViewModel,
-                    onScrollReport: onScrollReport,
-                    onStarHistoryChanged: { repo in
-                        _ = await dependencies.repositoryInsightsContextCoordinator.prepareArtifact(
-                            for: repo,
-                            mode: .refreshIfNeeded
-                        )
-                    }
-                )
-            } else {
-                // ViewModel 在同一个 task 的下一阶段立即注入。这里保持内容区域稳定即可，
-                // 不显示中央进度环，避免首次进入洞察时出现一次突兀的加载闪烁。
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityHidden(true)
-            }
+        .onChange(of: repo.id) { _, _ in
+            cancelReadmeStarHistory()
         }
-        .task(
-            id: RepositoryInsightsLoadIdentity(
-                repoID: repo.id,
-                databaseScopeRevision: dependencies.databaseScopeRevision
-            )
-        ) {
-            let currentDatabaseScopeRevision = dependencies.databaseScopeRevision
-            if let loadedInsightsDatabaseScopeRevision,
-               loadedInsightsDatabaseScopeRevision != currentDatabaseScopeRevision {
-                repositoryInsightsViewModel?.resetTransientStateForDatabaseScopeChange()
-                starHistoryViewModel?.cancel()
-            }
-            loadedInsightsDatabaseScopeRevision = currentDatabaseScopeRevision
-
-            let insightsViewModel = repositoryInsightsViewModel
-                ?? makeRepositoryInsightsViewModel()
-            let historyViewModel = starHistoryViewModel
-                ?? makeStarHistoryViewModel()
-            repositoryInsightsViewModel = insightsViewModel
-            starHistoryViewModel = historyViewModel
-
-            async let insightsLoad: Void = insightsViewModel.load(
-                repo: repo,
-                isAuthenticated: authSession.state.isAuthenticated
-            )
-            async let historyLoad: Void = historyViewModel.load(repo: repo)
-            _ = await (insightsLoad, historyLoad)
+        .onChange(of: dependencies.databaseScopeRevision) { _, _ in
+            // 同一个 repo id 在账号切换后属于另一份数据库，旧摘要不能跨作用域复用。
+            cancelReadmeStarHistory()
+        }
+        .onDisappear {
+            cancelReadmeStarHistory()
         }
     }
 
@@ -367,54 +195,5 @@ struct ManageDetailContent: View {
         readmeStarHistoryTask?.cancel()
         readmeStarHistoryTask = nil
         readmeStarHistoryViewModel?.cancel()
-    }
-
-    private func makeRepositoryInsightsViewModel() -> RepositoryInsightsViewModel {
-        RepositoryInsightsViewModel(
-            provider: DefaultRepositoryLocalInsightsProvider(
-                releaseRepository: dependencies.releaseRepository,
-                healthRepository: dependencies.repoHealthRepository,
-                openSSFRepository: dependencies.openSSFScoreRepository,
-                insightsCache: dependencies.repositoryInsightsCache,
-                database: dependencies.database
-            ),
-            // AI 摘要 / 对话也消费这一进程级 Provider；缓存与正在刷新的请求都只保留一份。
-            remoteProvider: dependencies.repositoryRemoteInsightsProvider,
-            remoteAccessProvider: dependencies.repositoryRemoteInsightsAccessProvider,
-            healthEnrichmentHandler: { repo in
-                guard repo.isPrivate else { return }
-                // 我的项目私仓用 App token 拉 Release / 元数据信号，再算 Health（OpenSSF 仍跳过）。
-                _ = try? await dependencies.repoHealthService.refreshWithLatestSignals(
-                    repo: repo,
-                    apiClient: dependencies.projectGitHubAPIClient
-                )
-            },
-            contextRefreshHandler: { repo in
-                _ = await dependencies.repositoryInsightsContextCoordinator.prepareArtifact(
-                    for: repo,
-                    mode: .refreshIfNeeded
-                )
-            }
-        )
-    }
-
-    private func makeStarHistoryViewModel() -> StarHistoryViewModel {
-        StarHistoryViewModel(repository: dependencies.repoStarHistoryRepository)
-    }
-}
-
-/// Manage 详情把 README / 洞察切换行（含底部分隔线）的高度上报给 Scaffold。
-///
-/// 为什么用 PreferenceKey 而不是写死高度：AI 浮层挂在整个 body 上，必须知道 tab
-/// 行实际占了多少；Trending / Weekly / Activity 没有这条切换行，不写入 preference
-/// （默认 0），浮层保持原来的 16pt 顶距。
-///
-/// 关键词：`PreferenceKey` / `onPreferenceChange`。项目内同类：`GitHubMarkdownFitWidthImage`。
-/// 官方搜索词：`SwiftUI PreferenceKey onPreferenceChange`。
-struct RepoDetailAIOverlayTopInsetPreference: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }

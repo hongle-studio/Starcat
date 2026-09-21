@@ -21,9 +21,9 @@ import SwiftUI
 
 // MARK: - 跨 Tab 跳转事件
 //
-// 2026-06-13 Y3/Y5：AISettingsTab 的「管理已生成的上下文 →」按钮需要把
-// settings 窗口从 .ai 切到 .storage。SettingsView 当前用 @State 自管
-// selectedTab，没有外部入口可以直接改它的值；项目惯例（见 ReadmeViewModel /
+// 2026-06-13 Y3/Y5：设置内的跨分类操作需要切换到目标页面并定位具体区块。
+// SettingsView 用 @State 自管 selectedTab，没有外部入口可以直接改它的值；
+// 项目惯例（见 ReadmeViewModel /
 // RepoNote）是「跨 View 通信用 Notification.Name」，于是在 settings feature
 // 模块内部约定一个事件名：发起方 (AISettingsView) post，接收方 (SettingsView
 // .onReceive) 读取 object: String 决定切到哪个 tag。
@@ -34,10 +34,8 @@ import SwiftUI
 //   2. 未识别的 object 字符串直接忽略，不 crash；
 //   3. 名字加 `starcat.` 前缀防止与系统 / 三方框架冲突。
 extension Notification.Name {
-    /// 跨 Settings Tab 跳转。`object: String` 取值：`"general"` / `"storage"` /
-    /// `"pro"` / `"ai"` / `"ai.chat"` / `"ai.embedding"` / `"ai.repoContext"` / `"services"` / `"integrations"` /
-    /// `"integrations.agentRuntime"` / `"integrations.localAPIKey"` / `"integrations.externalSearch"` /
-    /// `"integrations.codebaseMemory"` / `"diagnostics"`。
+    /// 跨 Settings 分类跳转。字符串保留旧入口兼容；新页面由 `settingsLocation(for:)`
+    /// 统一映射，发起方不需要依赖私有的 `SettingsTab`。
     static let starcatJumpToSettingsTab: Notification.Name = .init("starcat.settings.jumpToTab")
     /// SettingsView 切到 AI Tab 并完成一轮布局后，再通知 AISettingsView 展开并定位。
     static let starcatJumpToAIRepoContextSection: Notification.Name = .init(
@@ -46,6 +44,10 @@ extension Notification.Name {
     /// 知识库索引入口需要直达「模型配置 → 向量化」，不能只把用户丢在 AI Tab 顶部。
     static let starcatJumpToAIEmbeddingSection: Notification.Name = .init(
         "starcat.settings.jumpToAIEmbeddingSection"
+    )
+    /// 搜索入口直达「搜索与上下文 → AI 索引」，避免先落到联网搜索再让用户查找。
+    static let starcatJumpToAIIndexSection: Notification.Name = .init(
+        "starcat.settings.jumpToAIIndexSection"
     )
     /// 工作台入口缺少有效模型时，直达「模型配置 → 对话」。
     static let starcatJumpToAIChatModelSection: Notification.Name = .init(
@@ -77,11 +79,10 @@ struct SettingsView: View {
     /// 快捷键录制失败时只在 General 页就地提示，不修改已保存配置。
     @State private var shortcutValidationError: KeyboardShortcutConfiguration.ValidationError?
 
-    /// 六个可配置应用命令的设置页标识。
+    /// 五个可配置应用命令的设置页标识。
     /// 这里只负责冲突矩阵和“恢复默认”级联，不参与菜单动作路由。
     private enum ConfigurableShortcutAction: CaseIterable, Hashable {
         case globalSearch
-        case regularSearch
         case readmeFind
         case refreshCurrentContent
         case knowledgeRAG
@@ -91,8 +92,6 @@ struct SettingsView: View {
             switch self {
             case .globalSearch:
                 return .globalSearchDefault
-            case .regularSearch:
-                return .regularSearchDefault
             case .readmeFind:
                 return StarcatShortcutCatalog.readmeFindDefault
             case .refreshCurrentContent:
@@ -107,15 +106,30 @@ struct SettingsView: View {
 
     private enum SettingsTab: String, CaseIterable, Hashable, Identifiable {
         case general
+        /// 2026-09-13 从通用页拆出：通知策略（总开关 + 分类订阅）独立成页。
+        case notifications
+        /// 2026-09-13 从通用页拆出：键盘交互（AI 发送键 + 应用命令键位）独立成页。
+        case shortcuts
         case pro
         /// 2026-09-06 新增：权限类配置（OAuth scope、数据贡献）独立成页。
         case privacy
-        case ai
+        /// AI 的依赖配置优先于自动化与索引：供应商 / 本地模型 / 任务模型集中在本页。
+        case aiModels
+        /// README 翻译服务（系统 MT、Google、AI）；默认系统翻译无需额外配置。
+        case translation
+        /// 消费模型配置的后台能力：自动整理与 GitHub Lists 自动分组。
+        case aiAutomation
+        /// 全文索引与代码上下文共享同一条本地 AI 数据准备链路。
+        case aiIndexContext
+        /// 外部搜索独立配置，不与本地索引和代码上下文混在同一页。
+        case externalSearch
         case mcp
         /// 2026-06-08 新增：第三方 / 自建后端服务的 URL 配置。
         case services
-        /// 直接嵌入 Starcat 的第三方工具，与后端服务配置分开管理。
-        case integrations
+        /// 面向普通用户的浏览器插件与共享本地凭据。
+        case browserExtensions
+        /// Direct Agent Runtime、CodeFlow 与 CodebaseMemory 等开发者工具。
+        case localTools
         /// 原 RAG 独立窗口的三个分类直接提升为主设置一级侧栏条目。
         case ragInference
         case ragPrompts
@@ -128,17 +142,24 @@ struct SettingsView: View {
         var titleKeyString: String {
             switch self {
             case .general:      return "settings.general.title"
-            case .pro:          return "Pro"
-            case .privacy:      return "settings.privacy.title"
-            case .ai:           return "settings.ai.title"
+            case .notifications: return "settings.notifications.title"
+            case .shortcuts:    return "settings.general.shortcuts"
+            case .pro:          return "settings.navigation.item.proLicense"
+            case .privacy:      return "settings.navigation.item.privacyPermissions"
+            case .aiModels:     return "settings.navigation.item.aiModels"
+            case .translation:  return "settings.translation.title"
+            case .aiAutomation: return "settings.navigation.item.aiAutomation"
+            case .aiIndexContext: return "settings.navigation.item.aiIndexContext"
+            case .externalSearch: return "settings.navigation.item.externalSearch"
             case .mcp:          return "settings.mcp.title"
-            case .services:     return "settings.services.title"
-            case .integrations: return "settings.integrations.title"
+            case .services:     return "settings.navigation.item.customServices"
+            case .browserExtensions: return "settings.navigation.item.browserExtensions"
+            case .localTools:   return "settings.navigation.item.localTools"
             case .ragInference: return "rag.workspace.settings.section.inference"
             case .ragPrompts:   return "rag.workspace.settings.section.prompts"
             case .ragRetrieval: return "rag.workspace.settings.section.retrieval"
-            case .storage:      return "settings.storage.title"
-            case .diagnostics:  return "settings.diagnostics.title"
+            case .storage:      return "settings.navigation.item.dataStorage"
+            case .diagnostics:  return "settings.navigation.item.diagnosticsSupport"
             }
         }
 
@@ -149,12 +170,19 @@ struct SettingsView: View {
         var systemImage: String {
             switch self {
             case .general:      return "gearshape"
+            case .notifications: return "bell"
+            case .shortcuts:    return "keyboard"
             case .pro:          return "crown.fill"
             case .privacy:      return "lock.shield"
-            case .ai:           return "sparkles"
+            case .aiModels:     return "cpu"
+            case .translation:  return "character.bubble"
+            case .aiAutomation: return "arrow.triangle.2.circlepath"
+            case .aiIndexContext: return "magnifyingglass.circle"
+            case .externalSearch: return "globe"
             case .mcp:          return "point.3.connected.trianglepath.dotted"
-            case .services:     return "network"
-            case .integrations: return "puzzlepiece.extension"
+            case .services:     return "server.rack"
+            case .browserExtensions: return "puzzlepiece.extension"
+            case .localTools:   return "hammer"
             case .ragInference: return RAGSettingsSection.inference.systemImage
             case .ragPrompts:   return RAGSettingsSection.prompts.systemImage
             case .ragRetrieval: return RAGSettingsSection.retrieval.systemImage
@@ -301,28 +329,38 @@ struct SettingsView: View {
 
     private var settingsSidebar: some View {
         List(selection: settingsTabSelection) {
-            Section("settings.sidebar.group.basic") {
+            Section("settings.navigation.group.account") {
                 settingsSidebarRow(.general)
+                settingsSidebarRow(.notifications)
+                settingsSidebarRow(.shortcuts)
                 settingsSidebarRow(.pro)
                 settingsSidebarRow(.privacy)
             }
 
-            Section("settings.sidebar.group.intelligence") {
-                settingsSidebarRow(.ai)
-                settingsSidebarRow(.mcp)
-                settingsSidebarRow(.services)
-                settingsSidebarRow(.integrations)
+            Section("settings.navigation.group.ai") {
+                settingsSidebarRow(.aiModels)
+                settingsSidebarRow(.translation)
+                settingsSidebarRow(.aiAutomation)
+                settingsSidebarRow(.aiIndexContext)
+                settingsSidebarRow(.externalSearch)
             }
 
-            // 原独立窗口的三项导航直接并入主设置 Sidebar；RAG 是与「基础」
-            // 等并列的分组标题，不再额外增加「RAG 工作台」占位条目或二级侧栏。
+            // RAG 保留已经确认的三个直接入口；先保证推理可用，再调检索，默认
+            // Prompt 最后，避免把无需修改的高级配置放在依赖项前面。
             Section("RAG") {
                 settingsSidebarRow(.ragInference)
-                settingsSidebarRow(.ragPrompts)
                 settingsSidebarRow(.ragRetrieval)
+                settingsSidebarRow(.ragPrompts)
             }
 
-            Section("settings.sidebar.group.maintenance") {
+            Section("settings.navigation.group.extensions") {
+                settingsSidebarRow(.browserExtensions)
+                settingsSidebarRow(.mcp)
+                settingsSidebarRow(.localTools)
+                settingsSidebarRow(.services)
+            }
+
+            Section("settings.navigation.group.support") {
                 settingsSidebarRow(.storage)
                 settingsSidebarRow(.diagnostics)
             }
@@ -373,18 +411,32 @@ struct SettingsView: View {
         switch tab {
         case .general:
             generalTab
+        case .notifications:
+            notificationsTab
+        case .shortcuts:
+            shortcutsTab
         case .pro:
             ProSettingsTab()
         case .privacy:
             privacyTab
-        case .ai:
-            AISettingsTab()
+        case .aiModels:
+            AISettingsTab(page: .models)
+        case .translation:
+            TranslationSettingsTab()
+        case .aiAutomation:
+            AISettingsTab(page: .automation)
+        case .aiIndexContext:
+            AISettingsTab(page: .indexAndContext)
+        case .externalSearch:
+            AISettingsTab(page: .externalSearch)
         case .mcp:
             MCPSettingsTab()
         case .services:
             ServicesSettingsTab()
-        case .integrations:
-            IntegrationSettingsTab()
+        case .browserExtensions:
+            IntegrationSettingsTab(page: .browserExtensions)
+        case .localTools:
+            IntegrationSettingsTab(page: .localTools)
         case .ragInference, .ragPrompts, .ragRetrieval:
             RAGWorkspaceSettingsView(
                 settings: settings,
@@ -405,63 +457,75 @@ struct SettingsView: View {
                                keywords: ["主题", "浅色", "深色", "theme", "appearance", "font", "字号"]),
             SettingsSearchItem("general.language", titleKey: "settings.general.language", tab: .general,
                                keywords: ["语言", "locale", "language"]),
-            SettingsSearchItem("general.shortcuts", titleKey: "settings.general.shortcuts", tab: .general,
-                               keywords: ["快捷键", "keyboard", "shortcut"]),
-            SettingsSearchItem("general.notifications", titleKey: "settings.notifications.title", tab: .general,
+            SettingsSearchItem("notifications", titleKey: "settings.notifications.title", tab: .notifications,
                                keywords: ["通知", "notification", "提醒"]),
+            SettingsSearchItem("shortcuts", titleKey: "settings.general.shortcuts", tab: .shortcuts,
+                               keywords: ["快捷键", "keyboard", "shortcut", "键位"]),
             SettingsSearchItem("general.accessibility", titleKey: "settings.general.accessibility", tab: .general,
                                keywords: ["动画", "无障碍", "accessibility", "motion"]),
-            SettingsSearchItem("pro", titleKey: "Pro", tab: .pro,
+            SettingsSearchItem("pro", titleKey: "settings.navigation.item.proLicense", tab: .pro,
                                keywords: ["订阅", "授权", "激活", "license", "subscription", "purchase"]),
-            SettingsSearchItem("privacy", titleKey: "settings.privacy.title", tab: .privacy,
+            SettingsSearchItem("privacy", titleKey: "settings.navigation.item.privacyPermissions", tab: .privacy,
                                keywords: ["隐私", "权限", "OAuth", "数据贡献", "推荐", "privacy"]),
             SettingsSearchItem("privacy.oauthScopes", titleKey: "settings.general.oauthScopes.section", tab: .privacy,
                                keywords: ["OAuth", "scope", "权限", "组织"]),
             SettingsSearchItem("privacy.dataContribution", titleKey: "settings.general.dataContribution.section", tab: .privacy,
                                keywords: ["数据贡献", "匿名", "推荐", "隐私"]),
-            SettingsSearchItem("ai", titleKey: "settings.ai.title", tab: .ai,
+            SettingsSearchItem("privacy.telemetry", titleKey: "settings.diagnostics.telemetry.section", tab: .privacy,
+                               keywords: ["遥测", "诊断数据", "telemetry", "privacy"]),
+            SettingsSearchItem("privacy.ai", titleKey: "settings.ai.privacy.section", tab: .privacy,
+                               keywords: ["AI 隐私", "模型数据", "api key", "privacy"]),
+            SettingsSearchItem("ai", titleKey: "settings.navigation.item.aiModels", tab: .aiModels,
                                keywords: ["人工智能", "模型", "provider", "model", "api key"]),
-            SettingsSearchItem("ai.provider", titleKey: "settings.ai.provider.sectionTitle", tab: .ai,
+            SettingsSearchItem("ai.provider", titleKey: "settings.ai.provider.sectionTitle", tab: .aiModels,
                                keywords: ["服务商", "provider", "api key"]),
-            SettingsSearchItem("ai.chat", titleKey: "settings.ai.taskModels.title", tab: .ai, target: "ai.chat",
+            SettingsSearchItem("ai.chat", titleKey: "settings.ai.taskModels.title", tab: .aiModels, target: "ai.chat",
                                keywords: ["对话", "任务模型", "chat", "model"]),
-            SettingsSearchItem("ai.prompt", titleKey: "settings.ai.prompt.title", tab: .ai,
+            SettingsSearchItem("ai.prompt", titleKey: "settings.ai.prompt.title", tab: .aiModels,
                                keywords: ["提示词", "prompt", "system", "user"]),
-            SettingsSearchItem("ai.embedding", titleKey: "settings.aiIndex.section", tab: .ai, target: "ai.embedding",
+            SettingsSearchItem("ai.embedding", titleKey: "settings.ai.taskModels.title", tab: .aiModels, target: "ai.embedding",
+                               keywords: ["向量模型", "向量化模型", "embedding", "model"]),
+            SettingsSearchItem("ai.automation", titleKey: "settings.navigation.item.aiAutomation", tab: .aiAutomation,
+                               keywords: ["自动整理", "仓库分组", "github lists", "automation"]),
+            SettingsSearchItem("ai.indexContext", titleKey: "settings.navigation.item.aiIndexContext", tab: .aiIndexContext,
+                               keywords: ["全文索引", "代码上下文", "索引", "上下文", "index", "context"]),
+            SettingsSearchItem("ai.index", titleKey: "settings.aiIndex.section", tab: .aiIndexContext, target: "ai.index",
                                keywords: ["向量", "向量化", "索引", "embedding", "vector"]),
-            SettingsSearchItem("ai.repoContext", titleKey: "ai.context.settings.title", tab: .ai, target: "ai.repoContext",
+            SettingsSearchItem("ai.repoContext", titleKey: "ai.context.settings.title", tab: .aiIndexContext, target: "ai.repoContext",
                                keywords: ["代码上下文", "仓库上下文", "context", "token"]),
+            SettingsSearchItem("ai.externalSearch", titleKey: "settings.navigation.item.externalSearch",
+                               tab: .externalSearch, target: "ai.externalSearch",
+                               keywords: ["外部搜索", "anysearch", "search api"]),
             SettingsSearchItem("mcp", titleKey: "settings.mcp.title", tab: .mcp,
                                keywords: ["model context protocol", "server", "端口", "隐私"]),
-            SettingsSearchItem("services", titleKey: "settings.services.title", tab: .services,
-                               keywords: ["服务地址", "trending", "weekly", "api", "endpoint", "状态"]),
-            SettingsSearchItem("integrations", titleKey: "settings.integrations.title", tab: .integrations,
-                               keywords: ["集成", "integration", "工具"]),
+            SettingsSearchItem("services", titleKey: "settings.navigation.item.customServices", tab: .services,
+                               keywords: ["自定义服务", "自托管", "trending", "weekly", "api", "endpoint", "状态"]),
+            SettingsSearchItem("browserExtensions", titleKey: "settings.navigation.item.browserExtensions", tab: .browserExtensions,
+                               keywords: ["浏览器", "chrome", "safari", "extension", "plugin", "本地 api"]),
             SettingsSearchItem("integrations.agentRuntime", titleKey: "settings.integration.agentRuntime.title",
-                               tab: .integrations, target: "integrations.agentRuntime",
+                               tab: .localTools, target: "integrations.agentRuntime",
                                keywords: ["agent runtime", "codex", "deepseek"]),
             SettingsSearchItem("integrations.localAPIKey", titleKey: "settings.integration.localAPIKey.title",
-                               tab: .integrations, target: "integrations.localAPIKey",
+                               tab: .browserExtensions, target: "integrations.localAPIKey",
                                keywords: ["本地 api key", "local api key", "鉴权"]),
             SettingsSearchItem("integrations.browserPlugin", titleKey: "settings.integration.browserPlugin.title",
-                               tab: .integrations, target: "integrations.browserPlugin",
+                               tab: .browserExtensions, target: "integrations.browserPlugin",
                                keywords: ["浏览器", "chrome", "safari", "extension", "plugin"]),
-            SettingsSearchItem("integrations.externalSearch", titleKey: "settings.externalSearch.section",
-                               tab: .integrations, target: "integrations.externalSearch",
-                               keywords: ["外部搜索", "anysearch", "search api"]),
-            SettingsSearchItem("integrations.codebaseMemory", titleKey: "settings.integrations.title",
-                               tab: .integrations, target: "integrations.codebaseMemory",
+            SettingsSearchItem("localTools", titleKey: "settings.navigation.item.localTools", tab: .localTools,
+                               keywords: ["本地工具", "agent runtime", "codeflow", "codebase memory"]),
+            SettingsSearchItem("integrations.codebaseMemory", titleKey: "settings.navigation.item.localTools",
+                               tab: .localTools, target: "integrations.codebaseMemory",
                                keywords: ["codebase memory", "codebasememory", "代码索引"]),
             SettingsSearchItem("rag.inference", titleKey: "rag.workspace.settings.section.inference", tab: .ragInference,
                                keywords: ["推理", "后端", "inference", "backend", "codex", "claude"]),
+            SettingsSearchItem("rag.retrieval", titleKey: "rag.workspace.settings.section.retrieval", tab: .ragRetrieval,
+                               keywords: ["检索", "重排", "向量", "自托管", "retrieval", "rerank", "vector", "meilisearch", "qdrant"]),
             SettingsSearchItem("rag.prompts", titleKey: "rag.workspace.settings.section.prompts", tab: .ragPrompts,
                                keywords: ["提示词", "模板", "prompt", "system", "user"]),
-            SettingsSearchItem("rag.retrieval", titleKey: "rag.workspace.settings.section.retrieval", tab: .ragRetrieval,
-                               keywords: ["检索", "重排", "向量", "retrieval", "rerank", "vector"]),
-            SettingsSearchItem("storage", titleKey: "settings.storage.title", tab: .storage,
+            SettingsSearchItem("storage", titleKey: "settings.navigation.item.dataStorage", tab: .storage,
                                keywords: ["存储", "缓存", "数据库", "清理", "导出", "storage", "cache", "database"]),
-            SettingsSearchItem("diagnostics", titleKey: "settings.diagnostics.title", tab: .diagnostics,
-                               keywords: ["诊断", "日志", "遥测", "网络", "diagnostics", "logs", "telemetry"]),
+            SettingsSearchItem("diagnostics", titleKey: "settings.navigation.item.diagnosticsSupport", tab: .diagnostics,
+                               keywords: ["诊断", "日志", "网络", "diagnostics", "logs", "support"]),
         ]
     }
 
@@ -489,19 +553,37 @@ struct SettingsView: View {
         switch target {
         case "general":
             return SettingsLocation(tab: .general)
+        case "notifications":
+            return SettingsLocation(tab: .notifications)
+        case "shortcuts":
+            return SettingsLocation(tab: .shortcuts)
         case "pro":
             return SettingsLocation(tab: .pro)
-        case "privacy", "privacy.oauthScopes", "privacy.dataContribution":
+        case "privacy", "privacy.oauthScopes", "privacy.dataContribution", "privacy.telemetry",
+             "privacy.ai", "diagnostics.telemetry", "diagnostics.privacy":
             return SettingsLocation(tab: .privacy)
-        case "ai", "ai.chat", "ai.embedding", "ai.repoContext":
-            return SettingsLocation(tab: .ai, target: target == "ai" ? nil : target)
+        case "ai", "ai.models", "ai.prompt":
+            return SettingsLocation(tab: .aiModels)
+        case "ai.chat", "ai.embedding":
+            return SettingsLocation(tab: .aiModels, target: target)
+        case "ai.automation":
+            return SettingsLocation(tab: .aiAutomation)
+        case "ai.searchContext", "ai.indexContext":
+            return SettingsLocation(tab: .aiIndexContext)
+        case "ai.index", "ai.repoContext":
+            return SettingsLocation(tab: .aiIndexContext, target: target)
+        case "ai.externalSearch", "integrations.externalSearch":
+            return SettingsLocation(tab: .externalSearch, target: target)
+        case "translation":
+            return SettingsLocation(tab: .translation)
         case "mcp":
             return SettingsLocation(tab: .mcp)
         case "services":
             return SettingsLocation(tab: .services)
-        case "integrations", "integrations.agentRuntime", "integrations.localAPIKey",
-             "integrations.browserPlugin", "integrations.externalSearch", "integrations.codebaseMemory":
-            return SettingsLocation(tab: .integrations, target: target == "integrations" ? nil : target)
+        case "integrations", "integrations.localAPIKey", "integrations.browserPlugin":
+            return SettingsLocation(tab: .browserExtensions, target: target == "integrations" ? nil : target)
+        case "integrations.agentRuntime", "integrations.codebaseMemory":
+            return SettingsLocation(tab: .localTools, target: target)
         case "rag", "rag.inference":
             return SettingsLocation(tab: .ragInference)
         case "rag.prompts":
@@ -540,10 +622,12 @@ struct SettingsView: View {
                 NotificationCenter.default.post(name: .starcatJumpToAIChatModelSection, object: nil)
             case "ai.embedding":
                 NotificationCenter.default.post(name: .starcatJumpToAIEmbeddingSection, object: nil)
+            case "ai.index":
+                NotificationCenter.default.post(name: .starcatJumpToAIIndexSection, object: nil)
             case "ai.repoContext":
                 NotificationCenter.default.post(name: .starcatJumpToAIRepoContextSection, object: nil)
             case "integrations.agentRuntime", "integrations.localAPIKey", "integrations.browserPlugin",
-                 "integrations.externalSearch", "integrations.codebaseMemory":
+                 "integrations.externalSearch", "ai.externalSearch", "integrations.codebaseMemory":
                 isRedispatchingSettingsJump = true
                 NotificationCenter.default.post(name: .starcatJumpToSettingsTab, object: target)
                 isRedispatchingSettingsJump = false
@@ -589,103 +673,62 @@ struct SettingsView: View {
                 // 系统覆盖不到,所以 titlebar 仍是瞬切;② 视图内容区(.background / .foregroundStyle
                 // 走动态色的)会跟随 transaction 平滑过渡;③ `@Observable` 属性在 withAnimation
                 // 块内修改会被收进 transaction,这与 `@Published` 的行为一致,验证过。
-                Picker("settings.general.appearanceMode", selection: Binding(
-                    get: { settings.appearanceMode },
-                    set: { newValue in
-                        // 2026-06-15:reduceMotion 兜底——主题切换的颜色淡变在
-                        // 关动画时改为瞬切。`withAnimation(nil)` 让 binding 写入
-                        // 不挂任何 transaction,@Observable 属性变化按默认无包裹路径。
-                        if reduceMotion {
-                            settings.appearanceMode = newValue
-                        } else {
-                            withAnimation(.easeInOut(duration: 0.6)) {
+                // 2026-09-14 垂直居中修正：segmented Picker 直接带 label 时，Form 行按
+                // 控件基线对齐，segmented 在行内偏上。改为 LabeledContent 承载 label，
+                // Picker 用 labelsHidden，segmented 即在行内垂直居中（与系统设置一致）。
+                LabeledContent {
+                    Picker("settings.general.appearanceMode", selection: Binding(
+                        get: { settings.appearanceMode },
+                        set: { newValue in
+                            // 2026-06-15:reduceMotion 兜底——主题切换的颜色淡变在
+                            // 关动画时改为瞬切。`withAnimation(nil)` 让 binding 写入
+                            // 不挂任何 transaction,@Observable 属性变化按默认无包裹路径。
+                            if reduceMotion {
                                 settings.appearanceMode = newValue
+                            } else {
+                                withAnimation(.easeInOut(duration: 0.6)) {
+                                    settings.appearanceMode = newValue
+                                }
                             }
                         }
+                    )) {
+                        ForEach(AppearanceMode.allCases) { mode in
+                            Label(mode.displayName, systemImage: mode.systemImage)
+                                .tag(mode)
+                        }
                     }
-                )) {
-                    ForEach(AppearanceMode.allCases) { mode in
-                        Label(mode.displayName, systemImage: mode.systemImage)
-                            .tag(mode)
-                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                } label: {
+                    Text("settings.general.appearanceMode")
                 }
-                .pickerStyle(.segmented)
 
                 Text("settings.general.appearanceMode.description")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Picker("settings.general.interfaceScale", selection: $settings.interfaceScale) {
-                    ForEach(InterfaceScale.allCases) { scale in
-                        Text(scale.displayName).tag(scale)
+                LabeledContent {
+                    Picker("settings.general.interfaceScale", selection: $settings.interfaceScale) {
+                        ForEach(InterfaceScale.allCases) { scale in
+                            Text(scale.displayName).tag(scale)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                } label: {
+                    Text("settings.general.interfaceScale")
                 }
-                .pickerStyle(.segmented)
 
                 Text("settings.general.interfaceScale.description")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                // R-01 §3.1.1（2026-06-10 P1）：列表密度 Picker 已彻底移除——
-                // RepoListDensity 枚举本身也已删除（之前为保签名稳定保留单 case
-                // 是「自留技术债」，现在所有 row / skeleton 视图直接用 card 密度）。
-            } header: {
-                SettingsSectionHeader(
-                    "settings.general.appearance",
-                    systemImage: "paintbrush.fill",
-                    style: .prominent
-                )
-            }
-
-            // 2026-06-15 dong4j 需求：用户面向的语言切换。
-            //
-            // 设计要点：
-            // 1. `LocaleStore` 是 `@MainActor @Observable` 单例，主窗口与 Settings
-            //    两个 scene 共享同一份选择；切换后由 `StarcatApp` 在 `.environment(\.locale, _)`
-            //    + `.id(...)` 配合下整棵 view 树立刻重建，不需要重启 App。
-            // 2. 默认 `system`：跟随系统设置，`Locale.autoupdatingCurrent` 让
-            //    macOS Language & Region 改变时 Starcat 自动同步。
-            // 3. 跟随系统用 🌐、其余 18 种语言用“国旗 + 母语名称”。具体语言故意
-            //    不跟随当前 UI locale 翻译，与 macOS Language & Region 列出语言时
-            //    的惯例一致——哪怕用户误切到看不懂的语言，也能从国旗和母语写法
-            //    找回入口。
-            // 4. 已知局限（与 DEBUG 菜单 picker 一致，写在 `LocaleStore.swift`
-            //    顶部注释里）：`.environment(\.locale, _)` 只覆盖 SwiftUI 视图层
-            //    `Text("key")` 等查表行为；macOS 顶部菜单栏 NSMenu 与部分
-            //    AppKit 弹窗的字符串走 `Bundle.main.localized*` 在 App 启动时
-            //    一次性加载，**不**会跟随 environment 切换刷新。如果用户期望连
-            //    菜单栏一起切，必须重启 App（说明文字里已提示）。
-            // 5. 放在「外观」后作为第二分组：显示语言与主题同属启动即感知的界面偏好。
-            Section {
-                Picker(selection: $localeStore.selection) {
-                    ForEach(AppLocale.allCases) { option in
-                        option.menuTitle.tag(option)
-                    }
-                } label: {
-                    Text("settings.general.language.label")
-                }
-                .pickerStyle(.menu)
-
-                Text("settings.general.language.description")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } header: {
-                SettingsSectionHeader(
-                    "settings.general.language",
-                    systemImage: "globe",
-                    style: .prominent
-                )
-            }
-
-            // HOM-SNAKE-MODES 2026-06-05：贡献草坪贪吃蛇玩法。
-            // 用 Menu 风格 Picker 而非 segmented——6 个选项 segmented 会过宽，
-            // 而且每项都带 SF Symbol，菜单展开形态视觉信息密度更高。
-            // 设计取舍：把贪吃蛇配置放在 General 而非新建 "Sidebar" Tab，是因为
-            // 当前 Sidebar 可配置项只有这一个，单独开 Tab 显得空；后续若新增
-            // sidebar 偏好（如折叠默认态、密度）再拆分。
-            Section {
+                // HOM-SNAKE-MODES 2026-06-05：贡献草坪贪吃蛇玩法。
+                // 用 Menu 风格 Picker 而非 segmented——6 个选项 segmented 会过宽，
+                // 而且每项都带 SF Symbol，菜单展开形态视觉信息密度更高。
+                // 2026-09-14 从独立「贡献草坪贪吃蛇」分组并入「外观」：草坪样式
+                // 本质是外观偏好，单条目不值得独占一个分组。
                 Picker(selection: $settings.snakeStyle) {
                     ForEach(SnakeStyle.allCases) { style in
                         Label(LocalizedStringKey(style.displayNameKey),
@@ -701,13 +744,60 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // R-01 §3.1.1（2026-06-10 P1）：列表密度 Picker 已彻底移除——
+                // RepoListDensity 枚举本身也已删除（之前为保签名稳定保留单 case
+                // 是「自留技术债」，现在所有 row / skeleton 视图直接用 card 密度）。
             } header: {
                 SettingsSectionHeader(
-                    "settings.snakeStyle.section",
-                    systemImage: "arcade.stick.console.fill",
-                    style: .prominent
+                    "settings.general.appearance",
+                    systemImage: "paintbrush.fill"
                 )
             }
+
+            // 2026-06-15 dong4j 需求：用户面向的语言切换。
+            //
+            // 设计要点：
+            // 1. `LocaleStore` 是 `@MainActor @Observable` 单例，主窗口与 Settings
+            //    两个 scene 共享同一份选择；切换后由 `StarcatApp` 在 `.environment(\.locale, _)`
+            //    + `.id(...)` 配合下整棵 view 树立刻重建，不需要重启 App。
+            // 2. 默认 `system`：跟随系统设置，`Locale.autoupdatingCurrent` 让
+            //    macOS Language & Region 改变时 Starcat 自动同步。
+            // 3. 跟随系统走 i18n key；其余 18 种语言用母语名称、不加国旗。
+            //    具体语言故意不跟随当前 UI locale 翻译，与 macOS Language & Region
+            //    列出语言时的惯例一致——哪怕用户误切到看不懂的语言，也能从母语写法
+            //    找回入口。
+            // 4. 已知局限（与 DEBUG 菜单 picker 一致，写在 `LocaleStore.swift`
+            //    顶部注释里）：`.environment(\.locale, _)` 只覆盖 SwiftUI 视图层
+            //    `Text("key")` 等查表行为；macOS 顶部菜单栏 NSMenu 与部分
+            //    AppKit 弹窗的字符串走 `Bundle.main.localized*` 在 App 启动时
+            //    一次性加载，**不**会跟随 environment 切换刷新。如果用户期望连
+            //    菜单栏一起切，必须重启 App（说明文字里已提示）。
+            // 5. 放在「外观」后作为第二分组：显示语言与主题同属启动即感知的界面偏好。
+            Section {
+                Picker(selection: $localeStore.selection) {
+                    ForEach(AppLocale.allCases) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                } label: {
+                    Text("settings.general.language.label")
+                }
+                .pickerStyle(.menu)
+
+                Text("settings.general.language.description")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                SettingsSectionHeader(
+                    "settings.general.language",
+                    systemImage: "globe"
+                )
+            }
+
+            // 2026-09-14 重组：显示语言（上一分组）与内容语言过滤是同一「语言」主题，
+            // 相邻放置；不再夹在详情行为和 macOS 集成之间。
+            InterestedLanguagesSettingsSection(languages: $settings.interestedLanguages)
 
             Section {
                 Toggle(isOn: $settings.openFirstDetailOnCategoryChange) {
@@ -729,17 +819,171 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+
+                // 2026-09-14 重组：Issue 事件时间线是详情页的内容展示开关，
+                // 并入「详情行为」，不再单设只有一个开关的「活动」分组。
+                Toggle(isOn: $settings.githubIssueEventTimelineEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.activity.issueEvents.title")
+                        Text("settings.activity.issueEvents.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } header: {
                 SettingsSectionHeader(
                     "settings.general.detailBehavior",
-                    systemImage: "sidebar.left",
-                    style: .prominent
+                    systemImage: "sidebar.left"
                 )
             }
 
-            InterestedLanguagesSettingsSection(languages: $settings.interestedLanguages)
+            Section {
+                Toggle(isOn: $settings.hideDockIcon) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.general.hideDockIcon.title")
+                        Text("settings.general.hideDockIcon.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
 
-            // 快捷键偏好集中在 General，都是本机交互习惯，不属于 AI 模型配置。
+                Toggle(isOn: $settings.spotlightSearchEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.general.spotlightSearch.title")
+                        Text("settings.general.spotlightSearch.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } header: {
+                SettingsSectionHeader(
+                    "settings.general.macOSIntegration",
+                    systemImage: "macwindow.on.rectangle"
+                )
+            }
+
+            // 2026-06-15 dong4j 需求：无障碍 / 动画偏好。
+            //
+            // 单独起一个 Section 而不是夹在「外观」里——「关闭应用内动画」
+            // 是无障碍语义（与系统「辅助功能 → 减少动态效果」同源），与外观
+            // 主题（视觉偏好）属于不同维度；后续若新增其它无障碍配置
+            // （如字号缩放、对比度增强），都归在本 Section。
+            //
+            // 实现机制：toggle ON 时由 `AnimationOverrideModifier` 在 root view
+            // 上覆盖 `accessibilityReduceMotion` 环境值，全工程 30+ 个已实现
+            // reduceMotion 兜底路径的视图自动尊重新偏好（与系统级减少动态
+            // 效果走同一套代码路径）。详见 `Shared/Components/AnimationOverrideModifier.swift`。
+            Section {
+                Toggle(isOn: $settings.disableAnimations) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.general.disableAnimations.title")
+                        Text("settings.general.disableAnimations.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } header: {
+                SettingsSectionHeader(
+                    "settings.general.accessibility",
+                    systemImage: "figure.roll"
+                )
+            }
+
+            // Sparkle 自动更新只存在于 Direct 分发；App Store 构建必须整段隐藏，
+            // 避免审核包暴露自更新入口（与菜单栏 / Help「检查更新」同一门控）。
+            if DistributionChannel.current.isDirect {
+                directUpdateSection
+            }
+
+            Section {
+                HStack {
+                    Spacer()
+
+                    Button {
+                        NSApp.activate(ignoringOtherApps: true)
+                        NotificationCenter.default.post(
+                            name: .starcatResetListPreferencesRequested,
+                            object: nil
+                        )
+                    } label: {
+                        Label("settings.listPreferences.reset.title", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(!dependencies.authSession.state.isAuthenticated)
+                    .help(Text("settings.listPreferences.reset.disabled"))
+
+                    Button {
+                        guard FirstRunOnboardingPreferences.canReplayManually else { return }
+                        NSApp.keyWindow?.close()
+                        FirstRunOnboardingPreferences.requestManualReplay()
+                    } label: {
+                        Label("settings.general.resetOnboarding", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(!FirstRunOnboardingPreferences.canReplayManually)
+                }
+            } header: {
+                SettingsSectionHeader(
+                    // 2026-09-14 从「其他」改名：分组内只有两个重置入口，
+                    // 按实际内容命名更可检索。
+                    "settings.general.reset",
+                    systemImage: "arrow.counterclockwise"
+                )
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// 通知策略独立页（2026-09-13 从通用页拆出）。
+    /// 通知只用于「用户离开 App 后需要回来处理」的低频事件；普通状态变化继续留在
+    /// toolbar 状态面板，避免把通知中心变成运行日志。
+    private var notificationsTab: some View {
+        @Bindable var settings = settings
+
+        return Form {
+            Section {
+                Toggle(isOn: $settings.notificationsEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.notifications.enabled.title")
+                        Text("settings.notifications.enabled.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Toggle("settings.notifications.release.title", isOn: $settings.releaseNotificationsEnabled)
+                    .disabled(!settings.notificationsEnabled)
+                Toggle("settings.notifications.githubInbox.title", isOn: $settings.githubInboxNotificationsEnabled)
+                    .disabled(!settings.notificationsEnabled)
+                Toggle("settings.notifications.batchAI.title", isOn: $settings.batchAINotificationsEnabled)
+                    .disabled(!settings.notificationsEnabled)
+                Toggle("settings.notifications.syncIssues.title", isOn: $settings.syncIssueNotificationsEnabled)
+                    .disabled(!settings.notificationsEnabled)
+                Toggle("settings.notifications.mcpIssues.title", isOn: $settings.mcpIssueNotificationsEnabled)
+                    .disabled(!settings.notificationsEnabled)
+            } header: {
+                SettingsSectionHeader(
+                    "settings.notifications.title",
+                    systemImage: "bell"
+                )
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// 键盘交互独立页（2026-09-13 从通用页拆出）：AI 发送方式 + 五个可配置应用命令键位。
+    /// 常规搜索（⇧⌘F）快捷键已随搜索统一进全局搜索一起删除。
+    private var shortcutsTab: some View {
+        @Bindable var settings = settings
+
+        return Form {
             Section {
                 Toggle(isOn: $settings.aiChatRequiresCommandReturn) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -777,19 +1021,6 @@ struct SettingsView: View {
                     helpKey: "settings.general.shortcuts.search.help",
                     onShortcutChanged: { shortcutValidationError = nil },
                     onRestoreDefault: { restoreShortcutDefault(.globalSearch) }
-                )
-                .disabled(!settings.keyboardShortcutsEnabled)
-
-                ConfigurableShortcutSettingRow(
-                    titleKey: "settings.general.shortcuts.regularSearch.title",
-                    shortcut: $settings.regularSearchShortcut,
-                    defaultShortcut: ConfigurableShortcutAction.regularSearch.defaultShortcut,
-                    isEnabled: $settings.regularSearchShortcutEnabled,
-                    onValidationError: { shortcutValidationError = $0 },
-                    conflictingShortcuts: conflictingShortcuts(excluding: .regularSearch),
-                    helpKey: "settings.general.shortcuts.regularSearch.help",
-                    onShortcutChanged: { shortcutValidationError = nil },
-                    onRestoreDefault: { restoreShortcutDefault(.regularSearch) }
                 )
                 .disabled(!settings.keyboardShortcutsEnabled)
 
@@ -859,171 +1090,20 @@ struct SettingsView: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.general.shortcuts",
-                    systemImage: "keyboard",
-                    style: .prominent
-                )
-            }
-
-            // 2026-06-20：系统通知策略入口。
-            // 通知只用于「用户离开 App 后需要回来处理」的低频事件；普通状态变化继续留在
-            // toolbar 状态面板，避免把通知中心变成运行日志。
-            Section {
-                Toggle(isOn: $settings.notificationsEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.notifications.enabled.title")
-                        Text("settings.notifications.enabled.help")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                Toggle("settings.notifications.release.title", isOn: $settings.releaseNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.githubInbox.title", isOn: $settings.githubInboxNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.batchAI.title", isOn: $settings.batchAINotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.syncIssues.title", isOn: $settings.syncIssueNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.mcpIssues.title", isOn: $settings.mcpIssueNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-            } header: {
-                SettingsSectionHeader(
-                    "settings.notifications.title",
-                    systemImage: "bell",
-                    style: .prominent
-                )
-            }
-
-            Section {
-                Toggle(isOn: $settings.githubIssueEventTimelineEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.activity.issueEvents.title")
-                        Text("settings.activity.issueEvents.help")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            } header: {
-                SettingsSectionHeader(
-                    "settings.activity.section",
-                    systemImage: "list.bullet.rectangle",
-                    style: .prominent
-                )
-            }
-
-            // 2026-06-15 dong4j 需求：无障碍 / 动画偏好。
-            //
-            // 单独起一个 Section 而不是夹在「外观」里——「关闭应用内动画」
-            // 是无障碍语义（与系统「辅助功能 → 减少动态效果」同源），与外观
-            // 主题（视觉偏好）属于不同维度；后续若新增其它无障碍配置
-            // （如字号缩放、对比度增强），都归在本 Section。
-            //
-            // 实现机制：toggle ON 时由 `AnimationOverrideModifier` 在 root view
-            // 上覆盖 `accessibilityReduceMotion` 环境值，全工程 30+ 个已实现
-            // reduceMotion 兜底路径的视图自动尊重新偏好（与系统级减少动态
-            // 效果走同一套代码路径）。详见 `Shared/Components/AnimationOverrideModifier.swift`。
-            Section {
-                Toggle(isOn: $settings.disableAnimations) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.general.disableAnimations.title")
-                        Text("settings.general.disableAnimations.help")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            } header: {
-                SettingsSectionHeader(
-                    "settings.general.accessibility",
-                    systemImage: "figure.roll",
-                    style: .prominent
-                )
-            }
-
-            Section {
-                Toggle(isOn: $settings.hideDockIcon) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.general.hideDockIcon.title")
-                        Text("settings.general.hideDockIcon.help")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                Toggle(isOn: $settings.spotlightSearchEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.general.spotlightSearch.title")
-                        Text("settings.general.spotlightSearch.help")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            } header: {
-                SettingsSectionHeader(
-                    "settings.general.macOSIntegration",
-                    systemImage: "macwindow.on.rectangle",
-                    style: .prominent
-                )
-            }
-
-            // Sparkle 自动更新只存在于 Direct 分发；App Store 构建必须整段隐藏，
-            // 避免审核包暴露自更新入口（与菜单栏 / Help「检查更新」同一门控）。
-            if DistributionChannel.current.isDirect {
-                directUpdateSection
-            }
-
-            Section {
-                HStack {
-                    Spacer()
-
-                    Button {
-                        NSApp.activate(ignoringOtherApps: true)
-                        NotificationCenter.default.post(
-                            name: .starcatResetListPreferencesRequested,
-                            object: nil
-                        )
-                    } label: {
-                        Label("settings.listPreferences.reset.title", systemImage: "arrow.counterclockwise")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .disabled(!dependencies.authSession.state.isAuthenticated)
-                    .help(Text("settings.listPreferences.reset.disabled"))
-
-                    Button {
-                        guard FirstRunOnboardingPreferences.canReplayManually else { return }
-                        NSApp.keyWindow?.close()
-                        FirstRunOnboardingPreferences.requestManualReplay()
-                    } label: {
-                        Label("settings.general.resetOnboarding", systemImage: "arrow.counterclockwise")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .disabled(!FirstRunOnboardingPreferences.canReplayManually)
-                }
-            } header: {
-                SettingsSectionHeader(
-                    "settings.general.other",
-                    systemImage: "ellipsis.circle",
-                    style: .prominent
+                    systemImage: "keyboard"
                 )
             }
         }
         .formStyle(.grouped)
     }
 
-    /// 2026-09-06 dong4j 需求：新增「隐私」侧栏页，收拢权限类配置。
-    /// GitHub OAuth 权限（登录申请的 scope）与隐私与推荐（数据贡献开关）从
-    /// 通用页整体迁入：两者本质都是「用户数据授权边界」，独立成页后用户能
-    /// 在一处看全 Starcat 申请了哪些权限、贡献了哪些数据；通用页只保留
-    /// 界面 / 行为偏好。两个 Section 的标题、图标与内容保持迁入前原样。
+    /// 「隐私与权限」统一呈现 OAuth scope、数据贡献、遥测和 AI 数据边界。
+    /// 这些配置都回答“应用会访问或发送什么”，不再分散在通用、AI 与诊断页；
+    /// 原有绑定和默认值保持不变，仅调整用户寻找它们的路径。
     private var privacyTab: some View {
-        Form {
+        @Bindable var settings = settings
+
+        return Form {
             Section {
                 Text("settings.general.oauthScopes.summary")
                     .font(.caption)
@@ -1051,8 +1131,7 @@ struct SettingsView: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.general.oauthScopes.section",
-                    systemImage: "lock.shield.fill",
-                    style: .prominent
+                    systemImage: "lock.shield.fill"
                 )
             }
 
@@ -1083,8 +1162,40 @@ struct SettingsView: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.general.dataContribution.section",
-                    systemImage: "hand.raised.fill",
-                    style: .prominent
+                    systemImage: "hand.raised.fill"
+                )
+            }
+
+            Section {
+                Toggle(isOn: $settings.telemetryEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.diagnostics.telemetry.enabled.title")
+                        Text("settings.diagnostics.telemetry.enabled.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Text("settings.diagnostics.telemetry.privacy")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                SettingsSectionHeader(
+                    "settings.diagnostics.telemetry.section",
+                    systemImage: "chart.bar"
+                )
+            }
+
+            Section {
+                Text("settings.ai.privacy.notice")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } header: {
+                SettingsSectionHeader(
+                    "settings.ai.privacy.section",
+                    systemImage: "lock.shield"
                 )
             }
         }
@@ -1139,8 +1250,7 @@ struct SettingsView: View {
         } header: {
             SettingsSectionHeader(
                 "settings.pro.direct.updates.section",
-                systemImage: "arrow.triangle.2.circlepath",
-                style: .prominent
+                systemImage: "arrow.triangle.2.circlepath"
             )
         } footer: {
             Text(LocalizedStringKey(dependencies.directUpdateController.isConfigured
@@ -1164,7 +1274,7 @@ struct SettingsView: View {
         }
     }
 
-    /// 返回除当前动作外的五个已保存键位。
+    /// 返回除当前动作外的四个已保存键位。
     /// 关闭状态仍参与冲突检查，确保重新开启时不会与其它命令竞争同一组合。
     private func conflictingShortcuts(
         excluding action: ConfigurableShortcutAction
@@ -1177,7 +1287,7 @@ struct SettingsView: View {
     /// 恢复默认值时递归释放被其它动作占用的默认组合。
     ///
     /// 例如 A 使用 B 的默认键、B 又使用 A 的默认键时，先把整条占用链恢复到各自默认，
-    /// 再落当前动作；`visited` 用于打断这种交换环，最终仍保持六项唯一。
+    /// 再落当前动作；`visited` 用于打断这种交换环，最终仍保持五项唯一。
     private func restoreShortcutDefault(_ action: ConfigurableShortcutAction) {
         var visited: Set<ConfigurableShortcutAction> = []
 
@@ -1202,8 +1312,6 @@ struct SettingsView: View {
         switch action {
         case .globalSearch:
             return settings.globalSearchShortcut
-        case .regularSearch:
-            return settings.regularSearchShortcut
         case .readmeFind:
             return settings.readmeFindShortcut
         case .refreshCurrentContent:
@@ -1222,8 +1330,6 @@ struct SettingsView: View {
         switch action {
         case .globalSearch:
             settings.globalSearchShortcut = shortcut
-        case .regularSearch:
-            settings.regularSearchShortcut = shortcut
         case .readmeFind:
             settings.readmeFindShortcut = shortcut
         case .refreshCurrentContent:
@@ -1303,8 +1409,7 @@ private struct InterestedLanguagesSettingsSection: View {
         } header: {
             SettingsSectionHeader(
                 "settings.filters.interestedLanguages.section",
-                systemImage: "chevron.left.forwardslash.chevron.right",
-                style: .prominent
+                systemImage: "chevron.left.forwardslash.chevron.right"
             )
         }
     }
@@ -1364,10 +1469,10 @@ private struct InterestedLanguagesSettingsSection: View {
     }
 
     private var addLanguageIcon: some View {
-        // 对齐集成页 `tokenActionIcon` 的标准小工具图标规格：13pt / 24×22 / 圆角 6，
-        // 避免这个 + 比设置页其它图标按钮更抢眼。
+        // chip 内联添加钮：glyph 引用 `SettingsIconMetrics.smallGlyph`（13pt，与分组
+        // 图标同源），命中框保持 24×22 / 圆角 6 —— 28×28 会撑破 chip 行（规范 §9 例外）。
         Image(systemName: "plus")
-            .font(.system(size: 13, weight: .medium))
+            .font(SettingsIconMetrics.smallGlyph)
             .foregroundStyle(Color.secondary)
             .frame(width: 24, height: 22)
             .background(
@@ -1480,15 +1585,9 @@ private struct FlowTagList: View {
                     Text(LanguageDisplayName.shortened(for: language))
                         .font(.caption)
                         .lineLimit(1)
-                    Button {
+                    ChipRemoveButton(help: Text("settings.filters.interestedLanguages.remove")) {
                         removeAction(language)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.caption)
                     }
-                    .buttonStyle(.plain)
-                    .focusEffectDisabled()
-                    .accessibilityLabel(Text("settings.filters.interestedLanguages.remove"))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -1555,9 +1654,7 @@ private struct DiagnosticsSettingsTab: View {
     @State private var exportError: String?
 
     var body: some View {
-        @Bindable var settings = settings
-
-        return Form {
+        Form {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 12) {
@@ -1602,34 +1699,11 @@ private struct DiagnosticsSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.diagnostics.export.section",
-                    systemImage: "square.and.arrow.up",
-                    style: .prominent
+                    systemImage: "square.and.arrow.up"
                 )
             }
 
-            Section {
-                Toggle(isOn: $settings.telemetryEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.diagnostics.telemetry.enabled.title")
-                        Text("settings.diagnostics.telemetry.enabled.help")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                Text("settings.diagnostics.telemetry.privacy")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } header: {
-                SettingsSectionHeader(
-                    "settings.diagnostics.telemetry.section",
-                    systemImage: "chart.bar",
-                    style: .prominent
-                )
-            }
-
+            // 这段说明约束的是导出产物本身，紧跟导出入口比放在全局隐私页更容易理解。
             Section {
                 Text("settings.diagnostics.privacy.description")
                     .font(.callout)
@@ -1637,11 +1711,11 @@ private struct DiagnosticsSettingsTab: View {
                     .fixedSize(horizontal: false, vertical: true)
             } header: {
                 SettingsSectionHeader(
-                    "settings.diagnostics.privacy.section",
-                    systemImage: "lock.shield",
-                    style: .prominent
+                    "settings.diagnostics.bundleContents.section",
+                    systemImage: "doc.text.magnifyingglass"
                 )
             }
+
         }
         .formStyle(.grouped)
         .alert(
@@ -1907,8 +1981,7 @@ private struct StorageSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.storage.readmePrefetch.section",
-                    systemImage: "doc.text.magnifyingglass",
-                    style: .prominent
+                    systemImage: "doc.text.magnifyingglass"
                 )
             }
 
@@ -1934,8 +2007,7 @@ private struct StorageSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.storage.chatHistoryBackend.section",
-                    systemImage: "bubble.left.and.bubble.right",
-                    style: .prominent
+                    systemImage: "bubble.left.and.bubble.right"
                 )
             }
 
@@ -2059,8 +2131,7 @@ private struct StorageSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.storage.cacheUsage",
-                    systemImage: "internaldrive",
-                    style: .prominent
+                    systemImage: "internaldrive"
                 )
             }
 
@@ -2070,8 +2141,7 @@ private struct StorageSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "activity.category.undoStar",
-                    systemImage: "arrow.uturn.backward.circle",
-                    style: .prominent
+                    systemImage: "arrow.uturn.backward.circle"
                 )
             }
 
@@ -2104,8 +2174,7 @@ private struct StorageSettingsTab: View {
             } header: {
                 SettingsSectionHeader(
                     "settings.storage.dangerZone",
-                    systemImage: "exclamationmark.triangle.fill",
-                    style: .prominent
+                    systemImage: "exclamationmark.triangle.fill"
                 )
             }
 
@@ -2282,17 +2351,9 @@ private struct StorageSettingsTab: View {
 
     /// 缓存用量行统一的 Finder 打开按钮。
     private func revealInFinderButton(item: CacheDirectoryLocator.Item) -> some View {
-        Button {
+        RevealInFinderIconButton(help: Text("settings.storage.revealInFinder")) {
             revealCacheLocation(item)
-        } label: {
-            Image(systemName: "folder")
-                .font(.system(size: 15, weight: .medium))
-                .frame(width: 28, height: 28)
         }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .help(Text("settings.storage.revealInFinder"))
-        .accessibilityLabel(Text("settings.storage.revealInFinder"))
         .disabled(shouldDisableStorageActions || isWorking)
     }
 

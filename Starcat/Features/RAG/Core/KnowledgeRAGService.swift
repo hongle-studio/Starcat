@@ -157,6 +157,7 @@ struct RAGRerankDebugPayload: Codable, Sendable {
         let provider = switch diagnostics.provider {
         case .huggingFaceTEI: String.l10n("rag.workspace.rerank.provider.tei")
         case .cohereCompatible: String.l10n("rag.workspace.rerank.provider.cohere")
+        case .localMLX: String.l10n("rag.workspace.rerank.provider.localmlx")
         case nil: String.l10n("rag.workspace.debug.retrieval.error.none")
         }
         var requestLines = [

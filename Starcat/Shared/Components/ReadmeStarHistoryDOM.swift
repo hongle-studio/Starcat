@@ -219,6 +219,9 @@ enum ReadmeStarHistoryDOM {
     .starcat-star-history-footer-actions { margin-left: auto; flex: 0 0 auto; gap: 10px; }
     /* 小字号署名采用更深的金色以保证白底可读，深色主题再提亮，色相仍呼应星形。 */
     .starcat-star-history-attribution strong { font-weight: 600; color: var(--history-brand); }
+    /* 署名是链接但外观保持原样：去掉默认蓝色与下划线，hover 仅在 Starcat 字样下划线提示可点。 */
+    a.starcat-star-history-attribution { color: inherit; text-decoration: none; }
+    a.starcat-star-history-attribution:hover strong { text-decoration: underline; }
     @container star-history (max-width: 799px) {
         .starcat-star-history-card { padding: 20px 18px 16px; }
         .starcat-star-history-card-header { gap: 16px; }

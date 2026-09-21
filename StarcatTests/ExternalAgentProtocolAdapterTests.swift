@@ -758,6 +758,11 @@ struct ExternalAgentProtocolAdapterTests {
             switch event {
             case .assistantDelta(let delta), .assistantMessage(let delta, _):
                 text += delta
+            case .assistantStepMessage(let message, _):
+                text += message.parts.compactMap { part -> String? in
+                    guard case .text(let value) = part else { return nil }
+                    return value
+                }.joined(separator: "\n")
             default:
                 break
             }
@@ -882,6 +887,11 @@ struct ExternalAgentProtocolAdapterTests {
             switch event {
             case .assistantDelta(let delta), .assistantMessage(let delta, _):
                 text += delta
+            case .assistantStepMessage(let message, _):
+                text += message.parts.compactMap { part -> String? in
+                    guard case .text(let value) = part else { return nil }
+                    return value
+                }.joined(separator: "\n")
             default:
                 break
             }
@@ -1236,7 +1246,14 @@ struct ExternalAgentProtocolAdapterTests {
                 "event": assistantMessageEvent("right"),
             ])
         ))
-        #expect(message.events == [.assistantMessage("right", usage: nil)])
+        #expect(message.events.contains { event in
+            guard case .assistantStepMessage(let settled, let usage) = event else { return false }
+            return usage == nil
+                && settled.turn == 0
+                && settled.step == 0
+                && settled.parentTraceID == "turn:0:step:0"
+                && settled.parts == [.text("right")]
+        })
 
         let toolCall = try driver.receive(notification(
             method: "session.event",
@@ -1389,6 +1406,22 @@ struct ExternalAgentProtocolAdapterTests {
                 && !trace.details.isEmpty
         })
 
+        let tokenDelta = try driver.receive(deepSeekEvent(
+            sessionID: sessionID,
+            type: "assistant/chunk",
+            seq: 3,
+            data: .object([
+                "turn": .number(0),
+                "step": .number(0),
+                "chunk": .object([
+                    "type": .string("text-delta"),
+                    "index": .number(1),
+                    "text": .string("不会逐 token 驱动 SwiftUI"),
+                ]),
+            ])
+        ))
+        #expect(tokenDelta.events.isEmpty)
+
         let requestContext = try driver.receive(deepSeekEvent(
             sessionID: sessionID,
             type: "request/context",
@@ -1477,13 +1510,17 @@ struct ExternalAgentProtocolAdapterTests {
                 ]),
             ])
         ))
-        #expect(assistant.events.contains(.assistantMessage("已完成", usage: nil)))
         #expect(assistant.events.contains { event in
-            guard case .trace(let trace) = event else { return false }
-            return trace.id == "reasoning:assistant-1"
-                && trace.kind == .reasoningSummary
-                && trace.summary == "先核对仓库范围"
-                && trace.details.first?.format == .markdown
+            guard case .assistantStepMessage(let settled, let usage) = event else { return false }
+            return usage == nil
+                && settled.providerMessageID == "assistant-1"
+                && settled.turn == 0
+                && settled.step == 0
+                && settled.parentTraceID == "turn:0:step:0"
+                && settled.parts == [
+                    .reasoning("先核对仓库范围"),
+                    .text("已完成"),
+                ]
         })
 
         let todos = try driver.receive(deepSeekEvent(

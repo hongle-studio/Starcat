@@ -251,6 +251,71 @@ struct GitHubRepoDTO: Decodable, Equatable {
     /// 搜索相关度（仅 `/search/repositories` 返回，best-match 排序时有意义）。
     let score: Double?
 
+    /// 直接上游。仅 `GET /repos/{owner}/{repo}` 在 `fork == true` 时返回；
+    /// `/user/repos`、`/user/starred`、search 列表都没有这个字段，必须按 nil 解码。
+    ///
+    /// 存储属性不能写 `= nil`：Swift 合成 `init(from:)` 会跳过有默认值的字段，
+    /// GET /repos 明明带了 parent 也会解成 nil。fixture 走下面的 memberwise，parent 默认 nil。
+    let parent: GitHubForkParentDTO?
+
+    init(
+        id: Int64,
+        name: String,
+        fullName: String,
+        owner: GitHubUserDTO,
+        description: String?,
+        language: String?,
+        stargazersCount: Int,
+        forksCount: Int,
+        watchersCount: Int,
+        topics: [String]?,
+        license: GitHubLicenseDTO?,
+        homepage: String?,
+        htmlUrl: String,
+        cloneUrl: String?,
+        sshUrl: String?,
+        isPrivate: Bool,
+        fork: Bool,
+        archived: Bool,
+        pushedAt: String?,
+        createdAt: String?,
+        updatedAt: String?,
+        openIssuesCount: Int?,
+        defaultBranch: String?,
+        disabled: Bool?,
+        isTemplate: Bool?,
+        score: Double?,
+        parent: GitHubForkParentDTO? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.fullName = fullName
+        self.owner = owner
+        self.description = description
+        self.language = language
+        self.stargazersCount = stargazersCount
+        self.forksCount = forksCount
+        self.watchersCount = watchersCount
+        self.topics = topics
+        self.license = license
+        self.homepage = homepage
+        self.htmlUrl = htmlUrl
+        self.cloneUrl = cloneUrl
+        self.sshUrl = sshUrl
+        self.isPrivate = isPrivate
+        self.fork = fork
+        self.archived = archived
+        self.pushedAt = pushedAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.openIssuesCount = openIssuesCount
+        self.defaultBranch = defaultBranch
+        self.disabled = disabled
+        self.isTemplate = isTemplate
+        self.score = score
+        self.parent = parent
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -283,6 +348,30 @@ struct GitHubRepoDTO: Decodable, Equatable {
         case disabled
         case isTemplate
         case score
+        case parent
+    }
+}
+
+/// fork 网络里的直接上游（GitHub `parent`，不是 `source`）。
+///
+/// GitHub 网页 “forked from xuxueli/xxl-job” 对应 `parent.full_name`。
+/// `source` 是整条 fork 链的根；第一版只展示直接上游，避免把二次 fork 标成更远的源头。
+/// 不用完整 `GitHubRepoDTO` 嵌套：上游对象不再带 `parent`，强解会引入无意义递归。
+struct GitHubForkParentDTO: Decodable, Equatable, Sendable {
+    let fullName: String
+    let htmlUrl: String
+    let defaultBranch: String?
+
+    /// `owner/name` 的 owner 段；fullName 非法时为空串，调用方应视为上游不可用。
+    var ownerLogin: String {
+        String(fullName.split(separator: "/", maxSplits: 1).first ?? "")
+    }
+
+    /// `owner/name` 的 name 段。
+    var repoName: String {
+        let parts = fullName.split(separator: "/", maxSplits: 1)
+        guard parts.count == 2 else { return "" }
+        return String(parts[1])
     }
 }
 

@@ -592,8 +592,7 @@ struct TrendingView: View {
                         ),
                         isSelected: store.isActive
                             ? store.contains(ghRepoId: repo.ghRepoId)
-                            : (selectedRepoID == repo.id),
-                        showStarredCheckmark: true
+                            : (selectedRepoID == repo.id)
                     )
                 }
                 .buttonStyle(.plain)

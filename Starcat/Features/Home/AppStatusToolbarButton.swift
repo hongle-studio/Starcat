@@ -12,10 +12,12 @@
 //  - 跳转复用 SettingsView 已有的 Notification 路由，不新增主窗口路由状态。
 //
 
+import AppKit
 import SwiftUI
 
 /// toolbar 状态按钮：点击后展示应用状态 popover。
 struct AppStatusToolbarButton: View {
+    @Environment(\.openWindow) private var openWindow
     @Environment(AppDependencies.self) private var dependencies
     @Environment(AppSettings.self) private var settings
     @Environment(SyncManager.self) private var syncManager
@@ -58,43 +60,53 @@ struct AppStatusToolbarButton: View {
         }
         .help("toolbar.status.help")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            AppStatusPanel(
-                lastSyncedAt: lastSyncedAt,
-                syncState: syncManager.state,
-                syncProgress: syncManager.progress,
-                readmePrefetchService: dependencies.readmePrefetchService,
-                readmePrefetchEnabled: settings.readmePrefetchEnabled,
-                readmePrefetchPoller: dependencies.readmePrefetchPoller,
-                initialWarmupCoordinator: dependencies.initialWarmupCoordinator,
-                openSSFScorePoller: dependencies.openSSFScorePoller,
-                repoHealthPoller: dependencies.repoHealthPoller,
-                undoStarCleanup: dependencies.undoStarCleanupScheduler,
-                batchService: dependencies.batchAIQueueService,
-                ragIndexBuilder: dependencies.knowledgeRAGIndexBuilder,
-                mcpState: dependencies.mcpService.state,
-                mcpEnabled: settings.mcpServiceEnabled,
-                mcpEndpointURL: dependencies.mcpService.endpointURL,
-                browserPluginState: pluginConfiguration.serverStatus,
-                browserPluginEnabled: pluginConfiguration.isEnabled,
-                browserPluginEndpointURL: "http://127.0.0.1:\(pluginConfiguration.port)",
-                githubStatusMonitor: dependencies.githubStatusMonitor,
-                serviceSummary: dependencies.serviceAvailabilityMonitor.summary,
-                diagnosticSummary: diagnosticSummary,
-                aiUsageRepository: dependencies.aiUsageRepository,
-                relativePastDate: relativePastDate,
-                relativeFutureDate: relativeFutureDate,
-                onOpenDiagnostics: { openSettings(tab: "diagnostics") },
-                onClearDiagnostics: {
-                    Task { await clearDiagnostics() }
-                },
-                onOpenServices: { openSettings(tab: "services") },
-                onOpenMCP: { openSettings(tab: "mcp") },
-                onOpenBrowserPlugin: { openSettings(tab: "integrations.browserPlugin") },
-                onOpenAIUsage: { AIUsageWindowController.show(dependencies: dependencies) },
-                onShowBatchAIPanel: onShowBatchAIPanel
-            )
-            .frame(width: 340)
-            .padding(14)
+            ScrollView {
+                AppStatusPanel(
+                    lastSyncedAt: lastSyncedAt,
+                    syncState: syncManager.state,
+                    syncProgress: syncManager.progress,
+                    readmePrefetchService: dependencies.readmePrefetchService,
+                    readmePrefetchEnabled: settings.readmePrefetchEnabled,
+                    readmePrefetchPoller: dependencies.readmePrefetchPoller,
+                    initialWarmupCoordinator: dependencies.initialWarmupCoordinator,
+                    openSSFScorePoller: dependencies.openSSFScorePoller,
+                    repoHealthPoller: dependencies.repoHealthPoller,
+                    undoStarCleanup: dependencies.undoStarCleanupScheduler,
+                    batchService: dependencies.batchAIQueueService,
+                    ragIndexBuilder: dependencies.knowledgeRAGIndexBuilder,
+                    mcpState: dependencies.mcpService.state,
+                    mcpEnabled: settings.mcpServiceEnabled,
+                    browserPluginState: pluginConfiguration.serverStatus,
+                    browserPluginEnabled: pluginConfiguration.isEnabled,
+                    githubStatusMonitor: dependencies.githubStatusMonitor,
+                    serviceSummary: dependencies.serviceAvailabilityMonitor.summary,
+                    diagnosticSummary: diagnosticSummary,
+                    aiUsageRepository: dependencies.aiUsageRepository,
+                    relativePastDate: relativePastDate,
+                    relativeFutureDate: relativeFutureDate,
+                    onOpenDiagnostics: { openSettings(tab: "diagnostics") },
+                    onClearDiagnostics: {
+                        Task { await clearDiagnostics() }
+                    },
+                    onOpenServices: { openSettings(tab: "services") },
+                    onOpenMCP: { openSettings(tab: "mcp") },
+                    onOpenBrowserPlugin: { openSettings(tab: "integrations.browserPlugin") },
+                    onOpenAIUsage: { AIUsageWindowController.show(dependencies: dependencies) },
+                    onShowBatchAIPanel: onShowBatchAIPanel,
+                    onOpenGeneralSettings: { openSettings(tab: "general") },
+                    onOpenAbout: { AboutWindowController.show() },
+                    onOpenStorage: { openSettings(tab: "storage") },
+                    onOpenLocalAI: { openSettings(tab: "ai") },
+                    onOpenLocalAILogs: { model in
+                        LocalAILogWindowSelection.shared.select(model.id)
+                        isPresented = false
+                        openWindow(id: LocalAILogWindowSelection.sceneID)
+                    }
+                )
+                .frame(width: AppStatusPanelMetrics.width)
+                .padding(14)
+            }
+            .frame(maxHeight: 640)
             .appLocaleEnvironment()
             .task {
                 await refreshDiagnostics()
@@ -230,10 +242,8 @@ private struct AppStatusPanel: View {
     let ragIndexBuilder: KnowledgeRAGIndexBuilder
     let mcpState: StarcatMCPService.State
     let mcpEnabled: Bool
-    let mcpEndpointURL: String
     let browserPluginState: CompanionConfiguration.ServerStatus
     let browserPluginEnabled: Bool
-    let browserPluginEndpointURL: String
     let githubStatusMonitor: GitHubStatusMonitor
     let serviceSummary: ServiceAvailabilitySummary
     let diagnosticSummary: DiagnosticLogSummary
@@ -247,131 +257,57 @@ private struct AppStatusPanel: View {
     let onOpenBrowserPlugin: () -> Void
     let onOpenAIUsage: () -> Void
     let onShowBatchAIPanel: (() -> Void)?
+    let onOpenGeneralSettings: () -> Void
+    let onOpenAbout: () -> Void
+    let onOpenStorage: () -> Void
+    let onOpenLocalAI: () -> Void
+    let onOpenLocalAILogs: (LocalAIModelCatalogEntry) -> Void
 
     @State private var isTaskCancelHovered = false
     @State private var aiUsageSummary = AIUsageSummary.empty
+    @State private var aiUsagePeakTokens = 0
     @Environment(\.starcatInterfaceScale) private var interfaceScale
     @Environment(\.locale) private var locale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             header
-            Divider()
-            statusRow(
-                icon: syncIcon,
-                tint: syncTint,
-                title: "toolbar.status.sync.title",
-                subtitle: syncSubtitle,
-                accessory: { syncAccessory }
-            )
-            statusRow(
-                icon: githubStatusIcon,
-                tint: githubStatusTint,
-                title: "toolbar.status.github.title",
-                subtitle: githubStatusSubtitle,
-                accessory: {
-                    Link("toolbar.status.github.open", destination: GitHubStatusClient.statusPageURL)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .focusEffectDisabled()
-                }
-            )
-            statusRow(
-                icon: taskIcon,
-                tint: taskTint,
-                title: "toolbar.status.tasks.title",
-                subtitle: taskSubtitle,
-                accessory: { taskAccessory }
-            )
-            statusRow(
-                icon: "chart.bar.xaxis",
-                tint: aiUsageSummary.callCount > 0 ? .accentColor : .secondary,
-                title: "ai.usage.popover.title",
-                subtitle: String(
-                    format: String.l10n("ai.usage.popover.summaryFormat"),
-                    aiUsageSummary.totalTokens.formatted(.number.notation(.compactName).locale(locale)),
-                    aiUsageSummary.callCount
-                ),
-                accessory: {
-                    Button("ai.usage.open") { onOpenAIUsage() }
-                        .controlSize(.small)
-                        .focusEffectDisabled()
-                }
-            )
-            statusRow(
-                icon: serviceIcon,
-                tint: serviceTint,
-                title: "toolbar.status.services.title",
-                subtitle: serviceSubtitle,
-                accessory: {
-                    Button("toolbar.status.services.open") {
-                        onOpenServices()
-                    }
-                    .controlSize(.small)
-                    .focusEffectDisabled()
-                }
-            )
-            statusRow(
-                icon: mcpIcon,
-                tint: mcpTint,
-                title: "toolbar.status.mcp.title",
-                subtitle: mcpSubtitle,
-                accessory: {
-                    Button("toolbar.status.mcp.open") {
-                        onOpenMCP()
-                    }
-                    .controlSize(.small)
-                    .focusEffectDisabled()
-                }
-            )
-            statusRow(
-                icon: browserPluginIcon,
-                tint: browserPluginTint,
-                title: "toolbar.status.browserPlugin.title",
-                subtitle: browserPluginSubtitle,
-                accessory: {
-                    Button("toolbar.status.browserPlugin.open") {
-                        onOpenBrowserPlugin()
-                    }
-                    .controlSize(.small)
-                    .focusEffectDisabled()
-                }
-            )
-            statusRow(
-                icon: diagnosticIcon,
-                tint: diagnosticTint,
-                title: "toolbar.status.diagnostics.title",
-                subtitle: diagnosticSubtitle,
-                accessory: { diagnosticAccessory }
-            )
-
-            // Undo Star 清理状态（2026-07-05）
-            if let lastCleanup = undoStarCleanup.lastCleanupAt {
-                let count = undoStarCleanup.lastCleanupCount
-                statusRow(
-                    icon: "arrow.uturn.backward.circle",
-                    tint: .secondary,
-                    title: "toolbar.status.undoStar.title",
-                    subtitle: count > 0
-                        ? String(format: String.l10n("toolbar.status.undoStar.lastCleanupWithCount"), count, relativePastDate(lastCleanup))
-                        : String(format: String.l10n("toolbar.status.undoStar.lastCleanup"), relativePastDate(lastCleanup)),
-                    accessory: { EmptyView() }
-                )
-            }
+            overviewGrid
+            aiUsageCard
+            LocalAIStatusSection(onOpenSettings: onOpenLocalAI, onOpenLogs: onOpenLocalAILogs)
+            integrationGrid
+            diagnosticsRow
+            undoStarRow
+            footer
         }
         .task { await loadAIUsageSummary() }
     }
 
     private func loadAIUsageSummary() async {
+        var calendar = Calendar.current
+        calendar.locale = locale
+        let now = Date()
         do {
             aiUsageSummary = try await aiUsageRepository.summary(
                 filter: AIUsageFilter(timeRange: .today),
-                now: Date(),
-                calendar: .current
+                now: now,
+                calendar: calendar
+            )
+            // 没有日限额，进度条用「今日 / 近 7 天单日峰值」做相对值，避免画一个假的 40%。
+            let week = try await aiUsageRepository.statistics(
+                filter: AIUsageFilter(timeRange: .sevenDays),
+                now: now,
+                calendar: calendar,
+                recentLimit: 1
+            )
+            aiUsagePeakTokens = max(
+                week.daily.map(\.totalTokens).max() ?? 0,
+                aiUsageSummary.totalTokens
             )
         } catch {
             // 状态 popover 是轻量入口；查询失败不应该再制造一个全局诊断问题。
             aiUsageSummary = .empty
+            aiUsagePeakTokens = 0
         }
     }
 
@@ -394,39 +330,447 @@ private struct AppStatusPanel: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Label("toolbar.status.panel.title", systemImage: "waveform.path.ecg")
-                .font(interfaceScale.font(.panelTitle, weight: .semibold))
-            Spacer()
+        HStack(alignment: .center, spacing: 10) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(verbatim: "Starcat")
+                        .font(interfaceScale.font(.panelTitle, weight: .semibold))
+                    brandStatusPill
+                }
+                Text("toolbar.status.brand.subtitle")
+                    .font(interfaceScale.font(.caption))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            AppStatusHeaderIconButton(helpKey: "toolbar.status.settings", action: onOpenGeneralSettings) {
+                Image(systemName: "gearshape")
+                    .font(interfaceScale.font(.iconMedium, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Rectangle()
+                .fill(Color.secondary.opacity(0.22))
+                .frame(width: 1, height: 16)
+
+            Menu {
+                Button("toolbar.status.more.about", action: onOpenAbout)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(interfaceScale.font(.iconMedium, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Color.secondary.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 28, height: 28)
+            .focusEffectDisabled()
+            .help("toolbar.status.more.about")
         }
     }
 
-    @ViewBuilder
-    private func statusRow<Accessory: View>(
-        icon: String,
-        tint: Color,
-        title: LocalizedStringKey,
-        subtitle: String,
-        @ViewBuilder accessory: () -> Accessory
-    ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .font(interfaceScale.font(.iconMedium, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 20, height: 20)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(interfaceScale.font(.bodyEmphasis, weight: .semibold))
-                    .foregroundStyle(.primary)
-                Text(subtitle)
+    private var brandStatusPill: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(brandStatusTint)
+                .frame(width: 6, height: 6)
+            Text(brandStatusKey)
+                .font(interfaceScale.font(.captionSmall, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var overviewGrid: some View {
+        HStack(alignment: .top, spacing: AppStatusPanelMetrics.gridSpacing) {
+            AppStatusOverviewCard(
+                title: "toolbar.status.sync.title",
+                value: syncCardValue,
+                caption: syncCardCaption,
+                tint: syncTint
+            ) {
+                statusGlyph(syncIcon, tint: syncTint)
+            }
+
+            AppStatusOverviewCard(
+                title: "toolbar.status.github.cardTitle",
+                value: githubCardValue,
+                caption: githubCardCaption,
+                tint: githubStatusTint,
+                action: { NSWorkspace.shared.open(GitHubStatusClient.statusPageURL) }
+            ) {
+                Image("github")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(githubStatusTint)
+                    .accessibilityHidden(true)
+            }
+
+            AppStatusOverviewCard(
+                title: "toolbar.status.tasks.title",
+                value: taskCardValue,
+                caption: taskCardCaption,
+                tint: taskTint,
+                showsChevron: true,
+                action: { onShowBatchAIPanel?() },
+                icon: { statusGlyph(taskIcon, tint: taskTint) },
+                accessory: {
+                    if hasCancellableBackgroundTask {
+                        cancellableTaskIndicator
+                    }
+                }
+            )
+        }
+    }
+
+    private var aiUsageCard: some View {
+        AppStatusGroupCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(interfaceScale.font(.iconMedium, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text("ai.usage.popover.title")
+                        .font(interfaceScale.font(.bodyEmphasis, weight: .semibold))
+                    Spacer(minLength: 8)
+                    Button(action: onOpenAIUsage) {
+                        HStack(spacing: 4) {
+                            Text("ai.usage.open")
+                            Image(systemName: "chevron.right")
+                                .font(interfaceScale.font(.captionSmall, weight: .semibold))
+                        }
+                        .font(interfaceScale.font(.caption, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .focusEffectDisabled()
+                }
+
+                Text(verbatim: aiUsageSummaryLine)
                     .font(interfaceScale.font(.caption))
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    ProgressView(value: aiUsageFraction)
+                        .progressViewStyle(.linear)
+                    if let percent = aiUsagePercentLabel {
+                        Text(verbatim: percent)
+                            .font(interfaceScale.font(.captionSmall, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
             }
-            Spacer(minLength: 8)
-            accessory()
         }
+    }
+
+    private var integrationGrid: some View {
+        HStack(alignment: .top, spacing: AppStatusPanelMetrics.gridSpacing) {
+            AppStatusOverviewCard(
+                title: "toolbar.status.services.title",
+                value: serviceCardValue,
+                caption: "",
+                tint: serviceTint,
+                showsChevron: true,
+                action: onOpenServices
+            ) {
+                statusGlyph(serviceIcon, tint: serviceTint)
+            }
+            AppStatusOverviewCard(
+                title: "toolbar.status.mcp.title",
+                value: mcpCardValue,
+                caption: "",
+                tint: mcpTint,
+                showsChevron: true,
+                action: onOpenMCP
+            ) {
+                statusGlyph(mcpIcon, tint: mcpTint)
+            }
+            AppStatusOverviewCard(
+                title: "toolbar.status.browserPlugin.title",
+                value: browserPluginCardValue,
+                caption: "",
+                tint: browserPluginTint,
+                showsChevron: true,
+                action: onOpenBrowserPlugin
+            ) {
+                statusGlyph(browserPluginIcon, tint: browserPluginTint)
+            }
+        }
+    }
+
+    private var diagnosticsRow: some View {
+        AppStatusActionRow(
+            title: "toolbar.status.diagnostics.title",
+            subtitle: diagnosticSubtitle,
+            systemImage: diagnosticIcon,
+            tint: diagnosticTint,
+            showsChevron: false
+        ) {
+            diagnosticAccessory
+        }
+    }
+
+    private var undoStarRow: some View {
+        AppStatusActionRow(
+            title: "toolbar.status.undoStar.title",
+            subtitle: undoStarSubtitle,
+            systemImage: "arrow.uturn.backward.circle",
+            tint: .orange,
+            action: onOpenStorage
+        ) {
+            EmptyView()
+        }
+    }
+
+    private var footer: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(verbatim: String(
+                format: String.l10n("toolbar.status.footer.versionFormat"),
+                Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+            ))
+            Spacer(minLength: 8)
+            Text("toolbar.status.footer.tagline")
+        }
+        .font(interfaceScale.font(.captionSmall))
+        .foregroundStyle(.secondary)
+        .padding(.top, 2)
+    }
+
+    private func statusGlyph(_ systemImage: String, tint: Color) -> some View {
+        Image(systemName: systemImage)
+            .font(interfaceScale.font(.iconSmall, weight: .semibold))
+            .foregroundStyle(tint)
+            .symbolRenderingMode(.hierarchical)
+    }
+
+    private var brandStatusKey: LocalizedStringKey {
+        if panelHasIssue { return "toolbar.status.brand.issue" }
+        if panelIsBusy { return "toolbar.status.brand.busy" }
+        return "toolbar.status.brand.running"
+    }
+
+    private var brandStatusTint: Color {
+        if panelHasIssue { return .orange }
+        if panelIsBusy { return .accentColor }
+        return .green
+    }
+
+    private var panelHasIssue: Bool {
+        if diagnosticSummary.issueCount > 0 { return true }
+        if githubStatusMonitor.hasRelevantIssue { return true }
+        if serviceSummary.hasIssue { return true }
+        if initialWarmupCoordinator.job?.phase == .paused { return true }
+        if case .failed = mcpState { return true }
+        if case .failed = browserPluginState { return true }
+        if case .failed = syncState { return true }
+        if case .rateLimited = syncState { return true }
+        return false
+    }
+
+    private var panelIsBusy: Bool {
+        if case .syncing = syncState { return true }
+        if runningTaskCount > 0 { return true }
+        return batchService.isPaused
+    }
+
+    private var syncCardValue: String {
+        switch syncState {
+        case .syncing:
+            return String.l10n("toolbar.status.sync.syncingShort")
+        case .completed(let at):
+            return relativePastDate(at)
+        case .failed(let message):
+            return message
+        case .rateLimited(let retryAt):
+            if RelativeTimeText.isImmediateDeadline(retryAt) {
+                return String.l10n("toolbar.status.sync.rateLimitedRetryNow")
+            }
+            return String(format: String.l10n("toolbar.status.sync.rateLimitedFormat"), relativeFutureDate(retryAt))
+        case .idle:
+            if let lastSyncedAt {
+                return relativePastDate(lastSyncedAt)
+            }
+            return String.l10n("toolbar.status.sync.notYet")
+        }
+    }
+
+    private var syncCardCaption: String {
+        switch syncState {
+        case .syncing:
+            if let progress = syncProgress, let total = progress.total {
+                return String(format: String.l10n("toolbar.status.sync.progressFormat"), progress.current, total)
+            }
+            return String.l10n("toolbar.status.sync.running")
+        case .completed:
+            return String.l10n("toolbar.status.sync.upToDate")
+        case .idle:
+            return lastSyncedAt != nil ? String.l10n("toolbar.status.sync.upToDate") : ""
+        case .failed, .rateLimited:
+            return ""
+        }
+    }
+
+    private var githubCardValue: String {
+        if githubStatusMonitor.isChecking && githubStatusMonitor.snapshot == nil {
+            return String.l10n("toolbar.status.github.checking")
+        }
+        guard let snapshot = githubStatusMonitor.snapshot else {
+            return String.l10n("toolbar.status.github.unavailable")
+        }
+        // 卡片宽度放不下 "API Requests 正常"；短状态词才能和另外两张保持同一 14pt，避免再压字号。
+        switch snapshot.apiRequestsStatus {
+        case .operational: return String.l10n("toolbar.status.github.cardState.operational")
+        case .degradedPerformance: return String.l10n("toolbar.status.github.cardState.degraded")
+        case .partialOutage: return String.l10n("toolbar.status.github.cardState.partialOutage")
+        case .majorOutage: return String.l10n("toolbar.status.github.cardState.majorOutage")
+        case .underMaintenance: return String.l10n("toolbar.status.github.cardState.maintenance")
+        case .unknown: return String.l10n("toolbar.status.github.cardState.unknown")
+        }
+    }
+
+    private var githubCardCaption: String {
+        guard let snapshot = githubStatusMonitor.snapshot else { return "" }
+        return relativePastDate(snapshot.fetchedAt)
+    }
+
+    private var taskCardValue: String {
+        let count = runningTaskCount
+        if count == 0 {
+            return String.l10n("toolbar.status.tasks.emptyShort")
+        }
+        return String(format: String.l10n("toolbar.status.tasks.countFormat"), count)
+    }
+
+    private var taskCardCaption: String {
+        if hasCancellableBackgroundTask {
+            return String.l10n("toolbar.status.tasks.runningCaption")
+        }
+        return String.l10n("toolbar.status.tasks.idleCaption")
+    }
+
+    private var runningTaskCount: Int {
+        let batchRemaining = (batchService.isRunning || batchService.isPaused)
+            ? max(0, batchService.totalCount - batchService.finishedCount)
+            : 0
+        let readmeRemaining = readmePrefetchService.isRunning
+            ? max(0, readmePrefetchService.total - readmePrefetchService.processed)
+            : (readmePrefetchPoller.isDraining ? 1 : 0)
+        let warmupRemaining: Int
+        if initialWarmupCoordinator.isActive, let job = initialWarmupCoordinator.job {
+            warmupRemaining = max(0, job.readmeTotal - job.readmeCovered)
+                + max(0, initialWarmupCoordinator.openSSFTotal - initialWarmupCoordinator.openSSFCovered)
+                + max(0, job.healthTotal - job.healthCovered)
+        } else {
+            warmupRemaining = initialWarmupCoordinator.isRunning ? 1 : 0
+        }
+        let openSSFRemaining = openSSFScorePoller.isRefreshing
+            ? max(1, openSSFScorePoller.refreshTotal - openSSFScorePoller.refreshProcessed)
+            : 0
+        let healthRemaining = repoHealthPoller.isRefreshing
+            ? max(1, repoHealthPoller.refreshTotal - repoHealthPoller.refreshProcessed)
+            : 0
+        let ragRemaining: Int
+        if case let .embedding(processed, total) = ragIndexBuilder.status {
+            ragRemaining = max(0, total - processed)
+        } else if ragIndexBuilder.status.isActivelyIndexing {
+            ragRemaining = 1
+        } else {
+            ragRemaining = 0
+        }
+        return batchRemaining + readmeRemaining + warmupRemaining
+            + openSSFRemaining + healthRemaining + ragRemaining
+    }
+
+    private var aiUsageSummaryLine: String {
+        String(
+            format: String.l10n("ai.usage.popover.summaryFormat"),
+            aiUsageSummary.totalTokens.formatted(.number.notation(.compactName).locale(locale)),
+            aiUsageSummary.callCount
+        )
+    }
+
+    private var aiUsageFraction: Double {
+        guard aiUsagePeakTokens > 0 else { return 0 }
+        return min(1, Double(aiUsageSummary.totalTokens) / Double(aiUsagePeakTokens))
+    }
+
+    private var aiUsagePercentLabel: String? {
+        guard aiUsagePeakTokens > 0, aiUsageSummary.totalTokens > 0 else { return nil }
+        let percent = Int((aiUsageFraction * 100).rounded())
+        return String(format: String.l10n("toolbar.status.aiUsage.percentFormat"), percent)
+    }
+
+    private var serviceCardValue: String {
+        if serviceSummary.hasChecked {
+            return String(
+                format: String.l10n("toolbar.status.services.cardCountFormat"),
+                serviceSummary.availableCount,
+                serviceSummary.totalCount
+            )
+        }
+        return serviceSubtitle
+    }
+
+    private var mcpCardValue: String {
+        switch mcpState {
+        case .running:
+            return String.l10n("toolbar.status.mcp.running")
+        case .failed(let message):
+            return String(format: String.l10n("toolbar.status.mcp.failedFormat"), message)
+        case .stopped:
+            return mcpEnabled
+                ? String.l10n("toolbar.status.mcp.stopped")
+                : String.l10n("toolbar.status.mcp.disabled")
+        }
+    }
+
+    private var browserPluginCardValue: String {
+        switch browserPluginState {
+        case .running:
+            return String.l10n("settings.integration.browserPlugin.status.running")
+        case .starting:
+            return String.l10n("settings.integration.browserPlugin.status.starting")
+        case .failed(let failure):
+            return failure.localizedDescription
+        case .stopped:
+            return browserPluginEnabled
+                ? String.l10n("settings.integration.browserPlugin.status.stopped")
+                : String.l10n("toolbar.status.browserPlugin.disabled")
+        }
+    }
+
+    private var undoStarSubtitle: String {
+        guard let lastCleanup = undoStarCleanup.lastCleanupAt else {
+            return String.l10n("toolbar.status.undoStar.empty")
+        }
+        let count = undoStarCleanup.lastCleanupCount
+        if count > 0 {
+            return String(
+                format: String.l10n("toolbar.status.undoStar.lastCleanupWithCount"),
+                count,
+                relativePastDate(lastCleanup)
+            )
+        }
+        return String(
+            format: String.l10n("toolbar.status.undoStar.lastCleanup"),
+            relativePastDate(lastCleanup)
+        )
     }
 
     private var syncIcon: String {
@@ -442,84 +786,6 @@ private struct AppStatusPanel: View {
         case .failed, .rateLimited: return .orange
         case .syncing: return .accentColor
         case .idle, .completed: return .green
-        }
-    }
-
-    private var syncSubtitle: String {
-        switch syncState {
-        case .syncing:
-            if let progress = syncProgress, let total = progress.total {
-                return String(format: String.l10n("toolbar.status.sync.progressFormat"), progress.current, total)
-            }
-            return String.l10n("toolbar.status.sync.running")
-        case .completed(let at):
-            return String(format: String.l10n("toolbar.status.sync.lastFormat"), relativePastDate(at))
-        case .failed(let message):
-            return message
-        case .rateLimited(let retryAt):
-            if RelativeTimeText.isImmediateDeadline(retryAt) {
-                return String.l10n("toolbar.status.sync.rateLimitedRetryNow")
-            }
-            return String(format: String.l10n("toolbar.status.sync.rateLimitedFormat"), relativeFutureDate(retryAt))
-        case .idle:
-            if let lastSyncedAt {
-                return String(format: String.l10n("toolbar.status.sync.lastFormat"), relativePastDate(lastSyncedAt))
-            }
-            return String.l10n("toolbar.status.sync.notYet")
-        }
-    }
-
-    @ViewBuilder
-    private var syncAccessory: some View {
-        if case .syncing = syncState {
-            ProgressView()
-                .controlSize(.small)
-        } else {
-            EmptyView()
-        }
-    }
-
-    private var readmePrefetchSubtitle: String {
-        guard readmePrefetchEnabled else {
-            return String.l10n("toolbar.status.readmePrefetch.disabled")
-        }
-        switch readmePrefetchService.status {
-        case .running:
-            return String(
-                format: String.l10n("toolbar.status.readmePrefetch.progressFormat"),
-                readmePrefetchService.processed,
-                readmePrefetchService.total,
-                readmePrefetchService.failures
-            )
-        case .coolingDown(let until):
-            return String(
-                format: String.l10n("toolbar.status.readmePrefetch.coolingDownFormat"),
-                relativeFutureDate(until)
-            )
-        case .waitingForRetry:
-            return String.l10n("settings.storage.readmePrefetch.retrying")
-        case .completed:
-            return String(
-                format: String.l10n("toolbar.status.readmePrefetch.completedFormat"),
-                readmePrefetchService.htmlUpdated,
-                readmePrefetchService.markdownUpdated,
-                readmePrefetchService.notFound,
-                readmePrefetchService.failures
-            )
-        case .allPrefetched(let total):
-            return String(
-                format: String.l10n("settings.storage.readmePrefetch.allPrefetchedFormat"),
-                total
-            )
-        case .noStarredRepos:
-            return String.l10n("settings.storage.readmePrefetch.noStarredRepos")
-        case .idle:
-            if let lastRunAt = readmePrefetchService.lastRunAt {
-                return String(format: String.l10n("toolbar.status.readmePrefetch.lastFormat"), relativePastDate(lastRunAt))
-            }
-            return String.l10n("toolbar.status.readmePrefetch.waiting")
-        case .disabled:
-            return String.l10n("toolbar.status.readmePrefetch.disabled")
         }
     }
 
@@ -539,78 +805,6 @@ private struct AppStatusPanel: View {
         }
         if initialWarmupCoordinator.isCompleted || isReadmePrefetchAllFetched { return .green }
         return .secondary
-    }
-
-    private var taskSubtitle: String {
-        var lines: [String] = []
-        if initialWarmupCoordinator.isActive || initialWarmupCoordinator.isCompleted {
-            lines.append(initialWarmupSubtitle)
-        }
-        if shouldShowReadmePrefetchInTasks {
-            lines.append(String(format: String.l10n("toolbar.status.tasks.readmeFormat"), readmePrefetchSubtitle))
-        }
-        if shouldShowOpenSSFInTasks {
-            lines.append(openSSFSubtitle)
-        }
-        if shouldShowRepoHealthInTasks {
-            lines.append(repoHealthSubtitle)
-        }
-        if batchService.totalCount > 0 {
-            lines.append(String(
-                format: String.l10n("toolbar.status.tasks.batchAIFormat"),
-                batchService.finishedCount,
-                batchService.totalCount,
-                batchService.failedCount
-            ))
-        }
-        if let ragLine = ragIndexSubtitle {
-            lines.append(ragLine)
-        }
-        guard !lines.isEmpty else {
-            return String.l10n("toolbar.status.tasks.empty")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private var ragIndexSubtitle: String? {
-        switch ragIndexBuilder.status {
-        case .fetchingReadmes(let processed, let total):
-            return String(
-                format: String.l10n("toolbar.status.tasks.ragRebuildFormat"),
-                processed,
-                total
-            )
-        case .building(let processed, let total):
-            return String(
-                format: String.l10n("toolbar.status.tasks.ragRebuildFormat"),
-                processed,
-                total
-            )
-        case .embedding(let processed, let total):
-            return String(
-                format: String.l10n("toolbar.status.tasks.ragEmbeddingFormat"),
-                processed,
-                total
-            )
-        case .idle, .completed, .failed:
-            return nil
-        }
-    }
-
-    @ViewBuilder
-    private var taskAccessory: some View {
-        HStack(spacing: 6) {
-            if hasCancellableBackgroundTask {
-                cancellableTaskIndicator
-            }
-            if batchService.totalCount > 0 {
-                Button("toolbar.status.tasks.open") {
-                    onShowBatchAIPanel?()
-                }
-                .controlSize(.small)
-                .focusEffectDisabled()
-            }
-        }
     }
 
     /// 状态面板只暴露“终止当前这一轮”的能力：
@@ -633,14 +827,14 @@ private struct AppStatusPanel: View {
         } label: {
             ZStack {
                 ProgressView()
-                    .controlSize(.small)
+                    .controlSize(.mini)
                     .opacity(isTaskCancelHovered ? 0 : 1)
                 Image(systemName: "xmark.circle.fill")
-                    .font(interfaceScale.font(.iconMedium, weight: .semibold))
+                    .font(interfaceScale.font(.caption, weight: .semibold))
                     .foregroundStyle(.red)
                     .opacity(isTaskCancelHovered ? 1 : 0)
             }
-            .frame(width: 20, height: 20)
+            .frame(width: 14, height: 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -670,109 +864,6 @@ private struct AppStatusPanel: View {
         }
     }
 
-    private var shouldShowReadmePrefetchInTasks: Bool {
-        (readmePrefetchEnabled || readmePrefetchService.isRunning) && !initialWarmupCoordinator.isActive
-    }
-
-    private var shouldShowRepoHealthInTasks: Bool {
-        repoHealthPoller.isRefreshing || repoHealthPoller.lastRunAt != nil
-    }
-
-    private var shouldShowOpenSSFInTasks: Bool {
-        (openSSFScorePoller.isRefreshing || openSSFScorePoller.lastRunAt != nil) && !initialWarmupCoordinator.isActive
-    }
-
-    private var openSSFSubtitle: String {
-        if openSSFScorePoller.isRefreshing {
-            return String(
-                format: String.l10n("toolbar.status.tasks.openSSFProgressFormat"),
-                openSSFScorePoller.refreshProcessed,
-                openSSFScorePoller.refreshTotal
-            )
-        }
-        if let lastRunAt = openSSFScorePoller.lastRunAt {
-            return String(
-                format: String.l10n("toolbar.status.tasks.openSSFLastFormat"),
-                openSSFScorePoller.lastRefreshCount,
-                relativePastDate(lastRunAt)
-            )
-        }
-        return String.l10n("toolbar.status.tasks.openSSFWaiting")
-    }
-
-    private var repoHealthSubtitle: String {
-        if repoHealthPoller.isRefreshing {
-            return String(
-                format: String.l10n("toolbar.status.tasks.repoHealthProgressFormat"),
-                repoHealthPoller.refreshProcessed,
-                repoHealthPoller.refreshTotal
-            )
-        }
-        if let lastRunAt = repoHealthPoller.lastRunAt {
-            return String(
-                format: String.l10n("toolbar.status.tasks.repoHealthLastFormat"),
-                repoHealthPoller.lastRefreshCount,
-                relativePastDate(lastRunAt)
-            )
-        }
-        return String.l10n("toolbar.status.tasks.repoHealthWaiting")
-    }
-
-    private var initialWarmupSubtitle: String {
-        guard let job = initialWarmupCoordinator.job else {
-            return String.l10n("toolbar.status.initialWarmup.waiting")
-        }
-
-        switch job.phase {
-        case .waiting:
-            if let scheduled = job.scheduledAt.flatMap({ ISO8601DateFormatter.shared.date(from: $0) }) {
-                return String(
-                    format: String.l10n("toolbar.status.initialWarmup.scheduledFormat"),
-                    relativeFutureDate(scheduled)
-                )
-            }
-            return String.l10n("toolbar.status.initialWarmup.waiting")
-        case .readme:
-            return String(
-                format: String.l10n("toolbar.status.initialWarmup.progressFormat"),
-                job.readmeCovered,
-                job.readmeTotal,
-                initialWarmupCoordinator.openSSFCovered,
-                initialWarmupCoordinator.openSSFTotal,
-                job.healthCovered,
-                job.healthTotal
-            )
-        case .openSSF, .health:
-            return String(
-                format: String.l10n("toolbar.status.initialWarmup.progressFormat"),
-                job.readmeCovered,
-                job.readmeTotal,
-                initialWarmupCoordinator.openSSFCovered,
-                initialWarmupCoordinator.openSSFTotal,
-                job.healthCovered,
-                job.healthTotal
-            )
-        case .paused:
-            if job.lastErrorKind == "rateLimited", let retry = job.nextRetryAt.flatMap({ ISO8601DateFormatter.shared.date(from: $0) }) {
-                return String(
-                    format: String.l10n("toolbar.status.initialWarmup.rateLimitedFormat"),
-                    relativeFutureDate(retry)
-                )
-            }
-            if let retry = job.nextRetryAt.flatMap({ ISO8601DateFormatter.shared.date(from: $0) }) {
-                return String(
-                    format: String.l10n("toolbar.status.initialWarmup.pausedFormat"),
-                    relativeFutureDate(retry)
-                )
-            }
-            return String.l10n("toolbar.status.initialWarmup.paused")
-        case .completed:
-            return String.l10n("toolbar.status.initialWarmup.completed")
-        case .disabled:
-            return String.l10n("toolbar.status.readmePrefetch.disabled")
-        }
-    }
-
     private var isReadmePrefetchCoolingDown: Bool {
         if case .coolingDown = readmePrefetchService.status { return true }
         return false
@@ -799,20 +890,6 @@ private struct AppStatusPanel: View {
         return "globe"
     }
 
-    private var githubStatusIcon: String {
-        if githubStatusMonitor.isChecking { return "arrow.triangle.2.circlepath" }
-        guard let status = githubStatusMonitor.snapshot?.apiRequestsStatus else {
-            return "questionmark.circle"
-        }
-        switch status {
-        case .operational: return "checkmark.circle.fill"
-        case .degradedPerformance, .partialOutage: return "exclamationmark.triangle.fill"
-        case .majorOutage: return "xmark.octagon.fill"
-        case .underMaintenance: return "wrench.and.screwdriver.fill"
-        case .unknown: return "questionmark.circle"
-        }
-    }
-
     private var githubStatusTint: Color {
         if githubStatusMonitor.isChecking { return .accentColor }
         guard let status = githubStatusMonitor.snapshot?.apiRequestsStatus else { return .secondary }
@@ -823,50 +900,6 @@ private struct AppStatusPanel: View {
         case .underMaintenance: return .accentColor
         case .unknown: return .secondary
         }
-    }
-
-    private var githubStatusSubtitle: String {
-        if githubStatusMonitor.isChecking && githubStatusMonitor.snapshot == nil {
-            return String.l10n("toolbar.status.github.checking")
-        }
-        guard let snapshot = githubStatusMonitor.snapshot else {
-            return String.l10n("toolbar.status.github.unavailable")
-        }
-
-        let state = switch snapshot.apiRequestsStatus {
-        case .operational: String.l10n("toolbar.status.github.state.operational")
-        case .degradedPerformance: String.l10n("toolbar.status.github.state.degraded")
-        case .partialOutage: String.l10n("toolbar.status.github.state.partialOutage")
-        case .majorOutage: String.l10n("toolbar.status.github.state.majorOutage")
-        case .underMaintenance: String.l10n("toolbar.status.github.state.maintenance")
-        case .unknown: String.l10n("toolbar.status.github.state.unknown")
-        }
-        let updatedAt = relativePastDate(snapshot.fetchedAt)
-        let summary: String
-        if snapshot.relevantIncidentCount > 0 {
-            summary = String(
-                format: String.l10n("toolbar.status.github.summaryWithIncidentsFormat"),
-                state,
-                snapshot.relevantIncidentCount,
-                updatedAt
-            )
-        } else if snapshot.otherIncidentCount > 0 {
-            summary = String(
-                format: String.l10n("toolbar.status.github.summaryWithOtherIncidentsFormat"),
-                state,
-                snapshot.otherIncidentCount,
-                updatedAt
-            )
-        } else {
-            summary = String(
-                format: String.l10n("toolbar.status.github.summaryFormat"),
-                state,
-                updatedAt
-            )
-        }
-
-        guard githubStatusMonitor.lastRefreshFailed else { return summary }
-        return String(format: String.l10n("toolbar.status.github.staleFormat"), summary)
     }
 
     private var serviceTint: Color {
@@ -911,19 +944,6 @@ private struct AppStatusPanel: View {
         return .secondary
     }
 
-    private var mcpSubtitle: String {
-        let statusText: String
-        switch mcpState {
-        case .running:
-            statusText = String.l10n("toolbar.status.mcp.running")
-        case .failed(let message):
-            statusText = String(format: String.l10n("toolbar.status.mcp.failedFormat"), message)
-        case .stopped:
-            statusText = mcpEnabled ? String.l10n("toolbar.status.mcp.stopped") : String.l10n("toolbar.status.mcp.disabled")
-        }
-        return "\(statusText) · \(mcpEndpointURL)"
-    }
-
     private var browserPluginIcon: String {
         if case .failed = browserPluginState { return "exclamationmark.triangle.fill" }
         if case .running = browserPluginState { return "puzzlepiece.extension.fill" }
@@ -935,23 +955,6 @@ private struct AppStatusPanel: View {
         if case .running = browserPluginState { return .green }
         if case .starting = browserPluginState { return .accentColor }
         return .secondary
-    }
-
-    private var browserPluginSubtitle: String {
-        let statusText: String
-        switch browserPluginState {
-        case .running:
-            statusText = String.l10n("settings.integration.browserPlugin.status.running")
-        case .starting:
-            statusText = String.l10n("settings.integration.browserPlugin.status.starting")
-        case .failed(let failure):
-            statusText = failure.localizedDescription
-        case .stopped:
-            statusText = browserPluginEnabled
-                ? String.l10n("settings.integration.browserPlugin.status.stopped")
-                : String.l10n("toolbar.status.browserPlugin.disabled")
-        }
-        return "\(statusText) · \(browserPluginEndpointURL)"
     }
 
     private var diagnosticIcon: String {

@@ -28,25 +28,6 @@ struct KeyboardShortcutConfiguration: Codable, Equatable, Sendable {
         shift: false
     )
 
-    /// Search Center 本地范围快捷键默认 Shift+Command+F。
-    /// 与 README 页内查找的 Command+F 拆开，避免再按光标所在栏分流。
-    static let regularSearchDefault = KeyboardShortcutConfiguration(
-        key: "f",
-        command: true,
-        option: false,
-        control: false,
-        shift: true
-    )
-
-    /// 拆键位之前常规搜索的出厂默认。仍写在磁盘上的旧值视为未自定义，启动时迁到 `regularSearchDefault`。
-    static let legacyRegularSearchDefault = KeyboardShortcutConfiguration(
-        key: "f",
-        command: true,
-        option: false,
-        control: false,
-        shift: false
-    )
-
     var keyEquivalent: KeyEquivalent {
         KeyEquivalent(Character(key))
     }
@@ -102,7 +83,7 @@ struct KeyboardShortcutConfiguration: Codable, Equatable, Sendable {
 
     /// 在固定键位校验之外，再检查同一设置分组内的其他可配置动作。
     ///
-    /// 这里不把搜索类快捷键并入全局保留集合，因为 `⌘K` / `⌘⇧F` / `⌘F` 本身都允许
+    /// 这里不把搜索类快捷键并入全局保留集合，因为 `⌘K` / `⌘F` 本身都允许
     /// 用户重新分配；只有候选值与当前另一项完全相同时才构成冲突。
     func validationError(
         conflictingWith configuredShortcuts: Set<KeyboardShortcutConfiguration>
@@ -152,7 +133,7 @@ enum StarcatShortcutCatalog {
     )
 
     /// 只有不可由用户改写的系统 / 上下文语义留在保留集合。
-    /// 六个可配置动作通过设置页的完整冲突矩阵互斥，不能把它们放进这里，
+    /// 五个可配置动作通过设置页的完整冲突矩阵互斥，不能把它们放进这里，
     /// 否则动作自己的默认值也会被录制器判定为非法。
     static let fixedReserved: Set<KeyboardShortcutConfiguration> = [
         .init(key: ",", command: true, option: false, control: false, shift: false),

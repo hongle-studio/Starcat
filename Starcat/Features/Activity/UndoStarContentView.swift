@@ -280,8 +280,7 @@ struct UndoStarContentView: View {
                         card: record.asCardData(isStarring: isStarring),
                         isSelected: store.isActive
                             ? store.contains(ghRepoId: record.ghRepoId)
-                            : (selectedRecord?.ghRepoId == record.ghRepoId),
-                        showStarredCheckmark: false
+                            : (selectedRecord?.ghRepoId == record.ghRepoId)
                     )
                 }
                 .buttonStyle(.plain)

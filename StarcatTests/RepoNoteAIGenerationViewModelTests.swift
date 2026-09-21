@@ -61,6 +61,18 @@ struct RepoNoteAIGenerationViewModelTests {
         #expect(readme.downloadCount == 0)
     }
 
+    @Test("本地重复中止显示原因且不进入笔记确认")
+    func localRepetitionFailsWithVisibleReason() async throws {
+        let viewModel = RepoNoteAIGenerationViewModel(
+            readmeProvider: RepoNoteReadmeStub(cached: "# Demo"),
+            aiService: RepoNoteDraftStub(result: "partial", generationError: LocalAIError.repetitiveOutput))
+        viewModel.start(repo: Self.repo, existingNote: "original note")
+        try await waitUntil { viewModel.phase == .failed }
+        #expect(viewModel.errorDetail == LocalAIError.repetitiveOutput.errorDescription)
+        #expect(viewModel.stepStates[.generating] == .failed(messageKey: "repo.notes.ai.error.generic"))
+        #expect(!viewModel.canApplyDraft)
+    }
+
     @Test("未知底层错误不进入用户可见详情")
     func unknownErrorIsRedacted() async throws {
         let viewModel = RepoNoteAIGenerationViewModel(
@@ -339,6 +351,7 @@ private final class RepoNoteReadmeStub: RepoNoteAIReadmeProviding {
 private final class RepoNoteDraftStub: RepoNoteAIDraftGenerating {
     let result: String
     let readinessError: Error?
+    let generationError: Error?
     let suspendsUntilCancelled: Bool
     private(set) var receivedReadme: String?
     private(set) var receivedNote: String?
@@ -346,10 +359,12 @@ private final class RepoNoteDraftStub: RepoNoteAIDraftGenerating {
     init(
         result: String,
         readinessError: Error? = nil,
+        generationError: Error? = nil,
         suspendsUntilCancelled: Bool = false
     ) {
         self.result = result
         self.readinessError = readinessError
+        self.generationError = generationError
         self.suspendsUntilCancelled = suspendsUntilCancelled
     }
 
@@ -368,6 +383,7 @@ private final class RepoNoteDraftStub: RepoNoteAIDraftGenerating {
             try await Task.sleep(for: .seconds(60))
         }
         onDelta(result)
+        if let generationError { throw generationError }
         return result
     }
 }

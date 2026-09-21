@@ -317,7 +317,7 @@ final class BatchAIQueueService {
             return false
         }
         do {
-            try entitlementGate?.requirePro(.batchAI)
+            try entitlementGate?.requirePro(.batchAI, usesLocalOnly: AppSettings.shared.isGenerationTasksResolvedToLocalAI)
         } catch {
             // 批量整理可能由 UI 或自动调度器触发。这里做底层硬门控，避免绕过付费墙后
             // 仍能直接启动队列；UI 入口会把同一个错误转换成 ProPaywallSheet。

@@ -277,7 +277,8 @@ struct ReadmeStarHistoryPreviewTests {
             snapshot: snapshot,
             model: model,
             repo: Self.repo(),
-            locale: Locale(identifier: "zh-Hans")
+            locale: Locale(identifier: "zh-Hans"),
+            context: ReadmeStarHistoryHTMLRenderer.ReadmeStarHistoryRenderContext.prepare(language: Self.repo().language)
         ))
 
         #expect(!html.contains("GRDB.SQL"))
@@ -315,7 +316,8 @@ struct ReadmeStarHistoryPreviewTests {
             model: model,
             repo: Self.repo(),
             locale: Locale(identifier: "en"),
-            avatarDataURI: "data:image/png;base64,Y2FjaGVk"
+            avatarDataURI: "data:image/png;base64,Y2FjaGVk",
+            context: ReadmeStarHistoryHTMLRenderer.ReadmeStarHistoryRenderContext.prepare(language: Self.repo().language)
         ))
 
         #expect(html.contains(#"class="starcat-star-history-card""#))
@@ -335,6 +337,143 @@ struct ReadmeStarHistoryPreviewTests {
         #expect(html.contains(">1.2K</text>"))
         #expect(!html.contains(">1,165</text>"))
         #expect(html.components(separatedBy: "starcat-star-history-axis-y").count - 1 == 5)
+    }
+
+    // MARK: - 身份键 / 悬停序列 / 渲染指纹
+
+    @Test("身份键与 id 同义：同日同源相等，同日不同源不等")
+    func pointKeyMatchesIdentifierEquivalence() throws {
+        let day = try #require(StarHistoryDateCodec.date(from: "2026-09-05"))
+        let morning = StarHistoryPoint(date: day, count: 10, source: .githubHistory)
+        // 同一天的不同时刻必须落在同一个键上：日序号按 UTC 日边界取整。
+        let afternoon = StarHistoryPoint(date: day.addingTimeInterval(12 * 3_600), count: 10, source: .githubHistory)
+        let nextDay = StarHistoryPoint(date: day.addingTimeInterval(86_400), count: 10, source: .githubHistory)
+        // 来源交接处同一天会同时存在两个点，键必须区分它们。
+        let legacy = StarHistoryPoint(date: day, count: 10, source: .ghArchive)
+
+        #expect(morning.key == afternoon.key)
+        #expect(morning.dayOrdinal == afternoon.dayOrdinal)
+        #expect(morning.id == afternoon.id)
+        #expect(morning.key != nextDay.key)
+        #expect(morning.key != legacy.key)
+        #expect(morning.id != legacy.id)
+    }
+
+    @Test("长历史把悬停序列抽稀到 400 点以内，且标注索引落在同一份数组里")
+    func longHistoryHoverSeriesIsBoundedAndConsistent() async throws {
+        let start = try #require(StarHistoryDateCodec.date(from: "2015-01-01"))
+        let end = try #require(StarHistoryDateCodec.date(from: "2026-09-06"))
+        // 约 4270 天 ≈ 610 周，golang/go 量级：改动前这里会整份塞进 data-points。
+        let days = Int(end.timeIntervalSince(start) / 86_400)
+        let points = (0...days).map { index in
+            StarHistoryPoint(date: start.addingTimeInterval(Double(index) * 86_400), count: index * 3)
+        }
+        var repo = Self.repo()
+        repo.starsCount = try #require(points.last).count
+        let snapshot = StarHistorySnapshot(range: .all, points: points, remoteState: .fresh,
+                                           coverageStart: start, updatedAt: end)
+        let model = StarHistoryChartRenderModel(points: points, range: .all, repositoryCreatedAt: start)
+        let html = try #require(ReadmeStarHistoryHTMLRenderer.render(
+            snapshot: snapshot, model: model, repo: repo,
+            locale: Locale(identifier: "en"), now: end,
+            context: ReadmeStarHistoryHTMLRenderer.ReadmeStarHistoryRenderContext.prepare(language: repo.language)
+        ))
+
+        let hover = try Self.series(html, attribute: "data-points")
+        let drawn = try Self.series(html, attribute: "data-rendered")
+        #expect(hover.count <= ReadmeStarHistoryHTMLRenderer.hoverPointLimit)
+        // 不能退化成折线那套 ≤90 点：悬停要能停在具体某一天。
+        #expect(hover.count > 90)
+        #expect(drawn.count <= 90)
+        #expect(hover.first?[1] == Double(try #require(points.first).count))
+        #expect(hover.last?[1] == Double(try #require(points.last).count))
+
+        // data-annotations 的 index 是 data-points 的下标；不同源就会标到别的日子上。
+        let annotations = try Self.annotations(html)
+        #expect(!annotations.isEmpty)
+        for annotation in annotations {
+            let index = try #require(annotation["index"] as? Int)
+            #expect(index >= 0)
+            #expect(index < hover.count)
+        }
+        let current = try #require(annotations.first { $0["kind"] as? String == "current" })
+        #expect(current["index"] as? Int == hover.count - 1)
+    }
+
+    @Test("渲染指纹对每个会影响卡片的输入都敏感")
+    func renderFingerprintTracksEveryRenderedInput() async throws {
+        let snapshot = Self.snapshot(state: .fresh)
+        let other = Self.snapshot(points: [
+            StarHistoryPoint(date: StarHistoryDateCodec.date(from: "2020-02-01")!, count: 11),
+            StarHistoryPoint(date: StarHistoryDateCodec.date(from: "2026-09-05")!, count: 201)
+        ], state: .fresh)
+        // 同一个模型实例复用两次构造：避免 now 依赖带来的比较抖动（xDomain 可能取 now）。
+        let defaultModel = StarHistoryChartRenderModel(points: snapshot.points, range: .all, repositoryCreatedAt: nil)
+        let repo = Self.repo()
+
+        func fingerprint(
+            snapshot: StarHistorySnapshot = snapshot,
+            repo: Repo = repo,
+            model: StarHistoryChartRenderModel? = nil,
+            avatar: String? = nil,
+            locale: String = "en",
+            nowDay: Int = 20_000
+        ) -> ReadmeStarHistoryViewModel.RenderFingerprint {
+            ReadmeStarHistoryViewModel.RenderFingerprint(
+                snapshot: snapshot,
+                repo: repo,
+                model: model ?? defaultModel,
+                avatarDataURI: avatar,
+                localeIdentifier: locale,
+                nowDay: nowDay
+            )
+        }
+
+        #expect(fingerprint() == fingerprint())
+        // 描述 / Topics / 星标数：手写字段清单最容易漏掉这几项，整值比较不会。
+        var described = repo
+        described.description = "changed"
+        #expect(fingerprint() != fingerprint(repo: described))
+        var starred = repo
+        starred.starsCount += 1
+        #expect(fingerprint() != fingerprint(repo: starred))
+        var topicsChanged = repo
+        topicsChanged.topics = #"[\"a\",\"b\"]"#
+        #expect(fingerprint() != fingerprint(repo: topicsChanged))
+        // 头像晚到、语言切换、跨天（年龄/窗口天数变化）。
+        #expect(fingerprint() != fingerprint(avatar: "data:image/png;base64,YQ=="))
+        #expect(fingerprint() != fingerprint(locale: "zh-Hans"))
+        #expect(fingerprint() != fingerprint(nowDay: 20_001))
+        // 历史数据本身。
+        #expect(fingerprint() != fingerprint(snapshot: other))
+        // 绘制序列（模型）也算输入：它决定折线。
+        #expect(fingerprint() != fingerprint(model: StarHistoryChartRenderModel(points: snapshot.points, range: .threeMonths, repositoryCreatedAt: nil)))
+    }
+
+    @Test("切到不可见仓库再切回来，卡片必须重新生成")
+    func cardReappearsAfterSwitchingAway() async {
+        let snapshot = Self.snapshot(state: .cached)
+        let repository = ReadmeStarHistoryRepositoryStub(cachedSnapshot: snapshot, refreshSnapshot: snapshot)
+        let visibleRepoID: Int64 = 42
+        let viewModel = ReadmeStarHistoryViewModel(
+            repository: repository,
+            projectVisibilityProvider: { repoID in repoID == visibleRepoID ? .public : .private }
+        )
+        let visible = Self.repo()
+        var hidden = Repo.makeMinimal(owner: "octo", name: "hidden")
+        hidden.id = 99
+        hidden.starsCount = 200
+
+        await viewModel.loadIfNeeded(repo: visible, databaseScopeRevision: 1, locale: Locale(identifier: "en"))
+        #expect(viewModel.renderState.html != nil)
+
+        // 私有仓库不展示并清空 DOM；此时指纹若没跟着失效，
+        // 切回可见仓库时会因为"输入没变"而短路，卡片就再也不出现。
+        await viewModel.loadIfNeeded(repo: hidden, databaseScopeRevision: 1, locale: Locale(identifier: "en"))
+        #expect(viewModel.renderState.html == nil)
+
+        await viewModel.loadIfNeeded(repo: visible, databaseScopeRevision: 1, locale: Locale(identifier: "en"))
+        #expect(viewModel.renderState.html != nil)
     }
 
     private nonisolated static func repo() -> Repo {
@@ -459,7 +598,10 @@ struct ReadmeStarHistoryPreviewTests {
         repo.topics = #"["ai", "<img src=x onerror=bad>", "research", "extra"]"#
         let snapshot = Self.snapshot(state: .cached)
         let model = StarHistoryChartRenderModel(points: snapshot.points, range: .all, repositoryCreatedAt: nil)
-        let html = try #require(ReadmeStarHistoryHTMLRenderer.render(snapshot: snapshot, model: model, repo: repo, locale: Locale(identifier: "en")))
+        let html = try #require(ReadmeStarHistoryHTMLRenderer.render(
+            snapshot: snapshot, model: model, repo: repo, locale: Locale(identifier: "en"),
+            context: ReadmeStarHistoryHTMLRenderer.ReadmeStarHistoryRenderContext.prepare(language: Self.repo().language)
+        ))
         #expect(html.contains("<strong>50.5K</strong>"))
         #expect(!html.contains("<script>"))
         #expect(!html.contains("<img src=x"))
@@ -488,6 +630,29 @@ struct ReadmeStarHistoryPreviewTests {
                 fetchedAt: StarHistoryDateCodec.date(from: "2026-09-05")
             )
         ]
+    }
+
+    /// 从卡片 HTML 的属性里取出 JSON 序列（[[epochMillis, count], …]）。
+    private nonisolated static func series(_ html: String, attribute: String) throws -> [[Double]] {
+        let value = try attributeValue(html, attribute: attribute)
+        return try #require(try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [[Double]])
+    }
+
+    /// 标注数组含字符串键值，属性里被 HTML 转义过，解析前要还原。
+    private nonisolated static func annotations(_ html: String) throws -> [[String: Any]] {
+        let value = try attributeValue(html, attribute: "data-annotations")
+        let unescaped = value
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
+        return try #require(try JSONSerialization.jsonObject(with: Data(unescaped.utf8)) as? [[String: Any]])
+    }
+
+    private nonisolated static func attributeValue(_ html: String, attribute: String) throws -> String {
+        let prefix = try #require(html.range(of: attribute + "=\""))
+        return String(try #require(html[prefix.upperBound...].split(separator: "\"", maxSplits: 1).first))
     }
 
     private nonisolated static func snapshot(

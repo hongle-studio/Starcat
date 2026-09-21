@@ -7,7 +7,8 @@
 //  设计意图：
 //  - Discovery 列表来自公共探索后端，详情页不直接写入本地 repos 主表；
 //  - README 渲染复用 owner/repo 维度的公共缓存链路，与 Trending 语义一致；
-//  - Star 行为仍复用 StarActionService，成功后由 GitHub 真值写入本地数据库。
+//  - Star 行为仍复用 StarActionService，成功后由 GitHub 真值写入本地数据库；
+//  - 已 star 时详情 body 走 `RepoDetailInsightsHost`，与星标模块同一套 README / 洞察切换。
 //
 
 import SwiftUI
@@ -160,28 +161,32 @@ private struct DiscoveryReadmeContent: View {
     @Environment(AuthSession.self) private var authSession
 
     var body: some View {
-        ReadmeStateView(
-            state: readmeVM.state,
-            contentScope: .trending(owner: repo.owner, repo: repo.name),
-            baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
-            onScrollReportChange: onScrollReport,
-            // Discovery repo 是公共探索快照，README 缓存必须按 owner/repo 走 trending 路径。
-            // 翻译缓存已经是磁盘 owner/repo 维度，和未 star 的公开 repo 语义一致。
-            translationControl: repo.id != 0 ? ReadmeTranslationControl(
-                repo: repo,
-                translationVM: translationVM,
-                settings: settings
-            ) : nil
-        ) {
-            readmeVM.loadTrending(
-                owner: repo.owner,
-                repo: repo.name,
-                isLoggedIn: authSession.state.isAuthenticated,
-                forceRefresh: true
-            )
-        } onLogin: {
-            authSession.requestLoginSheet()
+        // 已 star 时与星标详情共用 README / 洞察切换；README 仍走探索的 owner/repo 缓存。
+        RepoDetailInsightsHost(repo: repo, onScrollReport: onScrollReport) {
+            ReadmeStateView(
+                state: readmeVM.state,
+                contentScope: .trending(owner: repo.owner, repo: repo.name),
+                baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
+                onScrollReportChange: onScrollReport,
+                // Discovery repo 是公共探索快照，README 缓存必须按 owner/repo 走 trending 路径。
+                // 翻译缓存已经是磁盘 owner/repo 维度，和未 star 的公开 repo 语义一致。
+                translationControl: repo.id != 0 ? ReadmeTranslationControl(
+                    repo: repo,
+                    translationVM: translationVM,
+                    settings: settings
+                ) : nil,
+                starHistoryRepo: repo
+            ) {
+                readmeVM.loadTrending(
+                    owner: repo.owner,
+                    repo: repo.name,
+                    isLoggedIn: authSession.state.isAuthenticated,
+                    forceRefresh: true
+                )
+            } onLogin: {
+                authSession.requestLoginSheet()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

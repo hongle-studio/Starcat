@@ -539,7 +539,7 @@ final class AppDependencies {
         settings.aiProviderProfiles
             .filter(\.isVerifiedConfiguration)
             .flatMap(\.models)
-            .filter { $0.isEnabled && $0.capability != .embedding }
+            .filter { $0.isEnabled && $0.capability != .embedding && $0.capability != .rerank }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
@@ -551,7 +551,7 @@ final class AppDependencies {
     ) throws -> KnowledgeRAGService {
         // 工作台可在非 Pro 状态下打开以查看历史和索引覆盖，但创建服务就意味着将发起模型调用，
         // 因此必须在装配边界再校验一次，避免未来新增调用方绕过 ViewModel 门禁。
-        try entitlementGate.requirePro(.knowledgeRAG)
+        try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         let configuredBackend = settings.ragInferenceBackend
         // App Store 与 Direct 可能读到同一份迁移偏好。不可用的 CLI 偏好必须在装配时
         // 回退 API，既不启动外部进程，也不能让 App Store 的 RAG 因旧值整体失效。
@@ -674,7 +674,7 @@ final class AppDependencies {
     /// Agent 只复用 RAG 检索层，不构造 Planner / Generator，也不装配 GitHub 或 Web
     /// 临时上下文 Provider。范围由 `AgentRunContext` 冻结，执行期无法通过 tool 参数扩权。
     func makeAgentKnowledgeCapabilityAdapter(selectedModelID: String?) throws -> AgentKnowledgeCapabilityAdapter {
-        try entitlementGate.requirePro(.knowledgeRAG)
+        try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         let chatSelection = try resolveRAGChatSelection(selectedModelID: selectedModelID)
         let embeddingSelection = try? settings.resolveEmbeddingSelection()
         let retriever = try makeKnowledgeRAGRetriever(
@@ -765,6 +765,10 @@ final class AppDependencies {
                 reranker = HuggingFaceTEIRAGReranker(configuration: rerankConfiguration, apiKey: apiKey)
             case .cohereCompatible:
                 reranker = CohereCompatibleRAGReranker(configuration: rerankConfiguration, apiKey: apiKey)
+            case .localMLX:
+                reranker = LocalMLXRAGReranker(
+                    configuration: rerankConfiguration,
+                    model: settings.selectedLocalAIModel(for: .reranker))
             }
         } else {
             reranker = nil
@@ -792,11 +796,13 @@ final class AppDependencies {
     private func resolveRAGChatSelection(selectedModelID: String?) throws -> RAGModelSelection {
         if let selectedModelID {
             for profile in settings.aiProviderProfiles where profile.isEnabled {
-                if let model = profile.models.first(where: { $0.id == selectedModelID && $0.isEnabled && $0.capability != .embedding }) {
+                if let model = profile.models.first(where: {
+                    $0.id == selectedModelID && $0.isEnabled && $0.capability != .embedding && $0.capability != .rerank
+                }) {
                     return RAGModelSelection(
                         profile: profile,
                         modelName: model.name,
-                        parameters: model.parameters ?? settings.effectiveParameters(for: settings.aiChatTask)
+                        parameters: model.effectiveParameters
                     )
                 }
             }
@@ -805,6 +811,7 @@ final class AppDependencies {
     }
 
     private func resolveRAGTaskSelection(task: AIModelTaskConfiguration) throws -> RAGModelSelection {
+        let task = settings.resolvedAITask(task)
         guard let profile = settings.aiProviderProfiles.first(where: { $0.id == task.providerID && $0.isEnabled }) else {
             throw SemanticSearchError.missingAPIKey
         }
@@ -813,7 +820,7 @@ final class AppDependencies {
         return RAGModelSelection(
             profile: profile,
             modelName: modelName,
-            parameters: settings.effectiveParameters(for: task)
+            parameters: task.parameters
         )
     }
 
@@ -830,7 +837,7 @@ final class AppDependencies {
         guard !apiKey.isEmpty || profile.provider.allowsEmptyAPIKey else {
             throw missingAPIKeyError
         }
-        return try OpenAIClient(configuration: AIClientConfiguration(
+        return try AIClientFactory.make(configuration: AIClientConfiguration(
             providerID: profile.id,
             provider: profile.provider,
             apiKey: apiKey,
@@ -943,6 +950,9 @@ final class AppDependencies {
         self.agentRunRepository = GRDBAgentRunRepository(database: db)
         let settings = AppSettings.shared
         self.settings = settings
+        // 本地 AI：启动时扫描磁盘安装状态，seed / 刷新内置 profile（模型→任务配置的桥）。
+        // 内部已做 TestEnvironment 门控：测试期不扫描、不初始化 MLX。
+        LocalAIModelManager.shared.syncBuiltInProfile()
         let repositorySpotlightService = RepositorySpotlightService(database: db, settings: settings)
         self.repositorySpotlightService = repositorySpotlightService
         repositorySpotlightService.registerAppIntentDependency()

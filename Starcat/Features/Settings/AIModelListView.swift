@@ -12,8 +12,9 @@
 //  关键约束：
 //  - 模型能力不是所有 OpenAI-compatible 服务都会返回统一字段，因此能力 Picker 是用户可修正项。
 //  - 组件只负责展示和绑定，不直接修改 AppSettings；实际写入由父视图提供 Binding，便于测试和复用。
-//  - 滚动：用固定高度 AppKit 宿主包 SwiftUI `ScrollView + LazyVStack`。Form 只看到固定高度 NSView，
-//    不会对模型行跑 measureEstimates（避免 hang）；宿主吃掉纵向滚轮，避免整页跟着滚。
+//  - 滚动：用固定高度 AppKit 宿主包 SwiftUI `ScrollView + LazyVStack`。Form 只看到固定高度 NSView。
+//    内层 NSHostingView 必须 `sizingOptions = []`，否则仍会按内容理想高度被外层 Form 量测。
+//    宿主吃掉纵向滚轮，避免整页跟着滚。
 //  - 分页：内存里已有全量目录，但 UI 按页挂载（`automaticListPagination`），展开时不一次构建数百行。
 //
 
@@ -36,6 +37,8 @@ struct AIModelListView: View {
     @State private var query = ""
     /// 当前已挂载到列表的前缀长度（对 `filteredModels` 切片）。
     @State private var loadedCount = AIModelListView.pageSize
+    /// 分页 in-flight：避免 Lazy 失效时所有出现行同时 `loadMore`，一帧挂上整表。
+    @State private var isPaging = false
     /// 当前正在编辑参数的模型；nil 表示无 popover 显示。
     @State private var popoverModel: AIModelDescriptor?
 
@@ -44,6 +47,7 @@ struct AIModelListView: View {
         guard !trimmed.isEmpty else { return profile.models }
         return profile.models.filter { model in
             model.name.localizedCaseInsensitiveContains(trimmed)
+                || AnthropicModelCatalog.displayName(forAPIID: model.name).localizedCaseInsensitiveContains(trimmed)
                 || (model.ownedBy?.localizedCaseInsensitiveContains(trimmed) ?? false)
                 || model.capability.displayName.localizedCaseInsensitiveContains(trimmed)
         }
@@ -126,11 +130,6 @@ struct AIModelListView: View {
                                 isEnabled: enabledBinding(model),
                                 capability: capabilityBinding(model),
                                 isCustomized: modelHasCustomizedParameters(model),
-                                popoverItem: popoverBinding(model: model),
-                                parameters: nonNullParametersBinding(for: model),
-                                onResetParameters: {
-                                    parametersBinding(model).wrappedValue = nil
-                                },
                                 onOpenParameters: {
                                     popoverModel = model
                                 }
@@ -140,7 +139,7 @@ struct AIModelListView: View {
                                 visibleItemCount: displayedModels.count,
                                 loadedItemCount: loadedCount,
                                 hasMore: hasMoreModels,
-                                isLoading: false,
+                                isLoading: isPaging,
                                 identity: paginationIdentity
                             ) {
                                 loadMoreModels()
@@ -157,7 +156,7 @@ struct AIModelListView: View {
                     visibleItemCount: displayedModels.count,
                     loadedItemCount: loadedCount,
                     hasMore: hasMoreModels,
-                    isLoading: false,
+                    isLoading: isPaging,
                     identity: paginationIdentity
                 ) {
                     loadMoreModels()
@@ -172,6 +171,17 @@ struct AIModelListView: View {
                 .stroke(.quaternary)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .popover(item: $popoverModel, arrowEdge: .trailing) { focused in
+            AIModelParametersPopover(
+                model: focused,
+                parameters: nonNullParametersBinding(for: focused),
+                hasOverride: modelHasCustomizedParameters(focused),
+                onReset: {
+                    parametersBinding(focused).wrappedValue = nil
+                }
+            )
+            .appLocaleEnvironment()
+        }
     }
 
     /// HOM-126 follow-up：行数 ≤ 4 时贴合内容；超过 4 时锁定高度并内部滚动。
@@ -183,12 +193,18 @@ struct AIModelListView: View {
     }
 
     private func syncLoadedCountToFilter() {
+        isPaging = false
         loadedCount = min(Self.pageSize, filteredModels.count)
     }
 
     private func loadMoreModels() {
-        guard hasMoreModels else { return }
+        guard hasMoreModels, !isPaging else { return }
+        isPaging = true
         loadedCount = min(loadedCount + Self.pageSize, filteredModels.count)
+        // 等这一页挂上后再允许下一次预取，避免 Form 量测把全部行都当成 onAppear。
+        Task { @MainActor in
+            isPaging = false
+        }
     }
 
     private func modelHasCustomizedParameters(_ model: AIModelDescriptor) -> Bool {
@@ -196,21 +212,12 @@ struct AIModelListView: View {
         return !parameters.isEffectivelyDefault(for: model.capability)
     }
 
-    private func popoverBinding(model: AIModelDescriptor) -> Binding<AIModelDescriptor?> {
-        Binding(
-            get: { popoverModel?.id == model.id ? popoverModel : nil },
-            set: { newValue in
-                popoverModel = newValue
-            }
-        )
-    }
-
     private func nonNullParametersBinding(for model: AIModelDescriptor) -> Binding<AIModelParameters> {
         let nullable = parametersBinding(model)
         return Binding(
-            get: { nullable.wrappedValue ?? AIModelParameters.defaults(for: model.capability) },
+            get: { nullable.wrappedValue ?? model.defaultParameters },
             set: { newValue in
-                if newValue.isEffectivelyDefault(for: model.capability) {
+                if newValue.isEffectivelyEqual(to: model.defaultParameters) {
                     if nullable.wrappedValue != nil {
                         nullable.wrappedValue = nil
                     }
@@ -260,11 +267,16 @@ private struct AIModelFixedHeightHost<Content: View>: NSViewRepresentable {
         func attach(_ view: Content, to container: AIModelFixedHeightView) {
             let root = AnyView(view)
             if let host {
+                host.sizingOptions = []
                 host.rootView = root
                 return
             }
             let created = NSHostingView(rootView: root)
             created.translatesAutoresizingMaskIntoConstraints = false
+            // 禁止宿主按 SwiftUI 内容理想高度反向协商尺寸。默认 intrinsicContentSize
+            // 会让外层 Form 对内层 ScrollView+LazyVStack 跑 unbounded sizeThatFits，
+            // 滚动分页后主线程卡在布局（见 2026-09-14 Direct 采样）。
+            created.sizingOptions = []
             container.addSubview(created)
             NSLayoutConstraint.activate([
                 created.topAnchor.constraint(equalTo: container.topAnchor),
@@ -353,16 +365,13 @@ private struct AIModelListRow: View {
     @Binding var isEnabled: Bool
     @Binding var capability: AIModelCapability
     let isCustomized: Bool
-    @Binding var popoverItem: AIModelDescriptor?
-    @Binding var parameters: AIModelParameters
-    let onResetParameters: () -> Void
     let onOpenParameters: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             Toggle(isOn: $isEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.name)
+                    Text(AnthropicModelCatalog.displayName(forAPIID: model.name))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if let ownedBy = model.ownedBy, !ownedBy.isEmpty {
@@ -377,9 +386,10 @@ private struct AIModelListRow: View {
 
             Spacer(minLength: 8)
 
+            // 不用 Label+SF Symbol：大目录滚动时每行解析一套 glyph，会把主线程拖进 CUICatalog。
             Picker("", selection: $capability) {
                 ForEach(AIModelCapability.allCases) { item in
-                    Label(item.displayName, systemImage: item.systemImage)
+                    Text(item.displayName)
                         .tag(item)
                 }
             }
@@ -394,15 +404,6 @@ private struct AIModelListRow: View {
             .buttonStyle(.plain)
             .focusEffectDisabled()
             .help("settings.ai.modelList.parametersHelp")
-            .popover(item: $popoverItem, arrowEdge: .trailing) { focused in
-                AIModelParametersPopover(
-                    model: focused,
-                    parameters: $parameters,
-                    hasOverride: isCustomized,
-                    onReset: onResetParameters
-                )
-                .appLocaleEnvironment()
-            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)

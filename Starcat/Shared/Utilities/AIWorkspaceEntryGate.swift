@@ -50,12 +50,16 @@ enum AIWorkspaceEntryGate {
     ///
     /// 这里故意不读取 API Key：Provider 已验证且用户为对话任务选定有效模型，才是
     /// Settings 所表达的“可用对话配置”；本地 Provider 是否需要 Key 由其自身配置处理。
+    ///
+    /// 本地 AI 免费（dong4j 2026-09-12）：对话任务解析到 `.localAI` 时跳过 Pro 判定，
+    /// 直接进入模型配置检查；远程 provider 行为不变。
     static func access(
         isProUser: Bool,
+        usesLocalChatModel: Bool = false,
         hasConfiguredChatModel: Bool,
         workspace: AIWorkspaceKind
     ) -> AIWorkspaceEntryAccess {
-        guard isProUser else { return .requiresPro(workspace.proFeature) }
+        guard isProUser || usesLocalChatModel else { return .requiresPro(workspace.proFeature) }
         guard hasConfiguredChatModel else { return .requiresChatModel }
         return .allowed
     }
@@ -67,6 +71,7 @@ enum AIWorkspaceEntryGate {
     ) -> Bool {
         switch access(
             isProUser: dependencies.entitlementGate.isProUser,
+            usesLocalChatModel: dependencies.settings.isChatTaskResolvedToLocalAI,
             hasConfiguredChatModel: dependencies.settings.hasConfiguredChatModel,
             workspace: workspace
         ) {
