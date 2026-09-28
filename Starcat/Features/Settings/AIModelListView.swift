@@ -318,7 +318,11 @@ private final class AIModelFixedHeightView: NSView {
     }
 
     deinit {
-        tearDownScrollMonitor()
+        // 语言模式 5 下 deinit 无法标注 @MainActor；NSView 只会在主线程释放，
+        // 滚轮监视器的拆除用 assumeIsolated 收口回主隔离域。
+        MainActor.assumeIsolated {
+            tearDownScrollMonitor()
+        }
     }
 
     private func rebuildScrollMonitor() {

@@ -1614,7 +1614,9 @@ struct RepositoryInsightsView: View {
             model: starHistoryViewModel.chartRenderModel,
             interactionEnabled: StarHistoryShareCaptureChrome.showsChartSelection(isShareCapture),
             accessibilityValue: starChartAccessibilityValue,
-            height: Self.chartPlotHeight
+            height: Self.chartPlotHeight,
+            // 导出截图必须直接得到完整终态曲线，不能截到半绘制的入场动画中间帧。
+            animateEntrance: !isShareCapture
         )
     }
 

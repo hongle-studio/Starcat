@@ -4,6 +4,9 @@
 //
 //  README 历史卡片的主题样式与有界交互。脚本只由 App 的 WKUserScript 注入；
 //  ResizeObserver 只响应图表、标签和时间线尺寸变化，滚动不重建图表。卸载时释放 observer。
+//  入场「描边生长」动画等卡片首次进入视口才播放（IntersectionObserver）；数据早到
+//  只会记下未兑现的「入场债」并转移给替换卡，不会把动画消耗在屏幕外。总星标数字
+//  随曲线同帧从 0 数到当前总数，所有退出路径都恢复 Swift 渲染原文。
 //
 
 import Foundation
@@ -281,8 +284,11 @@ enum ReadmeStarHistoryDOM {
     """
 
     /// 在 README 文档自己的闭包中声明，避免暴露给远端内容新的 native bridge。
+    /// `animate` 仅在本仓首张正式卡片入场（且 Swift 侧确认未开 Reduce Motion）时为 true。
+    /// 曲线动画真正播放要等卡片首次进入视口；首卡未及可见就被刷新替换时，入场债
+    /// 记在 host 元素上转移给替换卡，保证用户第一次看到卡片时曲线才生长。
     static let script = """
-    function configureStarHistory(host) {
+    function configureStarHistory(host, animate) {
         var tags = host.querySelector('.starcat-star-history-tags');
         var languageChip = tags && tags.querySelector('.starcat-star-history-tag-language');
         var topicChips = tags ? Array.from(tags.querySelectorAll('.starcat-star-history-tag-topic')) : [];
@@ -354,6 +360,94 @@ enum ReadmeStarHistoryDOM {
         var start = points[0][0], end = points[points.length - 1][0], duration = Math.max(1, end - start);
         var width = 0, height = 0, left = 44, right = 12, top = 64, bottom = 30;
         var selected = points.length - 1, tooltipIndex = -1, interacting = false;
+        // ---- 入场「描边生长」动画（详见 playReveal）----
+        // 样式全部走内联，结束后由 finishReveal 清空；任何残留的 dasharray 都会在
+        // 后续 layout() 重写 points 后把新几何裁短，因此所有退出路径都必须清干净。
+        var revealActive = false, revealWidth = 0, revealHeight = 0;
+        var revealObserver = null;
+        var revealLine = svg.querySelector('.starcat-star-history-line');
+        var revealArea = svg.querySelector('.starcat-star-history-area');
+        // 总星标数字与曲线同帧从 0 数到当前总数；data-count 是 Swift 渲染的原始数值
+        // （仓库元数据，不是历史曲线最后读数），结束态恢复 Swift 原文保证格式一致。
+        var revealTotal = host.querySelector('.starcat-star-history-current-value strong');
+        var revealBadge = host.querySelector('.starcat-star-history-current');
+        var revealTotalTarget = revealBadge ? Number(revealBadge.getAttribute('data-count')) : NaN;
+        var revealTotalText = null;
+        function finishReveal() {
+            if (!revealActive) { return; }
+            revealActive = false;
+            revealLine.style.transition = ''; revealLine.style.strokeDasharray = ''; revealLine.style.strokeDashoffset = '';
+            revealArea.style.transition = ''; revealArea.style.opacity = '';
+            markerGroup.style.transition = ''; markerGroup.style.opacity = '';
+            callouts.style.transition = ''; callouts.style.opacity = '';
+            // 所有退出路径（自然结束 / resize 打断 / 超时兜底）都把数字钉回 Swift 原文，
+            // rAF 停滞时数字不会冻结在中间值。
+            if (revealTotal && revealTotalText !== null) { revealTotal.textContent = revealTotalText; }
+        }
+        function playReveal() {
+            // 折线用 dasharray = 总长度 + dashoffset 从总长度过渡到 0，实现「逐段描出」；
+            // 面积、事件标记与标注跟随曲线进度延迟淡入。坐标轴与网格线保持静态。
+            var length = revealLine.getTotalLength();
+            if (!(length > 0)) { return; }
+            revealActive = true;
+            // 动画真正播放过才算兑现「入场债」；否则替换卡要继续等待首次可见。
+            host.starcatHistoryRevealOwed = false;
+            revealWidth = width; revealHeight = height;
+            revealLine.style.transition = 'none';
+            revealLine.style.strokeDasharray = String(length);
+            revealLine.style.strokeDashoffset = String(length);
+            revealArea.style.opacity = '0';
+            markerGroup.style.opacity = '0';
+            callouts.style.opacity = '0';
+            // 强制同步 reflow 让「完全隐藏」初值先生效，再挂过渡释放，避免起始帧闪完整曲线。
+            void revealLine.getBoundingClientRect();
+            revealLine.style.transition = 'stroke-dashoffset 1.1s cubic-bezier(.4, 0, .2, 1)';
+            revealLine.style.strokeDashoffset = '0';
+            revealArea.style.transition = 'opacity .7s ease .35s';
+            revealArea.style.opacity = '1';
+            markerGroup.style.transition = 'opacity .4s ease .75s';
+            markerGroup.style.opacity = '1';
+            callouts.style.transition = 'opacity .4s ease .75s';
+            callouts.style.opacity = '1';
+            revealLine.addEventListener('transitionend', function(event) {
+                if (event.propertyName === 'stroke-dashoffset') { finishReveal(); }
+            }, { once: true });
+            // 离屏 WebView 的渲染时钟可能停滞导致 transitionend 不触发；超时兜底收尾。
+            setTimeout(finishReveal, 1700);
+            // 总星标数字 ticker：与曲线同起点同时长（1.1s）。进入隐藏初值与恢复原文都在
+            // 同一个同步回调内完成，起始帧不会闪最终数字；结束时恢复 Swift 原文，停留态
+            // 与无动画路径逐字一致（不依赖 JS 复刻 Swift 的本地化格式）。
+            if (revealTotal && isFinite(revealTotalTarget) && revealTotalTarget > 0) {
+                revealTotalText = revealTotal.textContent;
+                revealTotal.textContent = compact(0);
+                var tickStart = performance.now();
+                var tickTotal = function(now) {
+                    // finishReveal 已收尾（resize 打断 / 超时兜底）时直接退出，恢复由它负责。
+                    if (!revealActive) { return; }
+                    var linear = Math.min(1, (now - tickStart) / 1100);
+                    // smoothstep 近似曲线 dashoffset 的 easeInOut 观感；数字不必逐帧对齐斜率。
+                    var eased = linear * linear * (3 - 2 * linear);
+                    revealTotal.textContent = compact(revealTotalTarget * eased);
+                    if (linear < 1) { requestAnimationFrame(tickTotal); return; }
+                    revealTotal.textContent = revealTotalText;
+                };
+                requestAnimationFrame(tickTotal);
+            }
+        }
+        function scheduleRevealWhenVisible() {
+            // 卡片在 README 末尾，历史数据多在用户读到之前就绪；插入即播会把动画
+            // 消耗在视口外。IntersectionObserver 的回调在渲染更新内、同一帧 paint
+            // 之前执行，回调里同步进入隐藏初值并启动过渡，首次进入视口的首帧
+            // 不会闪现完整曲线。等待期间不挂任何样式，layout() 重排可自由进行。
+            if (!('IntersectionObserver' in window)) { playReveal(); return; }
+            revealObserver = new IntersectionObserver(function(entries) {
+                if (!entries.some(function(entry) { return entry.isIntersecting; })) { return; }
+                revealObserver.disconnect();
+                revealObserver = null;
+                playReveal();
+            }, { threshold: 0 });
+            revealObserver.observe(chart);
+        }
         function compact(value) {
             var magnitude = Math.abs(value);
             if (magnitude >= 999500) { return shortNumber.format(value / 1000000) + 'M'; }
@@ -437,6 +531,10 @@ enum ReadmeStarHistoryDOM {
             if (!chart.isConnected) { return; }
             layoutMetadata();
             width = chart.clientWidth; height = chart.clientHeight;
+            // 入场动画期间发生「真实」尺寸变化时直接跳到终态：本函数会重写 points，
+            // 旧 dasharray/过渡中的 dashoffset 都不再匹配新几何，续播只会裁出错形。
+            // 初次 ResizeObserver 回调尺寸与 revealWidth/Height 相同，不会误杀动画。
+            if (revealActive && (width !== revealWidth || height !== revealHeight)) { finishReveal(); }
             if (width < 100) { return; }
             svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
             var coordinates = rendered.map(function(point) { return x(point) + ',' + y(point); }).join(' ');
@@ -511,8 +609,15 @@ enum ReadmeStarHistoryDOM {
         observer.observe(chart);
         if (tags) { observer.observe(tags); }
         if (journey) { observer.observe(journey); }
-        host.starcatHistoryCleanup = function() { observer.disconnect(); };
+        host.starcatHistoryCleanup = function() {
+            observer.disconnect();
+            if (revealObserver) { revealObserver.disconnect(); revealObserver = null; }
+        };
         layout();
+        // 首卡（animate）记下「入场债」；债未兑现（曲线还没在视口里播过）时，网络刷新
+        // 等替换卡也要继续等待首次可见——否则数据早到 + 用户晚滚，动画永远看不到。
+        if (animate) { host.starcatHistoryRevealOwed = true; }
+        if (animate || host.starcatHistoryRevealOwed) { scheduleRevealWhenVisible(); }
     }
     """
 }

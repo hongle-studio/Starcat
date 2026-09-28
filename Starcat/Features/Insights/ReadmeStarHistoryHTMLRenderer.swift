@@ -5,6 +5,8 @@
 //  原型风格的 README Star History 卡片：仓库信息、全历史曲线、四项指标与成长时间线。
 //  HTML 只来自固定模板；仓库文本和 JSON 属性统一转义。图形布局由受控 DOM 脚本
 //  按容器宽度更新，完整序列仅供 hover/统计，折线仍最多使用 90 个绘制点。
+//  总星标以 data-count 暴露原始数值：受控脚本的入场动画用它从 0 数到当前总数，
+//  展示文本仍由 Swift 渲染，动画结束逐字恢复原文，停留态与无动画路径完全一致。
 //
 
 import AppKit
@@ -201,7 +203,7 @@ enum ReadmeStarHistoryHTMLRenderer {
                   \(tags(repo: repo, context: context))
                 </div>
               </div>
-              <div class="starcat-star-history-current" title="\(escape(totalHint))" aria-label="\(totalLabel) \(escape(totalFull))">
+              <div class="starcat-star-history-current" data-count="\(repo.starsCount)" title="\(escape(totalHint))" aria-label="\(totalLabel) \(escape(totalFull))">
                 <div class="starcat-star-history-current-value">
                   <span class="starcat-star-history-current-star">\(icon("star.fill", icons: context.icons))</span>
                   <strong>\(escape(totalText))</strong>

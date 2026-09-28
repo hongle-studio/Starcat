@@ -1246,6 +1246,40 @@ final class AppSettings {
         didSet { persistJSON(key: Keys.externalSearchProviderSettings, value: externalSearchProviderSettings) }
     }
 
+    // MARK: - 实验性功能 Labs：TypeSafe Jev 决策引擎（2026-09-18 引入，POC）
+
+    /// Jev 决策引擎总开关（默认 false）。
+    ///
+    /// 这是所有 Jev 路由的第一道门：关闭时两个路由器逐字节透传既有 LLM 路径。
+    /// 子开关、Key 缺失时同样回退 LLM，不产生半开状态。
+    var typesafeDecisionEnabled: Bool {
+        didSet { persistBool(key: Keys.typesafeDecisionEnabled, value: typesafeDecisionEnabled) }
+    }
+
+    /// Jev 接管「手动 AI 分组整理」的建议生成（默认 false）。
+    ///
+    /// 仅影响 session.mode == .manual 的调用；后台自动整理与 auto-apply
+    /// 永远走既有 LLM 路径（见 `TypeSafeGitHubListSuggestionRouter`）。
+    var typesafeGroupingSuggestionsEnabled: Bool {
+        didSet { persistBool(key: Keys.typesafeGroupingSuggestionsEnabled, value: typesafeGroupingSuggestionsEnabled) }
+    }
+
+    /// Jev 接管所有 AI 标签建议的现有词表判断（默认 false）。
+    ///
+    /// 单仓标签、纯标签批量、摘要+标签混合任务与自动整理统一走
+    /// `TypeSafeTagSuggestionRouter`；关闭或缺少 Key 时回退原 LLM 路径。
+    var typesafeTagSuggestionsEnabled: Bool {
+        didSet { persistBool(key: Keys.typesafeTagSuggestionsEnabled, value: typesafeTagSuggestionsEnabled) }
+    }
+
+    /// 固定版本模型 ID（默认 jev-1.13.0）。
+    ///
+    /// 官方文档明确 `jev-latest` alias 会随版本漂移、行为可能被 silently 改变；
+    /// 概率阈值调好后必须固定版本 ID。留空回退默认值。
+    var typesafeModelID: String {
+        didSet { persist(key: Keys.typesafeModelID, value: typesafeModelID) }
+    }
+
     // MARK: - AI 代码上下文（2026-06-13 引入，RepoContextPacker 客户端接入阶段 X1）
     //
     // 4 个偏好字段对应 RepoContextPacker 的运行期配置：
@@ -2069,6 +2103,10 @@ final class AppSettings {
         self.smartSearchMode = searchModeRaw.flatMap(SmartSearchMode.init(rawValue:)) ?? .keyword
         self.externalSearchIncludeInAll = defaults.object(forKey: Keys.externalSearchIncludeInAll) as? Bool ?? false
         self.externalContextEnabled = defaults.object(forKey: Keys.externalContextEnabled) as? Bool ?? false
+        self.typesafeDecisionEnabled = defaults.object(forKey: Keys.typesafeDecisionEnabled) as? Bool ?? false
+        self.typesafeGroupingSuggestionsEnabled = defaults.object(forKey: Keys.typesafeGroupingSuggestionsEnabled) as? Bool ?? false
+        self.typesafeTagSuggestionsEnabled = defaults.object(forKey: Keys.typesafeTagSuggestionsEnabled) as? Bool ?? false
+        self.typesafeModelID = defaults.string(forKey: Keys.typesafeModelID) ?? TypeSafeDecisionService.defaultModelID
         self.externalSearchAllowPrivateRepos = defaults.object(forKey: Keys.externalSearchAllowPrivateRepos) as? Bool ?? false
         let externalDefaultProviderRaw = defaults.string(forKey: Keys.externalSearchDefaultProvider)
         self.externalSearchDefaultProvider = externalDefaultProviderRaw
@@ -2377,6 +2415,10 @@ final class AppSettings {
         smartSearchMode = .keyword
         externalSearchIncludeInAll = false
         externalContextEnabled = false
+        typesafeDecisionEnabled = false
+        typesafeGroupingSuggestionsEnabled = false
+        typesafeTagSuggestionsEnabled = false
+        typesafeModelID = TypeSafeDecisionService.defaultModelID
         externalSearchAllowPrivateRepos = false
         externalSearchDefaultProvider = .anySearch
         externalContextProviderSelection = .automatic
@@ -2964,6 +3006,10 @@ final class AppSettings {
         static let smartSearchMode = "settings.search.mode"
         static let externalSearchIncludeInAll = "settings.externalSearch.includeInAll.v1"
         static let externalContextEnabled = "settings.externalSearch.context.enabled.v1"
+        static let typesafeDecisionEnabled = "settings.labs.typesafe.enabled.v1"
+        static let typesafeGroupingSuggestionsEnabled = "settings.labs.typesafe.grouping.v1"
+        static let typesafeTagSuggestionsEnabled = "settings.labs.typesafe.tags.v1"
+        static let typesafeModelID = "settings.labs.typesafe.model.v1"
         static let externalSearchAllowPrivateRepos = "settings.externalSearch.context.allowPrivate.v1"
         static let externalSearchDefaultProvider = "settings.externalSearch.defaultProvider.v1"
         static let externalContextProviderSelection = "settings.externalSearch.context.providerSelection.v1"

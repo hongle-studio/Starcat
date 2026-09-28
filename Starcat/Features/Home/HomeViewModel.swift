@@ -1948,6 +1948,58 @@ final class HomeViewModel {
         }
     }
 
+    /// GitHub Lists 写入后的窄刷新入口。
+    ///
+    /// membership mutation 不会改变标签、语言、项目或 Release 等侧栏数据；如果仍走
+    /// `refreshSidebar()`，批量应用期间会反复触发十余个无关查询。这里仅更新 Lists 相关投影，
+    /// 并只在当前正查看 GitHub Lists 时重查中栏。
+    func refreshGitHubStarListData(reloadCurrentList: Bool) async {
+        defer { sidebarFacetDataRevision &+= 1 }
+        let previousListCounts = githubStarListCounts
+        let previousUngroupedCount = githubStarListUngroupedCount
+        let previousAssignments = githubStarListIDsByRepo
+
+        do {
+            async let listsResult = fetchGitHubStarLists()
+            async let countsResult = fetchGitHubStarListCounts()
+            async let ungroupedCountResult = fetchGitHubStarListUngroupedCount()
+            async let assignmentsResult = fetchGitHubStarListAssignments()
+            async let rulesResult = fetchGitHubStarListAIRules()
+            async let autoIgnoredResult = fetchGitHubStarListAIAutoIgnoredRepos()
+
+            githubStarLists = try await listsResult
+            githubStarListCounts = try await countsResult
+            githubStarListUngroupedCount = try await ungroupedCountResult
+            let assignments = try await assignmentsResult
+            githubStarListIDsByRepo = assignments.mapValues { Set($0.map(\.id)) }
+            githubStarListAIRulesByListID = Dictionary(
+                uniqueKeysWithValues: try await rulesResult.map { ($0.listId, $0) }
+            )
+            githubStarListAIAutoIgnoredRepoIDs = Set(
+                try await autoIgnoredResult.map(\.repoId)
+            )
+
+            if previousListCounts != githubStarListCounts ||
+                previousUngroupedCount != githubStarListUngroupedCount ||
+                previousAssignments != githubStarListIDsByRepo {
+                removeDatabaseSnapshots { key in
+                    switch key.selection {
+                    case .githubStarList, .githubStarListUngrouped:
+                        return true
+                    default:
+                        return false
+                    }
+                }
+            }
+
+            if reloadCurrentList, selection.isGitHubStarListContext {
+                await reloadItems(forceRefresh: true)
+            }
+        } catch {
+            AppLog.database.error("refreshGitHubStarListData failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// 外部场景（Search / Explore / Activity）完成 Star/Unstar 后的统一刷新入口。
     ///
     /// Explore 会把 `selection` 切到 `.trending`，这时直接调用 `reloadItems()` 只会刷新

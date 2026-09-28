@@ -49,6 +49,11 @@ struct GitHubStarListAISuggestion: Codable, Equatable, Hashable, Identifiable, S
 
 /// 封闭候选集的最终执行边界。
 enum GitHubStarListAISuggestionPolicy {
+    /// 人工审核的默认展示边界。Jev Service 保留全部概率，Policy 只把明确偏向“属于”的
+    /// 前五项作为建议，避免低概率候选全部进入待确认；自动确认仍直接使用完整结果和用户阈值。
+    private static let reviewProbabilityFloor = 0.55
+    private static let reviewSuggestionLimit = 5
+
     /// 校验模型原始结果，同时保留仓库分组中“明确无匹配”的产品语义。
     ///
     /// 原始空数组是模型对封闭候选集作出的有效判断；原始结果非空却被全部过滤，说明模型
@@ -120,6 +125,27 @@ enum GitHubStarListAISuggestionPolicy {
         let autoEnabledIDs = Set(candidates.filter(\.autoApplyEnabled).map(\.listId))
         return validatedSuggestions.filter {
             autoEnabledIDs.contains($0.listId) && $0.confidence >= confidenceThreshold
+        }
+    }
+
+    /// 从完整概率结果中构造人工审核建议。
+    ///
+    /// `requiredListIDs` 用于人工窗口开启自动确认且阈值低于默认展示线的情况：已经通过用户
+    /// 阈值的项必须出现在审核数据中，即使它低于 0.55 或超出常规 Top 5。
+    static func reviewSuggestions(
+        from validatedSuggestions: [GitHubStarListAISuggestion],
+        requiredListIDs: Set<String> = []
+    ) -> [GitHubStarListAISuggestion] {
+        let regular = validatedSuggestions
+            .filter { $0.confidence >= reviewProbabilityFloor }
+            .prefix(reviewSuggestionLimit)
+        let regularIDs = Set(regular.map(\.listId))
+        let required = validatedSuggestions.filter {
+            requiredListIDs.contains($0.listId) && !regularIDs.contains($0.listId)
+        }
+        return (Array(regular) + required).sorted {
+            if $0.confidence != $1.confidence { return $0.confidence > $1.confidence }
+            return $0.listId < $1.listId
         }
     }
 

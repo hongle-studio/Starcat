@@ -193,11 +193,11 @@ struct BatchAIOptionsSheet: View {
                 title: "batchAI.options.autoApply",
                 isOn: $options.autoApplyTags
             )
-            // 与「自动应用推荐标签」左对齐；依赖关系只靠禁用态表达，不再嵌套缩进。
+            // “允许新增”同时控制 Jev 不足时的 LLM 兜底，与是否自动落库正交：
+            // 自动应用关闭时，新标签仍只进入当前窗口等待人工确认。
             CompactSettingsToggleRow(
                 title: "batchAI.options.autoCreateMissingTags",
-                isOn: $options.autoCreateMissingTags,
-                isDisabled: !options.autoApplyTags
+                isOn: $options.autoCreateMissingTags
             )
 
             // 阈值始终可见，关闭自动应用时只禁用 Slider，避免开关导致卡片内容跳动。

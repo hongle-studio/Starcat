@@ -159,6 +159,8 @@ struct GitHubStarListAIOrganizationDraftItem: Codable, Sendable {
     private let applyFailureDetail: String?
     let finishedAt: Date?
     let isExcludedFromAnalysis: Bool
+    /// Optional 保证旧版本草稿仍可解码；缺失时按已写入 GitHub 处理。
+    let isLocallyApplied: Bool?
     let existingListIDs: Set<String>
     let selectedListIDs: Set<String>
     let isSelectedForBulkApply: Bool
@@ -206,6 +208,7 @@ struct GitHubStarListAIOrganizationDraftItem: Codable, Sendable {
         }
         self.finishedAt = job.finishedAt
         self.isExcludedFromAnalysis = job.isExcludedFromAnalysis
+        self.isLocallyApplied = job.isLocallyApplied
         self.existingListIDs = existingListIDs
         self.selectedListIDs = selectedListIDs
         self.isSelectedForBulkApply = isSelectedForBulkApply
@@ -244,7 +247,8 @@ struct GitHubStarListAIOrganizationDraftItem: Codable, Sendable {
             analysisFailure: restoredAnalysisFailure,
             applyState: restoredApplyState,
             finishedAt: status == .analyzing ? .now : finishedAt,
-            isExcludedFromAnalysis: isExcludedFromAnalysis
+            isExcludedFromAnalysis: isExcludedFromAnalysis,
+            isLocallyApplied: isLocallyApplied ?? false
         )
     }
 }

@@ -443,6 +443,7 @@ struct RepoListView: View {
     /// 直接在源头 disable 比让用户点了报错友好。
     @Environment(AuthSession.self) private var authSession
     @Environment(SyncManager.self) private var syncManager
+    @Environment(ExternalStarInbox.self) private var externalStarInbox
     /// `RelativeDateTimeFormatter` 须显式注入 locale（对齐 ActivityView）。
     @Environment(\.locale) private var locale
     @Environment(\.starcatInterfaceScale) private var interfaceScale
@@ -505,6 +506,8 @@ struct RepoListView: View {
     /// 否则关闭 CodeFlow 时 presentation host 被替换，窗口会短暂再次出现。
     @State private var codeFlowSheetItem: CodeGraphSheetItem?
     @State private var codebaseMemorySheetItem: CodeGraphSheetItem?
+    /// 按文件勾选下载。与 CodeFlow 一样挂在页面根节点，避免 toolbar 重建把 sheet 闪回来。
+    @State private var fileBrowserSheetItem: RepoFileBrowserSheetItem?
     /// CodeFlow 为 Pro 功能；免费用户点入口时弹出统一付费墙，不打开执行面板。
     @State private var paywallContext: ProPaywallContext?
     /// GitHub 组织可限制第三方 OAuth App 访问仓库节点；这类错误需要结构化解释原因。
@@ -588,6 +591,14 @@ struct RepoListView: View {
             CodebaseMemoryPanel(repo: item.repo)
                 .id(item.id)
                 .appSheetRootEnvironment(dependencies)
+        }
+        .sheet(item: $fileBrowserSheetItem) { item in
+            RepoFileBrowserSheet(
+                target: item.target,
+                apiClient: dependencies.apiClient
+            )
+            .id(item.id)
+            .appSheetRootEnvironment(dependencies)
         }
         .onAppear {
             // Browser Plugin 请求可能先于主窗口恢复到达；窗口重新挂载时需要补消费
@@ -1353,6 +1364,10 @@ struct RepoListView: View {
             onOpenCodebaseMemory: openCodebaseMemory(for:),
             onCloneCopied: { toastKey in
                 RepoDetailToastRequest.post(repoID: repoID, messageKey: toastKey)
+            },
+            onOpenFileBrowser: { target in
+                AppLog.ui.info("Open file browser selection=\(target.fullName, privacy: .public) ref=\(target.ref, privacy: .public)")
+                fileBrowserSheetItem = RepoFileBrowserSheetItem(target: target)
             }
         )
         .id(actionIdentity)
@@ -1496,6 +1511,21 @@ struct RepoListView: View {
                     listWithOptionalBanner { unifiedListContent($bindableVM.selectedRepoID) }
                 }
             }
+            .overlay(alignment: .top) {
+                if selectedPage == .manage,
+                   viewModel.selection == .allStars,
+                   !externalStarInbox.pending.isEmpty {
+                    ExternalStarInboxCapsule(items: externalStarInbox.pending) {
+                        externalStarInbox.apply()
+                    }
+                    .padding(.top, 10)
+                    .transition(externalStarInboxTransition)
+                }
+            }
+            .animation(
+                viewModel.selection == .allStars ? externalStarInboxAnimation : nil,
+                value: externalStarInbox.pending.map(\.repoID)
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1508,6 +1538,18 @@ struct RepoListView: View {
         ) {
             refreshManageList()
         }
+    }
+
+    /// 切走「全部仓库」时整栏内容已替换，不依赖这个 transition；切回且队列仍在才走出现动画。
+    private var externalStarInboxTransition: AnyTransition {
+        if reduceMotion {
+            return .opacity
+        }
+        return .opacity.combined(with: .offset(y: -8))
+    }
+
+    private var externalStarInboxAnimation: Animation {
+        .easeOut(duration: reduceMotion ? 0.20 : 0.25)
     }
 
     /// 洞察下钻是一次临时筛选会话。横幅同时提供“回到来源”和“留在 Manage 并清除”
@@ -2144,9 +2186,9 @@ struct RepoListView: View {
                 guard shouldBelong != isMember else { return }
                 mutateGitHubStarListMembership(for: repo) {
                     if shouldBelong {
-                        try await dependencies.githubStarListSyncService.addRepo(repo, toList: listID)
+                        return try await dependencies.githubStarListSyncService.addRepo(repo, toList: listID)
                     } else {
-                        try await dependencies.githubStarListSyncService.removeRepo(repo, fromList: listID)
+                        return try await dependencies.githubStarListSyncService.removeRepo(repo, fromList: listID)
                     }
                 }
             }
@@ -2177,29 +2219,23 @@ struct RepoListView: View {
 
     private func mutateGitHubStarListMembership(
         for repo: Repo,
-        _ operation: @escaping () async throws -> Void
+        _ operation: @escaping () async throws -> GitHubStarListMembershipWriteLocation
     ) {
         Task {
             do {
-                try await operation()
-                await viewModel.refreshSidebar()
-                await viewModel.reloadItems(forceRefresh: true)
-                toastMessage = "githubStarLists.toast.updated"
-            } catch {
-                AppLog.network.error("GitHub star list mutation failed: \(error.localizedDescription, privacy: .public)")
-                if isGitHubOrganizationOAuthRestriction(error) {
+                let location = try await operation()
+                await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
+                if location == .local {
+                    // 分组已经在有效查询视图中生效；Sheet 解释它为何尚未写入 GitHub。
                     gitHubStarListOAuthRestrictedRepo = repo
                 } else {
-                    toastMessage = "githubStarLists.toast.failed"
+                    toastMessage = "githubStarLists.toast.updated"
                 }
+            } catch {
+                AppLog.network.error("GitHub star list mutation failed: \(error.localizedDescription, privacy: .public)")
+                toastMessage = "githubStarLists.toast.failed"
             }
         }
-    }
-
-    private func isGitHubOrganizationOAuthRestriction(_ error: Error) -> Bool {
-        let message = error.localizedDescription.lowercased()
-        return message.contains("organization has enabled oauth app access restrictions")
-            || message.contains("third-parties is limited")
     }
 
     private var manageNavigationSubtitle: String {
@@ -2988,9 +3024,9 @@ private enum FilterMenuLanguageIconCache {
     }
 }
 
-/// GitHub 组织限制 OAuth App 访问时的结构化说明。
+/// GitHub 组织限制 OAuth App 访问时的本地降级说明。
 ///
-/// 不使用系统 Alert：该错误不是一句失败文案能解释清楚，用户需要知道原因、影响范围和可执行处理方式。
+/// 此时操作已经在 Starcat 本地生效，并非失败；Sheet 只解释远端状态与可执行处理方式。
 /// 底部提供仓库 GitHub 页跳转：组织策略拦的是 OAuth App，网页端登录后仍可改 Lists。
 private struct GitHubStarListOAuthRestrictionSheet: View {
 
@@ -3021,9 +3057,9 @@ private struct GitHubStarListOAuthRestrictionSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("githubStarLists.error.orgOAuthRestricted.title")
+                Text("githubStarLists.localFallback.title")
                     .font(.title3.weight(.semibold))
-                Text("githubStarLists.error.orgOAuthRestricted.subtitle")
+                Text("githubStarLists.localFallback.detail")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3034,7 +3070,7 @@ private struct GitHubStarListOAuthRestrictionSheet: View {
     private var details: some View {
         VStack(alignment: .leading, spacing: 10) {
             restrictionRow("exclamationmark.triangle.fill", "githubStarLists.error.orgOAuthRestricted.reason")
-            restrictionRow("arrow.triangle.2.circlepath", "githubStarLists.error.orgOAuthRestricted.impact")
+            restrictionRow("arrow.triangle.2.circlepath", "githubStarLists.aiGrouping.localFallback.detail")
             restrictionRow("safari.fill", "githubStarLists.error.orgOAuthRestricted.githubOption")
             restrictionRow("person.badge.shield.checkmark.fill", "githubStarLists.error.orgOAuthRestricted.adminOption")
         }

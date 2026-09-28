@@ -424,6 +424,143 @@ struct GitHubStarListAIGroupingSessionTests {
         #expect(environment.session.mode == .idle)
     }
 
+    @Test("人工批量应用完成后只通知一次 membership 刷新")
+    func manualBulkApplyCoalescesMembershipRefresh() async throws {
+        let provider = ConcurrentGitHubStarListSuggestionProvider(
+            delay: .milliseconds(1),
+            suggestionsByRepoID: [
+                1: [GitHubStarListAISuggestion(listId: "list-1", confidence: 0.95, reason: "Tools")],
+                2: [GitHubStarListAISuggestion(listId: "list-1", confidence: 0.94, reason: "Tools")]
+            ]
+        )
+        let environment = try await makeEnvironment(
+            repoCount: 2,
+            groupedRepoFullNames: [],
+            aiRule: (instruction: "Developer tools", autoApplyEnabled: true),
+            insightService: provider
+        )
+        URLProtocolStub.reset()
+        URLProtocolStub.requestHandler = { request in
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let payload = if body.contains("repository(owner:") {
+                Data(#"{"data":{"repository":{"id":"repo-node"}}}"#.utf8)
+            } else {
+                Data(#"{"data":{"updateUserListsForItem":{"lists":[]}}}"#.utf8)
+            }
+            return (Self.response(200, for: request), payload)
+        }
+        var membershipRefreshCount = 0
+        environment.session.onMembershipsChanged = {
+            membershipRefreshCount += 1
+        }
+
+        await environment.session.prepareManualContext()
+        await environment.session.startManual()
+        await waitUntilStopped(environment.session)
+        environment.session.applySelected()
+        await waitUntilApplyStopped(environment.session)
+
+        #expect(environment.session.existingListIDsByRepo[1] == ["list-1"])
+        #expect(environment.session.existingListIDsByRepo[2] == ["list-1"])
+        #expect(membershipRefreshCount == 1)
+        let mutationCount = URLProtocolStub.receivedRequests.count { request in
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            return body.contains("updateUserListsForItem")
+        }
+        #expect(mutationCount == 2)
+    }
+
+    @Test("组织限制下 AI 分组保存本地且授权恢复后可回写 GitHub")
+    func organizationRestrictionAppliesLocallyAndCanRetryRemoteSync() async throws {
+        let provider = ConcurrentGitHubStarListSuggestionProvider(
+            delay: .milliseconds(1),
+            suggestionsByRepoID: [
+                1: [GitHubStarListAISuggestion(listId: "list-1", confidence: 0.95, reason: "Tools")]
+            ]
+        )
+        let environment = try await makeEnvironment(
+            repoCount: 1,
+            groupedRepoFullNames: [],
+            aiRule: (instruction: "Developer tools", autoApplyEnabled: true),
+            insightService: provider
+        )
+        URLProtocolStub.reset()
+        URLProtocolStub.requestHandler = { request in
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let payload = if body.contains("repository(owner:") {
+                Data(#"{"data":{"repository":{"id":"repo-node"}}}"#.utf8)
+            } else {
+                Data(#"{"data":{"updateUserListsForItem":null},"errors":[{"message":"Although you appear to have the correct authorization credentials, the organization has enabled OAuth App access restrictions."}]}"#.utf8)
+            }
+            return (Self.response(200, for: request), payload)
+        }
+
+        await environment.session.prepareManualContext()
+        await environment.session.startManual(autoConfirmEnabled: true, confidenceThreshold: 0.90)
+        await waitUntilStopped(environment.session)
+
+        let locallyApplied = try #require(environment.session.jobs.first)
+        #expect(locallyApplied.applyState == .applied(["list-1"]))
+        #expect(locallyApplied.isLocallyApplied)
+        #expect(locallyApplied.automaticallyIgnoredFailure == nil)
+
+        URLProtocolStub.reset()
+        URLProtocolStub.requestHandler = { request in
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let payload = body.contains("repository(owner:")
+                ? Data(#"{"data":{"repository":{"id":"repo-node"}}}"#.utf8)
+                : Data(#"{"data":{"updateUserListsForItem":{"lists":[]}}}"#.utf8)
+            return (Self.response(200, for: request), payload)
+        }
+        environment.session.retryLocalMembershipSync(repoID: 1)
+        await waitUntilApplyStopped(environment.session)
+
+        #expect(environment.session.jobs.first?.isLocallyApplied == false)
+        #expect(environment.session.jobs.first?.applyState == .applied(["list-1"]))
+    }
+
+    @Test("人工自动确认允许用户配置的 0.50 阈值通过 Jev 完整概率")
+    func manualAutoConfirmUsesConfiguredFloorInsteadOfProviderFloor() async throws {
+        let provider = ConcurrentGitHubStarListSuggestionProvider(
+            delay: .milliseconds(1),
+            suggestionsByRepoID: [
+                1: [GitHubStarListAISuggestion(listId: "list-1", confidence: 0.52, reason: "Jev P=0.52")]
+            ]
+        )
+        let environment = try await makeEnvironment(
+            repoCount: 1,
+            groupedRepoFullNames: [],
+            aiRule: (instruction: "Developer tools", autoApplyEnabled: true),
+            insightService: provider
+        )
+        URLProtocolStub.reset()
+        URLProtocolStub.requestHandler = { request in
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let payload = if body.contains("repository(owner:") {
+                Data(#"{"data":{"repository":{"id":"repo-node"}}}"#.utf8)
+            } else {
+                Data(#"{"data":{"updateUserListsForItem":{"lists":[]}}}"#.utf8)
+            }
+            guard let url = request.url,
+                  let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                  )
+            else { throw URLError(.badURL) }
+            return (response, payload)
+        }
+
+        await environment.session.prepareManualContext()
+        await environment.session.startManual(autoConfirmEnabled: true, confidenceThreshold: 0.50)
+        await waitUntilStopped(environment.session)
+
+        #expect(environment.session.existingListIDsByRepo[1] == ["list-1"])
+        #expect(environment.session.jobs.first?.applyState == .applied(["list-1"]))
+        #expect(environment.session.jobs.first?.suggestions.map(\.listId) == ["list-1"])
+    }
+
     @Test("持久化自动忽略会跨轮展示但不重复分析，手动重试后重新进入队列")
     func persistedAutoIgnoreRequiresExplicitRetry() async throws {
         let provider = ConcurrentGitHubStarListSuggestionProvider(delay: .milliseconds(1))

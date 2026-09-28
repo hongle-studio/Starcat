@@ -136,6 +136,9 @@ struct SettingsView: View {
         case ragRetrieval
         case storage
         case diagnostics
+        /// 实验性功能(Labs):TypeSafe Jev 决策引擎 POC 等未定型能力的统一开关入口,
+        /// 与稳定功能隔离,便于后续整体下线。
+        case labs
 
         var id: String { rawValue }
 
@@ -160,6 +163,7 @@ struct SettingsView: View {
             case .ragRetrieval: return "rag.workspace.settings.section.retrieval"
             case .storage:      return "settings.navigation.item.dataStorage"
             case .diagnostics:  return "settings.navigation.item.diagnosticsSupport"
+            case .labs:         return "settings.navigation.item.labs"
             }
         }
 
@@ -188,6 +192,7 @@ struct SettingsView: View {
             case .ragRetrieval: return RAGSettingsSection.retrieval.systemImage
             case .storage:      return "internaldrive"
             case .diagnostics:  return "stethoscope"
+            case .labs:         return "flask"
             }
         }
 
@@ -363,6 +368,8 @@ struct SettingsView: View {
             Section("settings.navigation.group.support") {
                 settingsSidebarRow(.storage)
                 settingsSidebarRow(.diagnostics)
+                // Labs 放侧栏末尾:实验性入口不与稳定功能混排,下线时删除这一行即可。
+                settingsSidebarRow(.labs)
             }
         }
         .listStyle(.sidebar)
@@ -446,6 +453,8 @@ struct SettingsView: View {
             StorageSettingsTab(readmeRepository: dependencies.readmeRepository)
         case .diagnostics:
             DiagnosticsSettingsTab()
+        case .labs:
+            LabsSettingsTab()
         }
     }
 
@@ -513,6 +522,8 @@ struct SettingsView: View {
                                keywords: ["浏览器", "chrome", "safari", "extension", "plugin"]),
             SettingsSearchItem("localTools", titleKey: "settings.navigation.item.localTools", tab: .localTools,
                                keywords: ["本地工具", "agent runtime", "codeflow", "codebase memory"]),
+            SettingsSearchItem("labs", titleKey: "settings.navigation.item.labs", tab: .labs,
+                               keywords: ["实验性", "实验室", "labs", "typesafe", "jev", "决策"]),
             SettingsSearchItem("integrations.codebaseMemory", titleKey: "settings.navigation.item.localTools",
                                tab: .localTools, target: "integrations.codebaseMemory",
                                keywords: ["codebase memory", "codebasememory", "代码索引"]),
@@ -594,6 +605,8 @@ struct SettingsView: View {
             return SettingsLocation(tab: .storage)
         case "diagnostics":
             return SettingsLocation(tab: .diagnostics)
+        case "labs":
+            return SettingsLocation(tab: .labs)
         default:
             return nil
         }
@@ -795,10 +808,6 @@ struct SettingsView: View {
                 )
             }
 
-            // 2026-09-14 重组：显示语言（上一分组）与内容语言过滤是同一「语言」主题，
-            // 相邻放置；不再夹在详情行为和 macOS 集成之间。
-            InterestedLanguagesSettingsSection(languages: $settings.interestedLanguages)
-
             Section {
                 Toggle(isOn: $settings.openFirstDetailOnCategoryChange) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -858,12 +867,27 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+
+                if DistributionChannel.current.isDirect {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("settings.general.screensaver.title")
+                        Text("settings.general.screensaver.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ScreensaverSettingsSection()
+                    }
+                }
             } header: {
                 SettingsSectionHeader(
                     "settings.general.macOSIntegration",
                     systemImage: "macwindow.on.rectangle"
                 )
             }
+
+            // 2026-09-17 重组：从「显示语言」后方移到「macOS 集成」之后（dong4j 要求），
+            // 仅调整分组顺序，配置内容不变。
+            InterestedLanguagesSettingsSection(languages: $settings.interestedLanguages)
 
             // 2026-06-15 dong4j 需求：无障碍 / 动画偏好。
             //

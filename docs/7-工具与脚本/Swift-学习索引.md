@@ -17,7 +17,7 @@
 |---|---|---|
 | `struct` | `Repo` / `APIResponse<T>` / `BytesResponse` / `GRDBRepoRepository` | "Swift struct value type" |
 | `class` (`final class`) | `ReadmeViewModel` / `HomeViewModel` / `MockGitHubAPIClient` | "Swift reference types classes" |
-| `actor` | `GitHubAPIClient` / `WikiAPI`（隔离可变网络配置，支持 URL/Key 热更新） | "Swift actors" |
+| `actor` | `GitHubAPIClient` / `WikiAPI`（隔离可变网络配置，支持 URL/Key 热更新）；`RepoFileTreeSessionCache` 缓存文件树 | "Swift actors" |
 | `enum`（含关联值） | `NetworkError` / `LoadState` / `WikiSource.unknown(String)` / `SidebarItem` | "Swift enumerations associated values" |
 | `protocol` | `RepoRepositoryProtocol` / `GitHubAPIClientProtocol` / `GitHubTokenProviding` | "Swift protocols" |
 | `extension` | `extension GitHubAPIClient: GitHubAPIClientProtocol {}` / `extension BytesResponse` | "Swift extensions" |
@@ -95,7 +95,7 @@
 | `Task<Void, Never>` | `private var currentTask: Task<Void, Never>?` | "Swift Task generic parameters" |
 | `AsyncThrowingStream` / `for try await` | `AIClientProtocol.chatStream` 生产事件，`RepoAIInsightService.generateText` 消费 delta / completed | "Swift AsyncThrowingStream for try await" |
 | `async let` | `HomeViewModel.refreshSidebar` 并行起 3 个查询 | "Swift async let concurrency" |
-| `withTaskGroup` | 项目里未用，未来批量场景会引入 | "Swift TaskGroup" |
+| `withTaskGroup` | `RepoFileBrowserViewModel` 勾选下载（并发上限 4）/ `BatchAIQueueService` / `SearchCoordinator` | "Swift TaskGroup" |
 | `@MainActor` | `ReadmeViewModel` / `HomeViewModel` / `AppDependencies` / `Coordinator` | "Swift MainActor" |
 | `actor` | `GitHubAPIClient` / `WikiAPI` | "Swift actors data race" |
 | `nonisolated` / `nonisolated(unsafe)` | `URLProtocolStub` 静态可变属性 | "Swift nonisolated keyword" |
@@ -126,6 +126,7 @@
 | 关键词 | 用法点 | 搜索词 |
 |---|---|---|
 | `NavigationSplitView` | `HomeView` 三栏布局 | "SwiftUI NavigationSplitView macOS" |
+| `HSplitView` | `TagManagementView` 左列表右编辑器 | "SwiftUI HSplitView macOS" |
 | `NavigationSplitViewVisibility` | `HomeView` 显式持有三栏可见性；启动时重置 `.all`，避免上次窄窗口导致 sidebar 折叠态污染下一次启动 | "SwiftUI NavigationSplitViewVisibility" |
 | `List(selection:)` | 中栏多选 repo 列表；普通单选已改用 plain `Button` 手动写 `selectedRepoID` 以避开系统蓝色选中底色 | "SwiftUI List selection binding macOS" |
 | `Button` + `.buttonStyle(.plain)` | 普通 repo 行点击选择；使用后必须跟 `.focusEffectDisabled()` | "SwiftUI plain button macOS focusEffectDisabled" |
@@ -159,7 +160,7 @@
 | `.onSubmit` / `.submitLabel(.search)` | `SmartSearchField` 输入草稿只在 Return 后提交，避免逐字符触发 FTS5 / AI 语义搜索 | "SwiftUI TextField onSubmit submitLabel search" |
 | `.searchable(text:placement:prompt:)` | 曾用于 Finder 风格系统搜索入口；2026-06-04 起因折叠 / 模式内嵌 / AI 光晕需求改为 `SmartSearchField` | "SwiftUI searchable placement toolbar macOS" |
 | `.confirmationDialog` / `.alert` | 取消 Star 确认（W4 待做） | "SwiftUI confirmationDialog macOS" |
-| `.transition` / `.animation(_:value:)` | `RepoListView` / `TrendingView` 中栏内容切换用整块轻过渡；自定义动效需尊重 `accessibilityReduceMotion` | "SwiftUI transition animation value accessibilityReduceMotion" |
+| `.transition` / `.animation(_:value:)` | `RepoListView` / `TrendingView` 中栏内容切换用整块轻过渡；`RepoFileBrowserSheet` 点文件后预览栏从右侧滑入；自定义动效需尊重 `starcatReduceMotion` | "SwiftUI transition animation value accessibilityReduceMotion" |
 | `.onHover` | `RepoRowSurface` 鼠标悬停时增强背景 / 边框，是 macOS 指针体验的基础反馈 | "SwiftUI onHover macOS" |
 | `.onReceive(Timer.publish(...).autoconnect())` | `AboutView` 致谢页依赖列表自动滚动的轻量定时器；只在 hover 之外推进当前 index | "SwiftUI Timer publisher onReceive" |
 | `.allowsHitTesting(false)` | `LayoutDebugOverlay` 调试胶囊不拦截下方鼠标事件，覆盖层标准配置 | "SwiftUI allowsHitTesting" |
@@ -173,12 +174,14 @@
 
 | 关键词 | 用法点 | 搜索词 |
 |---|---|---|
-| `NSViewRepresentable` | `ReadmeWebView` 包装 `WKWebView`；`ToolbarSearchFocusRingDisabler` 放置不可见 AppKit 探针修正系统 toolbar search field | "SwiftUI NSViewRepresentable" |
+| `NSViewRepresentable` | `ReadmeWebView` 包装 `WKWebView`；`RepoFileSourcePreview` 包装只读 `NSTextView`；`ToolbarSearchFocusRingDisabler` 放置不可见 AppKit 探针修正系统 toolbar search field | "SwiftUI NSViewRepresentable" |
+| `NSTextView` + `NSRulerView` | `RepoFileSourcePreview` 源码预览：按容器折行、跨行选择、行号只标物理行 | "NSTextView NSRulerView line numbers macOS" |
 | `Coordinator` 模式 | `ReadmeWebView.Coordinator` 持有 delegate | "NSViewRepresentable Coordinator" |
 | `makeNSView` / `updateNSView` | 同上 | "NSViewRepresentable lifecycle" |
 | `NSView` → `NSWindow` 桥接 | `MainWindowFrameModifier` 通过不可见 NSView 拿主窗口 | "SwiftUI access NSWindow from NSViewRepresentable" |
 | `NSHostingController` | `AboutWindowController` 把 `AboutView` 嵌进 AppKit `NSWindow` | "NSHostingController SwiftUI AppKit" |
 | `NSSearchField.focusRingType` | `RepoListView.ToolbarSearchFocusRingDisabler` 禁用系统搜索框外层蓝色 focus ring | "NSSearchField focusRingType NSFocusRingType" |
+| `NSOpenPanel` + `startAccessingSecurityScopedResource()` | `RepoFileBrowserViewModel` 选目录后下载文件；App Store 沙盒必须先拿到用户授权的安全作用域 | "NSOpenPanel canChooseDirectories startAccessingSecurityScopedResource" |
 
 ---
 
@@ -215,6 +218,7 @@
 | Headers: `Link` (RFC 5988) | GitHub 分页 next/last/prev | `RFC 5988 web linking` |
 | Headers: `Authorization: Bearer ...` | `request.setValue("Bearer \(token)", forHTTPHeaderField:)` | "HTTP Bearer token authentication" |
 | Headers: `Accept: application/vnd.github.html` | README HTML 端点 | "GitHub API media types vnd.github" |
+| Git LFS pointer + Batch API | `GitLFSPointer` / `RepoFileDownloader`：blob 若是 pointer，改走 `github.com/.../info/lfs/objects/batch` 再下真实对象 | "Git LFS batch API application/vnd.git-lfs+json" |
 
 ---
 

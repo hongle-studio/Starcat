@@ -730,7 +730,7 @@ struct RepoShareButton: View {
             }
 
             Divider()
-            Button { presentRepoShare(targetRepo) } label: {
+            Button { presentRepoShare.present(targetRepo) } label: {
                 if taskStore.isRunning(repoID: targetRepo.id) {
                     Label {
                         Text("repo.share.progress.reopen")

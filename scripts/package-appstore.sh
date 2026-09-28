@@ -67,12 +67,18 @@ verify_formal_xcode() {
   xcode_icon_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$xcode_app_path/Contents/Info.plist" 2>/dev/null || true)"
 
   # App Store Connect 会拒绝 Beta Xcode 生成的构建。固定正式版安装路径，
-  # 并检查 Beta 图标标记和 seed build 后缀，避免只修改 app 名称后绕过门禁。
+  # 并检查 Beta 图标标记与 xcodebuild 版本横幅，避免只修改 app 名称后绕过门禁。
+  # 注意：不能用「build 号以小写字母结尾」判 Beta——Apple 正式版 GM 常以字母结尾
+  # （Xcode 16.0=16A242d、15.0=15A240d、27=27A266a，见 developer.apple.com/news/releases），
+  # 且 RC 与 GM 复用同一 build 字节，后缀本身无法区分正式版。
   [ "$developer_dir" = "$FORMAL_XCODE_DEVELOPER_DIR" ] || \
     fail "App Store 正式包只允许使用 ${FORMAL_XCODE_DEVELOPER_DIR}；当前为 ${developer_dir}。请显式设置 DEVELOPER_DIR=${FORMAL_XCODE_DEVELOPER_DIR}"
   [ -n "$xcode_version" ] || fail "无法读取正式版 Xcode 版本"
   [ -n "$xcode_build" ] || fail "无法读取正式版 Xcode build"
-  if [[ "$xcode_icon_name" =~ [Bb]eta|[Pp]review|[Rr]elease[Cc]andidate ]] || [[ "$xcode_build" =~ [a-z]$ ]]; then
+  local xcode_banner
+  xcode_banner="$("$xcodebuild_path" -version 2>/dev/null | head -1)"
+  if [[ "$xcode_icon_name" =~ [Bb]eta|[Pp]review|[Rr]elease[Cc]andidate ]] || \
+     [[ "$xcode_banner" =~ [Bb]eta|[Pp]review|[Rr]elease[[:space:]][Cc]andidate ]]; then
     fail "App Store 正式包禁止使用 Beta/RC/Preview Xcode；当前为 Xcode ${xcode_version} (${xcode_build})"
   fi
 

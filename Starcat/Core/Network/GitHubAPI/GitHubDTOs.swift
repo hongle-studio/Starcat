@@ -398,6 +398,52 @@ struct GitHubSubscriptionRequestDTO: Encodable {
     let ignored: Bool
 }
 
+// MARK: - Git Tree（详情页按文件勾选下载）
+
+/// `GET /repos/{owner}/{repo}/git/trees/{ref}?recursive=1` 的响应。
+///
+/// GitHub 在条目超过约 10 万时仍返回 200，但 `truncated == true`，树不完整。
+/// UI 必须展示截断提示，不能假装这是全量列表。
+struct GitHubGitTreeDTO: Decodable, Equatable, Sendable {
+    let sha: String
+    let truncated: Bool
+    let tree: [GitHubGitTreeEntryDTO]
+}
+
+/// 递归 tree 里的单条路径。
+///
+/// `type`：`blob` 文件 / `tree` 目录 / `commit` 子模块。
+/// `mode`：`100644` 普通文件、`100755` 可执行、`120000` 符号链接、`160000` 子模块、`040000` 目录。
+/// `size` 只在 blob 上出现。
+struct GitHubGitTreeEntryDTO: Decodable, Equatable, Sendable {
+    let path: String
+    let mode: String
+    let type: String
+    let sha: String
+    let size: Int?
+    let url: String?
+}
+
+/// `GET /repos/{owner}/{repo}/branches` 的最小字段。切文件树只需要名字。
+struct GitHubRepoBranchDTO: Decodable, Equatable, Sendable {
+    let name: String
+}
+
+/// `GET /repos/{owner}/{repo}/commits?path=` 的最小字段，给预览侧栏「上次提交」。
+struct GitHubCommitSummaryDTO: Decodable, Equatable, Sendable {
+    let sha: String
+    let commit: GitHubCommitSummaryPayloadDTO
+}
+
+struct GitHubCommitSummaryPayloadDTO: Decodable, Equatable, Sendable {
+    let committer: GitHubCommitSummaryPersonDTO?
+    let author: GitHubCommitSummaryPersonDTO?
+}
+
+struct GitHubCommitSummaryPersonDTO: Decodable, Equatable, Sendable {
+    let date: String?
+}
+
 // MARK: - Release（HOM-47）
 
 /// `GET /repos/{owner}/{repo}/releases` 单条响应。

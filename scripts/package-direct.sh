@@ -59,6 +59,11 @@ PLUGINS_DIR="${APP_PATH}/Contents/PlugIns"
 # Direct Widget 仍是独立沙箱扩展；重新签名时必须用这份正式 entitlement，
 # 不能 --preserve-metadata=entitlements，否则会把开发签名注入的 get-task-allow 带进公证包。
 DIRECT_WIDGET_ENTITLEMENTS="${PROJECT_ROOT}/Starcat/Resources/Widget/StarcatDirectWidgets.entitlements"
+# 1.8.0 起嵌入 Direct 包的系统屏保 bundle。Xcode 构建期只带 Apple Development 签名，
+# 公证要求显式换 Developer ID + 安全时间戳。注意不能传 --entitlements：macOS 27
+# 工具链的 codesign 对 MH_BUNDLE（屏保二进制文件类型）会静默丢弃 entitlement，
+# 且公证本身不要求 entitlement；签名走与主 App 相同的 distribution 通道。
+SAVER_PATH="${APP_PATH}/Contents/Resources/StarcatScreensaver.saver"
 DMG_PATH="${DOWNLOADS_DIR}/Starcat-${VERSION}-arm64.dmg"
 SHA_PATH="${DMG_PATH}.sha256"
 CURRENT_APPCAST_PATH="${DOWNLOADS_DIR}/appcast-current.xml"
@@ -150,6 +155,7 @@ fi
 
 [ -d "$APP_PATH" ] || fail "未找到 Direct app: $APP_PATH"
 [ -d "$SPARKLE_FRAMEWORK_PATH" ] || fail "Direct 包缺少 Sparkle.framework"
+[ -d "$SAVER_PATH" ] || fail "Direct 包缺少 StarcatScreensaver.saver"
 # Direct 必须使用外部可执行文件。这里作为发布硬门禁，防止 project.yml 以后误把
 # 大体积 codebase.bin 重新带回 DMG。
 if find "$APP_PATH/Contents/Resources" -type f -name 'codebase.bin' -print -quit | grep -q .; then
@@ -306,6 +312,11 @@ for APPEX_PATH in "${APPEX_PATHS[@]+"${APPEX_PATHS[@]}"}"; do
   esac
 done
 
+# Resources 里的系统屏保 .saver 同样必须在主 App 换签前处理：构建期留下的是
+# Apple Development 签名且无安全时间戳，公证会直接 Invalid（1.8.0 首次提交已踩坑）。
+# MH_BUNDLE 吃不进 entitlement（见顶部 SAVER_PATH 注释），走 distribution 签名。
+sign_distribution_code "$SAVER_PATH"
+
 sign_distribution_code "$APP_PATH"
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
@@ -329,6 +340,7 @@ if [ "$SIGN_IDENTITY" != "-" ]; then
       fail "$(basename "$APPEX_PATH") 缺少 app-sandbox entitlement"
     fi
   done
+  verify_developer_id_code "StarcatScreensaver.saver" "$SAVER_PATH"
 fi
 
 FINAL_ENTITLEMENTS="$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)"

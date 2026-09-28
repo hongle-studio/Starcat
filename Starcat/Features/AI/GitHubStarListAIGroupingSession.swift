@@ -142,6 +142,8 @@ struct GitHubStarListAIGroupingJob: Identifiable, Equatable, Sendable {
     var finishedAt: Date?
     /// 持久化自动忽略项只参与本轮审计展示，不计入 AI 分析进度，也不会被 Worker 领取。
     var isExcludedFromAnalysis = false
+    /// true 表示分组已在 Starcat 生效，但仍等待 GitHub 组织解除 OAuth App 限制后回写。
+    var isLocallyApplied = false
 
     var isApplied: Bool {
         if case .applied = applyState { true } else { false }
@@ -185,6 +187,13 @@ struct GitHubStarListAIGroupingPreflightContext: Equatable, Sendable {
         self.membershipCountByListID = membershipCountByListID
         self.rulesByListID = rulesByListID
     }
+}
+
+/// 一次待执行的 membership 写入。`desiredListIDs == nil` 表示只新增本轮建议，
+/// 非 nil（包括空集合）表示用完整集合覆盖现有分组。
+private struct GitHubStarListMembershipApplyRequest: Sendable {
+    let repo: Repo
+    let desiredListIDs: Set<String>?
 }
 
 /// GitHub Lists 建议生成的最小能力边界。
@@ -286,6 +295,11 @@ final class GitHubStarListAIGroupingSession {
     /// 当前 runTask 批次覆盖的仓库。暂停态重试靠它判断目标能否直接重新入队，
     /// 还是必须重启一个覆盖全部待办的批次（目标可能来自更早批次的失败）。
     private var activeRunRepoIDs: Set<Int64> = []
+    /// Worker 热路径只按索引向前领取任务，避免每个仓库都从 jobs 起点重新线性扫描。
+    /// jobs 的展示顺序在会话期间不会改变；重新入队时统一重建游标与计数即可。
+    @ObservationIgnored private var jobIndexByRepoID: [Int64: Int] = [:]
+    @ObservationIgnored private var nextQueuedJobIndex = 0
+    @ObservationIgnored private var queuedRunJobCount = 0
     private var rateLimitCooldownUntil: Date?
     /// 人工整理启动时冻结自动确认阈值；暂停、继续和单仓重试必须保持同一语义。
     @ObservationIgnored private var manualAutomaticThreshold: Double?
@@ -295,9 +309,14 @@ final class GitHubStarListAIGroupingSession {
     @ObservationIgnored private var automaticDeferredRepoIDs: Set<Int64> = []
     @ObservationIgnored private var activeDraftID: UUID?
     @ObservationIgnored private var isDraftCreated = false
+    /// 批量 mutation 期间只记录脏状态，等整批收口后再通知 UI，避免每个仓库触发一次数据库查询和列表重载。
+    @ObservationIgnored private var hasPendingMembershipChangeNotification = false
+    @ObservationIgnored private var hasPendingAutoIgnoredReposChangeNotification = false
 
     /// 固定五个长期 Worker；不要为每个仓库创建一个 Task，否则大列表会产生无界任务。
     private static let defaultConcurrency = 5
+    /// GitHub membership mutation 保持三路在途；同一 owner 仍串行，保留组织限制的短路语义。
+    private static let membershipApplyConcurrency = 3
     /// 命中 Provider 429 后只让 Worker 0 继续领取任务，避免五路请求持续放大限流。
     private static let rateLimitCooldown: TimeInterval = 30
     private static let organizationOAuthRestrictionFailure = GitHubStarListAIApplyFailure(
@@ -688,6 +707,7 @@ final class GitHubStarListAIGroupingSession {
                 jobs[index].status = .queued
                 jobs[index].analysisFailure = nil
             }
+            rebuildRunQueueState(eligibleRepoIDs: activeRunRepoIDs)
             isPaused = false
         } else {
             var pendingRepoByID: [Int64: Repo] = [:]
@@ -891,6 +911,7 @@ final class GitHubStarListAIGroupingSession {
             isApplying = false
             contextErrorMessage = nil
             activeRunRepoIDs = []
+            rebuildRunQueueState(eligibleRepoIDs: [])
             rateLimitCooldownUntil = nil
 
             for job in jobs where job.status == .failed || {
@@ -1036,11 +1057,12 @@ final class GitHubStarListAIGroupingSession {
         isApplying = true
         applyTask = Task { [weak self] in
             guard let self else { return }
-            await self.applyExactMemberships(
-                repo: job.repo,
-                desiredListIDs: desiredListIDs,
-                allowAutomaticRetry: true
-            )
+            await self.applyMembershipRequests([
+                GitHubStarListMembershipApplyRequest(
+                    repo: job.repo,
+                    desiredListIDs: desiredListIDs
+                )
+            ])
             self.isApplying = false
             self.applyTask = nil
         }
@@ -1069,22 +1091,19 @@ final class GitHubStarListAIGroupingSession {
     func applySelected(repoIDs: Set<Int64>? = nil) {
         guard mode == .manual, !isApplying else { return }
         let targetRepoIDs = repoIDs ?? selectedRepoIDsForBulkApply
-        let selectedRepos = jobs.compactMap { job -> Repo? in
+        let requests = jobs.compactMap { job -> GitHubStarListMembershipApplyRequest? in
             guard targetRepoIDs.contains(job.id),
                   !(selectedListIDsByRepo[job.id] ?? []).isEmpty
             else { return nil }
-            return job.repo
+            return GitHubStarListMembershipApplyRequest(repo: job.repo, desiredListIDs: nil)
         }
-        guard !selectedRepos.isEmpty else { return }
+        guard !requests.isEmpty else { return }
 
         isApplying = true
         applyTask = Task { [weak self] in
             guard let self else { return }
             await self.refreshMembershipsBeforeApply()
-            for repo in selectedRepos {
-                guard !Task.isCancelled else { break }
-                await self.applyOne(repo: repo, allowAutomaticRetry: true)
-            }
+            await self.applyMembershipRequests(requests)
             self.isApplying = false
             self.applyTask = nil
         }
@@ -1240,14 +1259,17 @@ final class GitHubStarListAIGroupingSession {
         applyTask = Task { [weak self] in
             guard let self else { return }
             if let desiredListIDs = self.editedListIDsByRepo[repoID] {
-                await self.applyExactMemberships(
-                    repo: job.repo,
-                    desiredListIDs: desiredListIDs,
-                    allowAutomaticRetry: true
-                )
+                await self.applyMembershipRequests([
+                    GitHubStarListMembershipApplyRequest(
+                        repo: job.repo,
+                        desiredListIDs: desiredListIDs
+                    )
+                ])
             } else {
                 await self.refreshMembershipsBeforeApply()
-                await self.applyOne(repo: job.repo, allowAutomaticRetry: true)
+                await self.applyMembershipRequests([
+                    GitHubStarListMembershipApplyRequest(repo: job.repo, desiredListIDs: nil)
+                ])
             }
             self.isApplying = false
             self.applyTask = nil
@@ -1256,6 +1278,34 @@ final class GitHubStarListAIGroupingSession {
 
     func retryAllRecoverableApplyFailures() {
         retryApplyFailures(repoIDs: nil)
+    }
+
+    /// 显式重试把本地分组回写 GitHub；若组织仍受限，服务层会保留本地覆盖而不丢失结果。
+    func retryLocalMembershipSync(repoID: Int64) {
+        guard mode == .manual,
+              !isApplying,
+              let job = jobs.first(where: { $0.id == repoID }),
+              job.isLocallyApplied
+        else { return }
+
+        isApplying = true
+        applyTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let location = try await self.listService.retryLocalMembership(for: job.repo)
+                if let latestIndex = self.jobs.firstIndex(where: { $0.id == repoID }) {
+                    self.jobs[latestIndex].isLocallyApplied = location == .local
+                }
+                await self.persistJobBestEffort(repoID: repoID)
+                self.recordMembershipChange()
+            } catch {
+                // 本地覆盖仍然有效；这里只反馈远端重试失败，不能把已应用状态降级为失败。
+                self.contextErrorMessage = error.localizedDescription
+            }
+            self.flushGroupingDataChangeNotifications()
+            self.isApplying = false
+            self.applyTask = nil
+        }
     }
 
     /// 按选中子集重试应用失败；`repoIDs` 为空集合视为无可重试目标，`nil` 表示全部可重试项。
@@ -1271,18 +1321,13 @@ final class GitHubStarListAIGroupingSession {
         applyTask = Task { [weak self] in
             guard let self else { return }
             await self.refreshMembershipsBeforeApply()
-            for job in retryJobs {
-                guard !Task.isCancelled else { break }
-                if let desiredListIDs = self.editedListIDsByRepo[job.id] {
-                    await self.applyExactMemberships(
-                        repo: job.repo,
-                        desiredListIDs: desiredListIDs,
-                        allowAutomaticRetry: true
-                    )
-                } else {
-                    await self.applyOne(repo: job.repo, allowAutomaticRetry: true)
-                }
+            let requests = retryJobs.map { job in
+                GitHubStarListMembershipApplyRequest(
+                    repo: job.repo,
+                    desiredListIDs: self.editedListIDsByRepo[job.id]
+                )
             }
+            await self.applyMembershipRequests(requests)
             self.isApplying = false
             self.applyTask = nil
         }
@@ -1372,6 +1417,7 @@ final class GitHubStarListAIGroupingSession {
                 jobs[index].analysisFailure = nil
             }
         }
+        rebuildRunQueueState(eligibleRepoIDs: activeRunRepoIDs)
 
         runTask = Task { [weak self] in
             guard let self else { return }
@@ -1398,6 +1444,7 @@ final class GitHubStarListAIGroupingSession {
         generation: UInt64
     ) async {
         let reposByID = Dictionary(uniqueKeysWithValues: repos.map { ($0.id, $0) })
+        let listNamesByID = Dictionary(uniqueKeysWithValues: availableLists.map { ($0.id, $0.name) })
 
         // 只创建五个长期 Worker。领取动作在 MainActor 上原子完成，因此同一仓库不会被重复消费；
         // 网络 await 期间 MainActor 会让出执行权，五个请求仍能并行在途。
@@ -1409,6 +1456,7 @@ final class GitHubStarListAIGroupingSession {
                         reposByID: reposByID,
                         candidates: candidates,
                         existingMemberships: existingMemberships,
+                        listNamesByID: listNamesByID,
                         automaticThreshold: automaticThreshold,
                         generation: generation
                     )
@@ -1417,6 +1465,8 @@ final class GitHubStarListAIGroupingSession {
             await group.waitForAll()
         }
 
+        // 自动确认会在五个分析 Worker 内完成 mutation；必须等所有 Worker 收口后只刷新一次 UI。
+        flushGroupingDataChangeNotifications()
         guard generation == self.generation, !Task.isCancelled else { return }
         isRunning = false
         runTask = nil
@@ -1438,13 +1488,12 @@ final class GitHubStarListAIGroupingSession {
         reposByID: [Int64: Repo],
         candidates: [GitHubStarListAIContext],
         existingMemberships: [Int64: Set<String>],
+        listNamesByID: [String: String],
         automaticThreshold: Double?,
         generation: UInt64
     ) async {
         while !Task.isCancelled, generation == self.generation {
-            guard jobs.contains(where: {
-                $0.status == .queued && reposByID[$0.id] != nil
-            }) else { return }
+            guard queuedRunJobCount > 0 else { return }
             if isPaused {
                 try? await Task.sleep(for: .milliseconds(250))
                 continue
@@ -1459,6 +1508,7 @@ final class GitHubStarListAIGroupingSession {
                 repo,
                 candidates: candidates,
                 existingMemberships: existingMemberships,
+                listNamesByID: listNamesByID,
                 automaticThreshold: automaticThreshold,
                 generation: generation
             )
@@ -1469,24 +1519,41 @@ final class GitHubStarListAIGroupingSession {
 
     /// MainActor 串行执行领取与状态切换，相当于队列的原子 pop。
     private func claimNextRepo(from reposByID: [Int64: Repo]) -> Repo? {
-        guard let index = jobs.firstIndex(where: {
-            $0.status == .queued && reposByID[$0.id] != nil
-        }) else { return nil }
-        jobs[index].status = .analyzing
-        return reposByID[jobs[index].id]
+        while nextQueuedJobIndex < jobs.count {
+            let index = nextQueuedJobIndex
+            nextQueuedJobIndex += 1
+            guard jobs[index].status == .queued,
+                  let repo = reposByID[jobs[index].id]
+            else { continue }
+            jobs[index].status = .analyzing
+            queuedRunJobCount -= 1
+            return repo
+        }
+        return nil
+    }
+
+    /// 新批次或暂停态重新入队时一次性重建索引；正常领取阶段只移动游标，整体为 O(n)。
+    private func rebuildRunQueueState(eligibleRepoIDs: Set<Int64>) {
+        jobIndexByRepoID = Dictionary(uniqueKeysWithValues: jobs.enumerated().map { ($0.element.id, $0.offset) })
+        nextQueuedJobIndex = jobs.firstIndex {
+            $0.status == .queued && eligibleRepoIDs.contains($0.id)
+        } ?? jobs.endIndex
+        queuedRunJobCount = jobs.count {
+            $0.status == .queued && eligibleRepoIDs.contains($0.id)
+        }
     }
 
     private func processClaimedRepo(
         _ repo: Repo,
         candidates: [GitHubStarListAIContext],
         existingMemberships: [Int64: Set<String>],
+        listNamesByID: [String: String],
         automaticThreshold: Double?,
         generation: UInt64
     ) async {
         do {
             // 先记录 analyzing，再请求 AI。强退恢复时据此转成中断失败，绝不自动重复调用。
             try await persistJob(repoID: repo.id)
-            let listNamesByID = Dictionary(uniqueKeysWithValues: availableLists.map { ($0.id, $0.name) })
             let existingListNames = (existingMemberships[repo.id] ?? [])
                 .compactMap { listNamesByID[$0] }
                 .sorted()
@@ -1526,9 +1593,10 @@ final class GitHubStarListAIGroupingSession {
     }
 
     private func isRateLimited(_ error: Error) -> Bool {
-        guard let aiError = error as? AIClientError else { return false }
-        if case .rateLimited = aiError { return true }
-        return false
+        if let aiError = error as? AIClientError, case .rateLimited = aiError {
+            return true
+        }
+        return (error as? TypeSafeClientError)?.isRateLimitLike == true
     }
 
     private func integrate(
@@ -1538,19 +1606,27 @@ final class GitHubStarListAIGroupingSession {
         switch outcome {
         case .success(let repos, let results):
             for repo in repos {
-                guard let index = jobs.firstIndex(where: { $0.id == repo.id }) else { continue }
-                let suggestions = results[repo.id] ?? []
+                guard let index = jobIndexByRepoID[repo.id] else { continue }
+                // Provider 返回完整概率；自动应用先按用户阈值判断，审核页再收敛为高价值 Top 结果。
+                // 这样 0.50...0.55 的合法自动阈值不会被 Jev Service 提前吞掉。
+                let evaluatedSuggestions = results[repo.id] ?? []
+                let approved = automaticThreshold.map { threshold in
+                    GitHubStarListAISuggestionPolicy.automaticSuggestions(
+                        from: evaluatedSuggestions,
+                        candidates: candidateContexts,
+                        confidenceThreshold: threshold
+                    )
+                } ?? []
+                let suggestions = GitHubStarListAISuggestionPolicy.reviewSuggestions(
+                    from: evaluatedSuggestions,
+                    requiredListIDs: Set(approved.map(\.listId))
+                )
                 jobs[index].suggestions = suggestions
                 jobs[index].status = .completed
                 jobs[index].analysisFailure = nil
                 jobs[index].finishedAt = .now
 
-                if let automaticThreshold {
-                    let approved = GitHubStarListAISuggestionPolicy.automaticSuggestions(
-                        from: suggestions,
-                        candidates: candidateContexts,
-                        confidenceThreshold: automaticThreshold
-                    )
+                if automaticThreshold != nil {
                     selectedListIDsByRepo[repo.id] = Set(approved.map(\.listId))
                     if !approved.isEmpty {
                         await applyOne(repo: repo, allowAutomaticRetry: true)
@@ -1579,7 +1655,7 @@ final class GitHubStarListAIGroupingSession {
         case .failure(let repos, let failure):
             let cancelled = if case .cancelled = failure { true } else { Task.isCancelled }
             for repo in repos {
-                guard let index = jobs.firstIndex(where: { $0.id == repo.id }) else { continue }
+                guard let index = jobIndexByRepoID[repo.id] else { continue }
                 jobs[index].status = cancelled ? .stopped : .failed
                 jobs[index].analysisFailure = cancelled ? nil : failure
                 jobs[index].finishedAt = .now
@@ -1594,6 +1670,86 @@ final class GitHubStarListAIGroupingSession {
             existingListIDsByRepo = latest.mapValues { Set($0.map(\.id)) }
         } catch {
             AppLog.network.error("GitHub star list AI membership refresh failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// 三条固定 lane 并发执行不同 owner 的 GitHub mutation；同一 owner 放在同一批次顺序处理。
+    /// 这样既减少大批量串行等待，也不会在首个组织限制返回前并发发出多条已知必败请求。
+    private func applyMembershipRequests(
+        _ requests: [GitHubStarListMembershipApplyRequest]
+    ) async {
+        guard !requests.isEmpty else { return }
+
+        var ownerOrder: [String] = []
+        var requestsByOwner: [String: [GitHubStarListMembershipApplyRequest]] = [:]
+        for request in requests {
+            let ownerKey = request.repo.owner
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if requestsByOwner[ownerKey] == nil {
+                ownerOrder.append(ownerKey)
+            }
+            requestsByOwner[ownerKey, default: []].append(request)
+        }
+        let ownerBatches = ownerOrder.compactMap { requestsByOwner[$0] }
+
+        var lanes = Array(
+            repeating: [[GitHubStarListMembershipApplyRequest]](),
+            count: Self.membershipApplyConcurrency
+        )
+        for (index, batch) in ownerBatches.enumerated() {
+            lanes[index % Self.membershipApplyConcurrency].append(batch)
+        }
+        let firstBatches = lanes[0]
+        let secondBatches = lanes[1]
+        let thirdBatches = lanes[2]
+
+        // 与同步服务保持固定 lane，避开 Swift 6 对 MainActor TaskGroup closure 的 region isolation 误报。
+        async let firstLane: Void = applyMembershipRequestBatches(firstBatches)
+        async let secondLane: Void = applyMembershipRequestBatches(secondBatches)
+        async let thirdLane: Void = applyMembershipRequestBatches(thirdBatches)
+        _ = await (firstLane, secondLane, thirdLane)
+        flushGroupingDataChangeNotifications()
+    }
+
+    private func applyMembershipRequestBatches(
+        _ batches: [[GitHubStarListMembershipApplyRequest]]
+    ) async {
+        for batch in batches {
+            guard !Task.isCancelled else { break }
+            for request in batch {
+                guard !Task.isCancelled else { break }
+                if let desiredListIDs = request.desiredListIDs {
+                    await applyExactMemberships(
+                        repo: request.repo,
+                        desiredListIDs: desiredListIDs,
+                        allowAutomaticRetry: true
+                    )
+                } else {
+                    await applyOne(repo: request.repo, allowAutomaticRetry: true)
+                }
+            }
+        }
+    }
+
+    private func recordMembershipChange() {
+        hasPendingMembershipChangeNotification = true
+    }
+
+    private func recordAutoIgnoredReposChange() {
+        hasPendingAutoIgnoredReposChangeNotification = true
+    }
+
+    /// 同一批次只发一次刷新信号。membership 刷新会同时读取自动忽略投影，
+    /// 因此两类数据都变化时无需再发第二个回调。
+    private func flushGroupingDataChangeNotifications() {
+        if hasPendingMembershipChangeNotification {
+            hasPendingMembershipChangeNotification = false
+            hasPendingAutoIgnoredReposChangeNotification = false
+            onMembershipsChanged?()
+        } else if hasPendingAutoIgnoredReposChangeNotification {
+            hasPendingAutoIgnoredReposChangeNotification = false
+            onAutoIgnoredReposChanged?()
         }
     }
 
@@ -1625,7 +1781,8 @@ final class GitHubStarListAIGroupingSession {
         var lastFailure: GitHubStarListAIApplyFailure?
         for attempt in 1...maximumAttempts {
             do {
-                let added = try await listService.addRepo(repo, toLists: requested)
+                let writeResult = try await listService.addRepo(repo, toLists: requested)
+                let added = writeResult.changedListIDs
                 // `addRepo` 返回空集合既可能是“远端无需新增”，也可能是应用前本地仓储
                 // 已由同步刷新到目标 membership。两种情况都应把本轮请求视为已确认，
                 // 否则会出现 UI 显示已应用、会话内 current groups 却仍缺失的假状态。
@@ -1636,9 +1793,10 @@ final class GitHubStarListAIGroupingSession {
                 await clearPersistedAutoIgnore(repoID: repo.id)
                 if let latestIndex = jobs.firstIndex(where: { $0.id == repo.id }) {
                     jobs[latestIndex].applyState = .applied(confirmed)
+                    jobs[latestIndex].isLocallyApplied = writeResult.location == .local
                 }
                 await persistJobBestEffort(repoID: repo.id)
-                onMembershipsChanged?()
+                recordMembershipChange()
                 return
             } catch {
                 let failure = GitHubStarListAIApplyFailure.classify(error)
@@ -1688,15 +1846,16 @@ final class GitHubStarListAIGroupingSession {
 
         for attempt in 1...maximumAttempts {
             do {
-                try await listService.setLists(for: repo, listIDs: desiredListIDs)
+                let location = try await listService.setLists(for: repo, listIDs: desiredListIDs)
                 existingListIDsByRepo[repo.id] = desiredListIDs
                 editedListIDsByRepo.removeValue(forKey: repo.id)
                 await clearPersistedAutoIgnore(repoID: repo.id)
                 if let latestIndex = jobs.firstIndex(where: { $0.id == repo.id }) {
                     jobs[latestIndex].applyState = .applied(desiredListIDs)
+                    jobs[latestIndex].isLocallyApplied = location == .local
                 }
                 await persistJobBestEffort(repoID: repo.id)
-                onMembershipsChanged?()
+                recordMembershipChange()
                 return
             } catch {
                 let failure = GitHubStarListAIApplyFailure.classify(error)
@@ -1729,7 +1888,7 @@ final class GitHubStarListAIGroupingSession {
                 reason: .organizationOAuthRestriction
             )
             preparedAutomaticallyIgnoredRepoIDs.insert(repoID)
-            onAutoIgnoredReposChanged?()
+            recordAutoIgnoredReposChange()
         } catch {
             // 远端限制已经发生，本轮仍必须收敛成忽略；持久化失败只影响跨轮次去重。
             AppLog.database.error("[githubListGrouping] persist auto-ignore failed: \(error.localizedDescription, privacy: .public)")
@@ -1880,12 +2039,18 @@ final class GitHubStarListAIGroupingSession {
         availableLists = []
         rulesByListID = [:]
         existingListIDsByRepo = [:]
+        activeRunRepoIDs = []
+        jobIndexByRepoID = [:]
+        nextQueuedJobIndex = 0
+        queuedRunJobCount = 0
         rateLimitCooldownUntil = nil
         manualAutomaticThreshold = nil
         automaticConfigurationFingerprint = nil
         automaticDeferredRepoIDs = []
         activeDraftID = nil
         isDraftCreated = false
+        hasPendingMembershipChangeNotification = false
+        hasPendingAutoIgnoredReposChangeNotification = false
         isRunning = false
         isPaused = false
         isApplying = false

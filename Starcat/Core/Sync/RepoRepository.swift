@@ -801,7 +801,7 @@ struct GRDBRepoRepository {
             whereClauses.append("r.is_starred = 1")
             whereClauses.append("""
                 EXISTS (
-                    SELECT 1 FROM repo_github_star_lists rgl_scope
+                    SELECT 1 FROM effective_repo_github_star_lists rgl_scope
                     WHERE rgl_scope.repo_id = r.id AND rgl_scope.list_id = ?
                 )
             """)
@@ -810,7 +810,7 @@ struct GRDBRepoRepository {
             whereClauses.append("r.is_starred = 1")
             whereClauses.append("""
                 NOT EXISTS (
-                    SELECT 1 FROM repo_github_star_lists rgl_scope
+                    SELECT 1 FROM effective_repo_github_star_lists rgl_scope
                     WHERE rgl_scope.repo_id = r.id
                 )
                 """)

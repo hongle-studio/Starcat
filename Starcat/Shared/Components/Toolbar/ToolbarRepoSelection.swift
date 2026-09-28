@@ -58,6 +58,15 @@ struct ToolbarRepoSelection: Equatable {
     /// 现在 4 个工厂方法都应该尽量传递 homepage 真值,只有真没有时才 nil。
     let homepage: URL?
 
+    /// 默认分支。下载文件树用这个 ref；缺失时菜单侧回退到 `HEAD`。
+    let defaultBranch: String?
+
+    /// 仓库简介，文件浏览器顶栏用。
+    let summary: String?
+
+    /// 公开 / 私有徽章。缺字段时按公开处理。
+    let isPrivate: Bool
+
     /// 是否已 star。由调用方按 `StarredRegistry.contains(ghRepoId:)` 计算，
     /// 用于 toolbar 上 star/unstar 按钮的视觉态判定。**本类型不主动访问 registry**。
     let isStarred: Bool
@@ -77,6 +86,9 @@ struct ToolbarRepoSelection: Equatable {
             cloneHTTPS: nonEmpty(repo.cloneUrl) ?? defaultHTTPS(owner: repo.owner, name: repo.name),
             cloneSSH: nonEmpty(repo.sshUrl) ?? defaultSSH(owner: repo.owner, name: repo.name),
             homepage: RepoExternalLinks.homepage(repo),
+            defaultBranch: nonEmpty(repo.defaultBranch),
+            summary: nonEmpty(repo.description),
+            isPrivate: repo.isPrivate,
             isStarred: isStarred
         )
     }
@@ -96,6 +108,9 @@ struct ToolbarRepoSelection: Equatable {
             cloneHTTPS: defaultHTTPS(owner: trending.owner, name: trending.name),
             cloneSSH: defaultSSH(owner: trending.owner, name: trending.name),
             homepage: trending.homepage,
+            defaultBranch: nonEmpty(trending.defaultBranch),
+            summary: nonEmpty(trending.description),
+            isPrivate: trending.isPrivate ?? false,
             isStarred: isStarred
         )
     }
@@ -110,6 +125,9 @@ struct ToolbarRepoSelection: Equatable {
             cloneHTTPS: defaultHTTPS(owner: weekly.owner, name: weekly.name),
             cloneSSH: defaultSSH(owner: weekly.owner, name: weekly.name),
             homepage: weekly.card.homepage,
+            defaultBranch: nonEmpty(weekly.card.defaultBranch),
+            summary: nonEmpty(weekly.card.description),
+            isPrivate: weekly.card.isPrivate,
             isStarred: isStarred
         )
     }
@@ -129,5 +147,10 @@ struct ToolbarRepoSelection: Equatable {
 
     private static func defaultSSH(owner: String, name: String) -> String {
         "git@github.com:\(owner)/\(name).git"
+    }
+
+    /// git trees / blob 下载用的 ref。没有默认分支时用 `HEAD`，让 GitHub 解析当前默认分支。
+    var gitRef: String {
+        defaultBranch ?? "HEAD"
     }
 }

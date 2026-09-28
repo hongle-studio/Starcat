@@ -102,6 +102,22 @@ protocol GitHubAPIClientProtocol: Sendable {
     /// 拉取单个仓库按字节统计的语言分布（详情 Hero 进入后按需加载）。
     func repositoryLanguages(owner: String, repo: String) async throws -> [String: Int]
 
+    /// 拉取仓库在指定 ref 上的递归 git tree（详情页按文件勾选下载）。
+    ///
+    /// `ref` 用默认分支或 `HEAD`。截断由 DTO 的 `truncated` 表达，不在这里抛错。
+    func repositoryGitTree(owner: String, repo: String, ref: String) async throws -> GitHubGitTreeDTO
+
+    /// 拉取仓库分支名（文件浏览器切树）。分页由实现方消化，调用方拿到完整列表。
+    func repositoryBranches(owner: String, repo: String) async throws -> [GitHubRepoBranchDTO]
+
+    /// 指定 path 的最近一次提交；没有提交时返回 nil。
+    func repositoryLatestCommit(
+        owner: String,
+        repo: String,
+        path: String,
+        ref: String
+    ) async throws -> GitHubCommitSummaryDTO?
+
     // MARK: - Readme
 
     /// 拉取 README（GitHub 服务端渲染的 HTML 片段）。
@@ -252,6 +268,34 @@ extension GitHubAPIClientProtocol {
         throw NetworkError.clientError(
             statusCode: 501,
             message: "Repository languages are not implemented by this client"
+        )
+    }
+
+    /// 旧 Mock 默认失败，避免测试在未 stub 时拿到空树当成「仓库没文件」。
+    func repositoryGitTree(owner: String, repo: String, ref: String) async throws -> GitHubGitTreeDTO {
+        throw NetworkError.clientError(
+            statusCode: 501,
+            message: "Repository git tree is not implemented by this client"
+        )
+    }
+
+    /// 旧 Mock 默认失败；分支列表不能伪造空数组，否则 UI 会以为仓库没有分支。
+    func repositoryBranches(owner: String, repo: String) async throws -> [GitHubRepoBranchDTO] {
+        throw NetworkError.clientError(
+            statusCode: 501,
+            message: "Repository branches are not implemented by this client"
+        )
+    }
+
+    func repositoryLatestCommit(
+        owner: String,
+        repo: String,
+        path: String,
+        ref: String
+    ) async throws -> GitHubCommitSummaryDTO? {
+        throw NetworkError.clientError(
+            statusCode: 501,
+            message: "Repository commits are not implemented by this client"
         )
     }
 

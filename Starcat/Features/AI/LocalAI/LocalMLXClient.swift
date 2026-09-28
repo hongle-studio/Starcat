@@ -259,7 +259,7 @@ struct LocalMLXClient: AIClientProtocol {
         container: EmbedderModelContainer, inputs: [String]
     ) async throws -> [[Float]] {
         guard !inputs.isEmpty else { return [] }
-        return try await container.perform { context in
+        return await container.perform { context in
             let tokenizer = context.tokenizer
             let tokenized = inputs.map { text -> [Int] in
                 let encoded = tokenizer.encode(text: text, addSpecialTokens: true)

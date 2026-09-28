@@ -2,7 +2,7 @@
 //  AmbientCardFactoryTests.swift
 //  StarcatTests
 //
-//  校验 Repo minimal 映射、Owner 大小写聚合与头像回退。
+//  校验 Owner 大小写聚合与缺头像时的 GitHub 回退。
 //
 
 import Testing
@@ -10,23 +10,6 @@ import Testing
 
 @Suite("Ambient Card Factory")
 struct AmbientCardFactoryTests {
-    @Test("Repo minimal 卡片只保留稳定展示字段")
-    func buildsMinimalRepoCard() throws {
-        var repo = Repo.makeMinimal(owner: "OpenAI", name: "codex")
-        repo.id = 42
-        repo.ownerAvatar = " https://avatars.githubusercontent.com/u/1?v=4 "
-
-        let cards = AmbientCardFactory.cards(from: [repo], scene: .repos)
-        let card = try #require(cards.first)
-
-        #expect(card.id == "repo:42")
-        #expect(card.visualKey == "owner:openai")
-        #expect(card.title == "OpenAI/codex")
-        #expect(card.artworkURLString == "https://avatars.githubusercontent.com/u/1?v=4")
-        #expect(card.subtitle == nil)
-        #expect(card.metadata.isEmpty)
-    }
-
     @Test("Owner 按大小写不敏感聚合并保留首次展示名")
     func groupsOwnersCaseInsensitively() throws {
         var first = Repo.makeMinimal(owner: "OpenAI", name: "codex")
@@ -50,8 +33,9 @@ struct AmbientCardFactoryTests {
         var repo = Repo.makeMinimal(owner: "apple", name: "swift")
         repo.id = 3
 
-        let card = try #require(AmbientCardFactory.cards(from: [repo], scene: .repos).first)
+        let card = try #require(AmbientCardFactory.cards(from: [repo], scene: .owners).first)
 
+        #expect(card.id == "owner:apple")
         #expect(card.artworkURLString == RepoAvatarURL.from(owner: "apple"))
     }
 }

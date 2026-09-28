@@ -295,6 +295,9 @@ struct AutoTidySettings: Codable, Equatable, Sendable {
         return BatchAIQueueOptions(
             actions: actions,
             autoApplyTags: enabled && generateTags,
+            // 自动整理没有人工“允许新增”开关；开启自动标签整理本身就是授权。
+            // 空标签库会先让 Jev 无请求短路，再由 LLM 生成首批标签供后续仓库复用。
+            autoCreateMissingTags: enabled && generateTags,
             confidenceThreshold: useConfidenceThreshold ? confidenceThreshold : 0,
             maxRetries: 3,
             standardActionRepoIDs: standardActionRepoIDs

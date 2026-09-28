@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      .saver 被加载进已经沙箱化的 legacyScreenSaver。宿主对 `/` 已有只读例外。
+      插件自己再开 app-sandbox 后，home-relative 例外相对的是容器家目录，
+      读不到 Direct 写到真实 `$HOME/Library/Application Support` 的快照。
+      disable-library-validation 是 Swift 运行时被系统宿主加载时的既有约束。
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

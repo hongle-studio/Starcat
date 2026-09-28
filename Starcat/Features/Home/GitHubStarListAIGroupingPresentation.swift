@@ -159,6 +159,8 @@ struct GitHubStarListAIReviewItem: Identifiable, Equatable, Sendable {
     let appliedGroupSummaries: [GitHubStarListAIGroupSummaryDisplay]
     let applyState: GitHubStarListAIApplyState
     let isIgnoredByUser: Bool
+    /// 分组当前来自本地覆盖，尚未被 GitHub 接受。
+    let isLocallyApplied: Bool
     /// 已应用仓库正在编辑完整 membership 时，即使 applyState 临时进入 applying，也仍属于“已应用”。
     let hasAppliedMembershipDraft: Bool
     let analysisFailureMessage: String?
@@ -406,6 +408,7 @@ struct GitHubStarListAIGroupingPresentationSnapshot: Equatable, Sendable {
                 ),
                 applyState: job.applyState,
                 isIgnoredByUser: ignoredRepoIDs.contains(job.id),
+                isLocallyApplied: job.isLocallyApplied,
                 hasAppliedMembershipDraft: editedListIDsByRepo[job.id] != nil,
                 analysisFailureMessage: job.analysisFailure?.localizedMessage,
                 finishedAt: job.finishedAt

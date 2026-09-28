@@ -6,7 +6,7 @@
 >
 > 操作规范：[`docs/5-规范/Git-分支与Worktree规范.md`](docs/5-规范/Git-分支与Worktree规范.md)
 >
-> 最后核对：2026-09-15
+> 最后核对：2026-09-23
 
 ## 登记说明
 
@@ -32,9 +32,9 @@
 
 | 分支 | 位置 | 用途 | 当前状态 | 下一步 |
 |---|---|---|---|---|
-| `dev` | 本地 + `origin/dev`；仓库根目录 worktree | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；1.7.0 发布基线与 `main` 已同步（`24636b6b`），Direct、官网、appcast 与 Homebrew 已于 2026-09-16 发布。 | 继续承载 1.7.0 后续维护与新功能开发；App Store 版本发布由 dong4j 完成。 |
+| `dev` | 本地 + `origin/dev`；仓库根目录 worktree | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；1.8.0 发布基线与 `main` 已同步（`892ca01d`）。Direct 1.8.0 已于 2026-09-23 发布（公证、appcast、官网、GitHub Release），App Store 包已就绪待上传。 | App Store 上传由 dong4j 完成；继续承载 1.8.x 维护与下版本开发。 |
 | `codex/performance-optimization` | 本地；无独立 worktree | Starcat macOS App 的 UI、列表分页、数据加载与缓存性能专项优化。 | `已合并`；多轮优化与交互修复已于 2026-09-06 合入 `dev`，独有提交为 0，原 worktree 已安全删除。 | 暂时保留本地分支；如需删除分支，等待 dong4j 单独授权。 |
-| `main` | 本地 + `origin/main`；仓库根目录 worktree | 远端默认稳定主线和发布基线。 | `长期保留`；1.7.0 已于 2026-09-15 推送 `main` 与 `v1.7.0`；Direct 公证、官网、appcast 与 Homebrew 已于 2026-09-16 完成，GitHub Release 已发布，App Store 已上传待处理。 | 保持 1.7.0 发布基线；App Store 版本发布由 dong4j 完成，后续版本继续从已验收的 `dev` 快进。 |
+| `main` | 本地 + `origin/main`；仓库根目录 worktree | 远端默认稳定主线和发布基线。 | `长期保留`；1.8.0 已于 2026-09-23 发布：`v1.8.0` tag（`46ec70bc`，其后仅打包脚本修复至 `892ca01d`）、Direct 公证 / appcast / 官网 / GitHub Release 完成；App Store 包已就绪待上传。 | 保持 1.8.0 发布基线；App Store 上传与处理由 dong4j 完成，后续版本继续从已验收的 `dev` 快进。 |
 
 ## 推荐数据链路跨仓分支
 

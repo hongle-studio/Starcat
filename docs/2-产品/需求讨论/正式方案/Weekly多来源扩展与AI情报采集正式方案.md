@@ -523,7 +523,7 @@ Content-Type: application/json
 规划为 repo-local 中文 skill：
 
 ```text
-.claude/skills/starcat-weekly-import/
+skills/starcat-weekly-import/
 ├── SKILL.md
 ├── agents/openai.yaml
 ├── references/api.md

@@ -14,6 +14,7 @@
 //
 
 import AppIntents
+import AppKit
 import Foundation
 
 @MainActor
@@ -42,8 +43,12 @@ final class AppDependencies {
     let oauthService: any GithubOAuthServiceProtocol
     let authSession: AuthSession
     let syncManager: SyncManager
+    /// 前台探测外部新增 star，只提示不写库。点击后复用 `syncManager` 增量同步。
+    let externalStarInbox: ExternalStarInbox
     /// 主应用唯一的 Widget 快照发布器；负责账户隔离、去抖与 WidgetCenter 刷新。
     let widgetRefreshCoordinator: WidgetRefreshCoordinator
+    /// Direct 屏保快照发布器。App Store 构建内部 isEnabled = false，保持 no-op。
+    let screensaverRefreshCoordinator: ScreensaverRefreshCoordinator
     /// “我的项目”独立 GitHub App 授权状态，不复用主 OAuth 登录状态。
     let projectAccessSession: ProjectAccessSession
     /// 当前用户项目关系与同步代际仓储。
@@ -936,6 +941,12 @@ final class AppDependencies {
         // D-01：构造时用具体类型 GRDBRepoRepository，字段类型是协议 any RepoRepositoryProtocol
         let repo = GRDBRepoRepository(database: db)
         self.repoRepository = repo
+        self.screensaverRefreshCoordinator = ScreensaverRefreshCoordinator(
+            repository: repo,
+            userIDProvider: { [weak session] in
+                session?.state.user?.id
+            }
+        )
         let dataContributionCoordinator = DataContributionCoordinator(
             repository: DataContributionRepository(database: db),
             repoRepository: repo,
@@ -975,6 +986,15 @@ final class AppDependencies {
             userNameProvider: { [weak session] in
                 session?.state.user?.login
             }
+        )
+        self.externalStarInbox = ExternalStarInbox(
+            apiClient: api,
+            repository: repo,
+            syncManager: self.syncManager,
+            userIDProvider: { [weak session] in
+                session?.state.user?.id
+            },
+            isAppActive: { NSApp.isActive }
         )
         let projectAccessSession = ProjectAccessSession()
         self.projectAccessSession = projectAccessSession
@@ -1087,6 +1107,19 @@ final class AppDependencies {
         let summaryRepo = GRDBAISummaryRepository(database: db)
         self.aiSummaryRepository = summaryRepo
 
+        // Labs POC（2026-09-18）：Jev 决策服务与统一标签路由。
+        // 标签路由直接注入 RepoAIInsightService，因此单仓、纯标签批量、摘要+标签混合任务
+        // 和自动整理都会经过同一套 Jev-first 策略；开关关闭或 Key 缺失仍走原 LLM。
+        let typesafeDecisionService = TypeSafeDecisionService(
+            client: TypeSafeClient(),
+            settings: self.settings,
+            readmeRepository: readmeRepo
+        )
+        let typesafeTagSuggestionRouter = TypeSafeTagSuggestionRouter(
+            typesafeProvider: typesafeDecisionService,
+            settings: self.settings
+        )
+
         // 2026-06-13 W4：RepoContextPacker 客户端接入三件套装配。
         // 顺序：① SharedSnapshotService（无依赖，单 struct 实例 OK）
         //      ② RepoContextStorage（单例，从此 root 走 storage.shared 即 W6 决议）
@@ -1108,7 +1141,8 @@ final class AppDependencies {
             readmeRepository: readmeRepo,
             settings: self.settings,
             repoAIContextProvider: repoAIContextProvider,
-            entitlementGate: self.entitlementGate
+            entitlementGate: self.entitlementGate,
+            tagSuggestionRouter: typesafeTagSuggestionRouter
         )
         self.repoAIInsightService = aiInsight
         self.diskChatHistoryStore = .shared
@@ -1159,6 +1193,14 @@ final class AppDependencies {
         // HOM-52：批量整理服务装在 AI insight + 标签 + 标签关联 + AI 摘要 Repo 之后。
         // 注：onTagsChanged 由 HomeView 在 environment 注入后挂接，刷新 Sidebar 计数。
         let aiOrganizationDraftRepository = GRDBAIOrganizationDraftRepository(database: db)
+
+        // 分组仍保留独立路由：只影响手动分组，不改变 GitHub Lists 自动落库边界。
+        let typesafeGroupingRouter = TypeSafeGitHubListSuggestionRouter(
+            llmProvider: aiInsight,
+            typesafeProvider: typesafeDecisionService,
+            settings: self.settings
+        )
+
         let batchSvc = BatchAIQueueService(
             insightService: aiInsight,
             tagRepository: tagRepo,
@@ -1173,10 +1215,13 @@ final class AppDependencies {
         self.githubStarListAIGroupingSession = GitHubStarListAIGroupingSession(
             repoRepository: repo,
             listService: self.githubStarListSyncService,
-            insightService: aiInsight,
+            insightService: typesafeGroupingRouter,
             entitlementGate: self.entitlementGate,
             draftRepository: aiOrganizationDraftRepository
         )
+        // 会话与路由器互持会造成引用循环，因此构造后回填 weak 探针，
+        // 让路由器能读到当前 mode（手动走 Jev / 自动走 LLM）。
+        typesafeGroupingRouter.attachSession(self.githubStarListAIGroupingSession)
 
         // HOM-126：自动后台 AI 整理调度器。
         // 装配顺序：必须晚于 settings / repoRepository / batchService / syncManager。
@@ -1685,14 +1730,16 @@ final class AppDependencies {
 
         // SyncManager 全量 / 增量同步成功完成 → bootstrapper.reload() 同步 registry 到 DB
         // 注：weak 不需要，bootstrapper 与 syncManager 都由 self 强持（生命周期一致）
-        self.syncManager.onSyncCompleted = { [bootstrapper, starListSyncService = self.githubStarListSyncService, session, ragIndexBuilder = self.knowledgeRAGIndexBuilder, widgetRefreshCoordinator = self.widgetRefreshCoordinator, repositorySpotlightService] in
+        self.syncManager.onSyncCompleted = { [bootstrapper, starListSyncService = self.githubStarListSyncService, session, ragIndexBuilder = self.knowledgeRAGIndexBuilder, widgetRefreshCoordinator = self.widgetRefreshCoordinator, screensaverRefreshCoordinator = self.screensaverRefreshCoordinator, repositorySpotlightService, externalStarInbox = self.externalStarInbox] in
             await bootstrapper.reload()
             if let login = session.state.user?.login {
                 await starListSyncService.sync(login: login)
             }
             await ragIndexBuilder.refreshMetadataForKnowledgeRepos()
             await widgetRefreshCoordinator.publishReady()
+            await screensaverRefreshCoordinator.publishReady()
             repositorySpotlightService.scheduleRebuild()
+            await externalStarInbox.handleSyncCompleted()
         }
         self.syncManager.onFullSyncCompleted = { [dataContributionCoordinator] userID, capturedAt in
             // 不 await：快照和上传是严格旁路，SyncManager 的完成态不等待 Collection 服务。
@@ -1720,6 +1767,7 @@ final class AppDependencies {
         // 还能看到自己的数据，不会进入"无 DB 可用"的死状态。
         session.onUserSessionChanged = { [weak self] userId in
             guard let self else { return }
+            self.externalStarInbox.resetForAccountChange()
             // 自定义索引跨账号共用同一名称。真实登出/切号必须先清空；冷启动从
             // anonymous 占位库恢复同一账号时可保留到切库后的内容指纹核验。
             await self.repositorySpotlightService.prepareForAccountChange(to: userId)
@@ -1727,6 +1775,11 @@ final class AppDependencies {
             self.widgetRefreshCoordinator.publishEmpty(
                 state: userId == nil ? .signedOut : .preparing
             )
+            // 屏保空态是应用图标。冷启动 / 切库时先删快照会让预览先空很久；
+            // 已登录只覆盖发布，只有登出才清目录。
+            if userId == nil {
+                self.screensaverRefreshCoordinator.clear()
+            }
             self.ragComposerDraftStore.removeAll()
             do { try DiskNotificationCommentDraftCache.shared.deleteEverything() }
             catch {
@@ -1784,6 +1837,7 @@ final class AppDependencies {
             if didSwitchDatabase, userId != nil {
                 self.repositorySpotlightService.scheduleRebuild()
                 await self.widgetRefreshCoordinator.publishReady()
+                await self.screensaverRefreshCoordinator.publishReady()
             }
         }
 
@@ -1791,6 +1845,7 @@ final class AppDependencies {
         if !TestEnvironment.isRunning {
             repositorySpotlightService.startObserving()
             self.widgetRefreshCoordinator.startObserving()
+            self.screensaverRefreshCoordinator.startObserving()
             Task { [bootstrapper] in
                 await bootstrapper.reload()
             }
@@ -1903,6 +1958,7 @@ final class AppDependencies {
         let cleaner = CacheCleaner(readmeRepository: readmeRepository)
         await cleaner.clearImageCache()
         cleaner.clearArchives()
+        screensaverRefreshCoordinator.clear()
 
         do { try await DiskReadmeTranslationCache.shared.deleteEverything() }
         catch { AppLog.general.warning("Factory reset: translation cache cleanup failed: \(error.localizedDescription, privacy: .public)") }

@@ -82,7 +82,7 @@ SSH 下看到 `keychainLocked` 不等于 GUI 登录后的本机 Terminal 一定�
 
 - 主仓库 `.git/`。
 - `supports/*` 下每个独立仓库自己的 `.git/`。
-- `.claude/skills/`、脚本和文档。
+- `skills/`（Starcat skill 集，含 install-skills.sh）、`.claude/skills/`（apple-skills / macos-app-skills 参考库）、脚本和文档。
 - `Configs/Secrets.xcconfig`。
 - `sparkle-private-key`，但它只能作为短期迁移文件。
 - `Starcat/Resources/Codebase/codebase.bin`。

@@ -209,7 +209,7 @@ cd ../starcat-discovery-api && go mod tidy && go build ./... && go vet ./...
 ### 添加新的独立支撑项目
 
 新增 API、CLI、Launcher、浏览器扩展、Homebrew、文档或网站项目时，优先使用根目录
-`.claude/skills/starcat-support-project-create`。每个新项目都必须：
+`skills/starcat-support-project-create`。每个新项目都必须：
 
 1. 位于 `supports/` 或 `supports/extensions/`，拥有独立 `.git`、remote、分支、CI/CD
    和版本边界，禁止加入 Starcat 主仓库。

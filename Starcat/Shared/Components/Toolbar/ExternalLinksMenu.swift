@@ -61,6 +61,8 @@ struct ExternalLinksMenu: View {
     let onOpenCodebaseMemory: (Repo) -> Void
     /// 复制 clone URL 成功后的 toast key；由调用方挂稳定 toast，避免本组件持有 @State。
     let onCloneCopied: (String) -> Void
+    /// 打开「按文件勾选下载」Sheet。必须由页面根节点承接，不能在本菜单里 present。
+    let onOpenFileBrowser: (RepoFileBrowserTarget) -> Void
 
     init(
         selection: ToolbarRepoSelection,
@@ -68,7 +70,8 @@ struct ExternalLinksMenu: View {
         codebaseMemoryRepo: Repo? = nil,
         onOpenCodeFlow: @escaping (Repo) -> Void = { _ in },
         onOpenCodebaseMemory: @escaping (Repo) -> Void = { _ in },
-        onCloneCopied: @escaping (String) -> Void = { _ in }
+        onCloneCopied: @escaping (String) -> Void = { _ in },
+        onOpenFileBrowser: @escaping (RepoFileBrowserTarget) -> Void = { _ in }
     ) {
         self.selection = selection
         self.codeFlowRepo = codeFlowRepo
@@ -76,6 +79,7 @@ struct ExternalLinksMenu: View {
         self.onOpenCodeFlow = onOpenCodeFlow
         self.onOpenCodebaseMemory = onOpenCodebaseMemory
         self.onCloneCopied = onCloneCopied
+        self.onOpenFileBrowser = onOpenFileBrowser
     }
 
     var body: some View {
@@ -99,7 +103,8 @@ struct ExternalLinksMenu: View {
                             onOpenCodebaseMemory(repo)
                         }
                     },
-                    onCloneCopied: onCloneCopied
+                    onCloneCopied: onCloneCopied,
+                    onOpenFileBrowser: onOpenFileBrowser
                 )
                 .id(featuredControlIdentity)
             } else {
@@ -139,6 +144,7 @@ struct ExternalLinksMenu: View {
                 }
             }
 
+            FileDownloadMenuSection(selection: selection, onOpen: onOpenFileBrowser)
             CloneURLMenuSection(selection: selection, onCloneCopied: onCloneCopied)
         } label: {
             ToolbarIcon("safari")
@@ -173,6 +179,7 @@ private struct FeaturedExternalLinksControl: View {
     let codebaseMemoryRepo: Repo?
     let onOpenCodebaseMemory: () -> Void
     let onCloneCopied: (String) -> Void
+    let onOpenFileBrowser: (RepoFileBrowserTarget) -> Void
 
     var body: some View {
         Menu {
@@ -227,6 +234,7 @@ private struct FeaturedExternalLinksControl: View {
                 }
             }
 
+            FileDownloadMenuSection(selection: selection, onOpen: onOpenFileBrowser)
             CloneURLMenuSection(selection: selection, onCloneCopied: onCloneCopied)
         } label: {
             ToolbarIcon("safari")
@@ -239,6 +247,32 @@ private struct FeaturedExternalLinksControl: View {
     private func open(_ url: URL?) {
         if let url {
             NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+/// 「下载文件」菜单项。做成 View 而不是自由函数：与 Clone 分区相同，避免 Swift 6
+/// Menu 闭包把 `@escaping` 回调判成跨隔离域 sending。
+private struct FileDownloadMenuSection: View {
+    let selection: ToolbarRepoSelection
+    let onOpen: (RepoFileBrowserTarget) -> Void
+
+    var body: some View {
+        Divider()
+
+        Button {
+            onOpen(
+                RepoFileBrowserTarget(
+                    owner: selection.owner,
+                    name: selection.name,
+                    fullName: selection.fullName,
+                    ref: selection.gitRef,
+                    summary: selection.summary,
+                    isPrivate: selection.isPrivate
+                )
+            )
+        } label: {
+            Label("repo.files.menu", systemImage: "square.and.arrow.down")
         }
     }
 }

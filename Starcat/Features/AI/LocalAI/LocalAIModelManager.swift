@@ -476,8 +476,6 @@ final class LocalAIModelManager {
             }
             struct HFModelInfo: Decodable { let sha: String }
             return try JSONDecoder().decode(HFModelInfo.self, from: data).sha
-        case .modelScope:
-            throw LocalAIDownloadError.invalidURL(source.repo)
         }
     }
 

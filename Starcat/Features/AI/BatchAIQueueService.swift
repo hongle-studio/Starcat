@@ -63,6 +63,9 @@ final class BatchAIQueueService {
     /// 是否被用户暂停。`isRunning && !isPaused` 才会拉下一个 job。
     private(set) var isPaused: Bool = false
 
+    /// 本轮的显式调用来源。Provider 路由依赖它区分人工建议与自动写入链路。
+    private(set) var invocationMode: BatchAIInvocationMode = .manual
+
     /// HOM-126：本轮是否是「自动后台整理」触发（区别于 HOM-52 用户手动整理）。
     ///
     /// 用途：
@@ -71,8 +74,8 @@ final class BatchAIQueueService {
     ///   Sidebar 改用「AI 自动整理中 N/M」轻量行展示进度。
     /// - 服务自身不主动唤起 UI（本来就不持有 UI），所以"静默"语义全部由订阅方实现。
     ///
-    /// 生命周期：在 `start(...)` 时设置，`reset()` 清回 false。
-    private(set) var silent: Bool = false
+    /// 它只负责 UI 展示语义；Provider 路由必须读取 `invocationMode`，不能反向依赖该派生值。
+    var silent: Bool { invocationMode == .automatic }
 
     /// 当前 Worker 正在处理的 repo id；数量不会超过 `defaultConcurrency`。
     private(set) var processingJobIDs: Set<Int64> = []
@@ -300,12 +303,16 @@ final class BatchAIQueueService {
     /// 行为：清掉上一批次的 jobs（即使是已完成的）→ 把传入 repos 全部入队 → 启动循环。
     /// 如果当前正在跑且未结束，会被拒绝（调用方应先 cancel）。
     ///
-    /// - Parameter silent: HOM-126 新增。`true` 表示由自动调度器触发，
+    /// - Parameter invocationMode: `.automatic` 表示由自动调度器触发，
     ///   订阅方（HomeView / 浮动面板 / Banner）应避免主动弹任何 sheet / 强提示；
-    ///   Sidebar 改用「AI 自动整理中 N/M」轻量行展示进度。默认 `false` 维持 HOM-52
+    ///   Sidebar 改用「AI 自动整理中 N/M」轻量行展示进度。默认 `.manual` 维持 HOM-52
     ///   手动模式行为不变。
     @discardableResult
-    func start(repos: [Repo], options: BatchAIQueueOptions, silent: Bool = false) -> Bool {
+    func start(
+        repos: [Repo],
+        options: BatchAIQueueOptions,
+        invocationMode: BatchAIInvocationMode = .manual
+    ) -> Bool {
         guard !isRunning else {
             AppLog.ai.warning("[batch-ai] start() ignored: already running")
             return false
@@ -329,14 +336,14 @@ final class BatchAIQueueService {
             return false
         }
         do {
-            try validateConfiguration(for: options)
+            try validateConfiguration(for: options, invocationMode: invocationMode)
         } catch {
             // 只记录一次批次级配置错误，不能把同一个缺失项扩散成数千条 job 失败。
             AppLog.ai.warning("[batch-ai] start() blocked by AI configuration: \(error.localizedDescription, privacy: .public)")
             return false
         }
         self.options = options
-        self.silent = silent
+        self.invocationMode = invocationMode
         self.jobs = repos.map { repo in
             BatchAIJob(
                 repoId: repo.id,
@@ -360,19 +367,22 @@ final class BatchAIQueueService {
         self.pendingTagCreationsByCanonicalKey = [:]
         self.retryNotBeforeByRepoID = [:]
         self.rateLimitCooldownUntil = nil
-        self.activeDraftID = silent ? nil : UUID()
-        self.isDraftCreated = silent
-        AppLog.ai.notice("[batch-ai] start: count=\(repos.count, privacy: .public), autoApplyTags=\(options.autoApplyTags, privacy: .public), threshold=\(options.confidenceThreshold, privacy: .public), silent=\(silent, privacy: .public)")
+        self.activeDraftID = invocationMode == .automatic ? nil : UUID()
+        self.isDraftCreated = invocationMode == .automatic
+        AppLog.ai.notice("[batch-ai] start: count=\(repos.count, privacy: .public), autoApplyTags=\(options.autoApplyTags, privacy: .public), threshold=\(options.confidenceThreshold, privacy: .public), mode=\(String(describing: invocationMode), privacy: .public)")
         launchRunLoop()
         return true
     }
 
     /// 整理弹窗的只读预检结果。UI 与 `start()` 复用同一校验入口，避免按钮显示可用，
     /// 点击后却创建整批失败任务。返回值已经本地化，可直接作为错误说明展示。
-    func configurationIssue(for options: BatchAIQueueOptions) -> String? {
+    func configurationIssue(
+        for options: BatchAIQueueOptions,
+        invocationMode: BatchAIInvocationMode = .manual
+    ) -> String? {
         guard options.isValidForStart else { return nil }
         do {
-            try validateConfiguration(for: options)
+            try validateConfiguration(for: options, invocationMode: invocationMode)
             return nil
         } catch {
             return error.localizedDescription
@@ -482,7 +492,8 @@ final class BatchAIQueueService {
             activeDraftID = draft.id
             isDraftCreated = true
             options = header.options
-            silent = false
+            // 只有人工会话会持久化草稿；恢复后仍保持人工路由语义，但不会自动重放请求。
+            invocationMode = .manual
             startedAt = header.startedAt
             jobs = snapshots.map { $0.restoredJob() }
             repoCache = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.repo.id, $0.repo) })
@@ -531,7 +542,7 @@ final class BatchAIQueueService {
         processingJobIDs = []
         cancelRequested = false
         accountResetRequested = false
-        silent = false
+        invocationMode = .manual
         hasPendingTagsChangedNotification = false
         isBulkApplyingSuggestedTags = false
         frozenTagReviewSelectionCount = nil
@@ -1154,7 +1165,17 @@ final class BatchAIQueueService {
         let includesSummary = options.shouldRun(.summary, forRepoID: jobId)
         let includesTags = options.shouldRun(.tags, forRepoID: jobId)
         let suggestions: [AITagSuggestion]
-        if includesSummary || includesTags {
+        if includesTags && !includesSummary {
+            // 纯标签任务进入标签专用路由；调用来源保留队列语义，新增策略负责控制
+            // Jev 结果不足时是否允许 LLM 补充词表外的新标签。
+            let suggestionsByRepoID = try await insightService.generateBatchTagSuggestions(
+                for: [repo],
+                tagHintsByRepoID: [repo.id: hints],
+                invocationMode: invocationMode,
+                tagGenerationPolicy: options.tagGenerationPolicy
+            )
+            suggestions = suggestionsByRepoID[repo.id] ?? []
+        } else if includesSummary {
             let insight = try await insightService.generateBatchInsight(
                 for: repo,
                 existingTagHints: hints,
@@ -1162,16 +1183,18 @@ final class BatchAIQueueService {
                 includeTags: includesTags,
                 // 标签单独运行时不需要摘要上下文，避免无意义地准备代码或外部搜索。
                 codeContextEnabledOverride: includesSummary ? options.codeContextEnabledOverride : nil,
-                externalContextEnabledOverride: includesSummary ? options.externalContextEnabledOverride : nil
+                externalContextEnabledOverride: includesSummary ? options.externalContextEnabledOverride : nil,
+                tagGenerationPolicy: options.tagGenerationPolicy
             )
             suggestions = insight.insight.suggestedTags
-            // 标签任务的空结果没有任何可审核或可应用内容，不能计为“全部完成”。
-            // 摘要单独运行仍允许 suggestions 为空，因此只在本仓库确实执行标签任务时失败。
-            guard !includesTags || !suggestions.isEmpty else {
-                throw AIRecommendationValidationError.emptyTagSuggestions
-            }
         } else {
             suggestions = []
+        }
+
+        // 标签任务的空结果没有任何可审核或可应用内容，不能计为“全部完成”。
+        // 摘要单独运行仍允许 suggestions 为空，因此只在本仓库确实执行标签任务时失败。
+        guard !includesTags || !suggestions.isEmpty else {
+            throw AIRecommendationValidationError.emptyTagSuggestions
         }
 
         return JobOutcome(suggestions: suggestions)
@@ -1181,10 +1204,15 @@ final class BatchAIQueueService {
     ///
     /// 校验必须留在 Service 层：手动弹窗和自动调度器都能启动队列，只在 UI 禁用按钮
     /// 会留下绕过路径。`ensureGenerationClientsReady` 只构造客户端，不发网络请求。
-    private func validateConfiguration(for options: BatchAIQueueOptions) throws {
+    private func validateConfiguration(
+        for options: BatchAIQueueOptions,
+        invocationMode: BatchAIInvocationMode
+    ) throws {
         try insightService.ensureGenerationClientsReady(
             includeSummary: options.actions.contains(.summary),
-            includeTags: options.actions.contains(.tags)
+            includeTags: options.actions.contains(.tags),
+            invocationMode: invocationMode,
+            tagGenerationPolicy: options.tagGenerationPolicy
         )
     }
 
@@ -1360,6 +1388,7 @@ final class BatchAIQueueService {
                     tag = created
                     existingTagByName[created.name] = created
                     existingTagByKey[key] = created
+                    rememberTagInSharedLibrary(created.name, canonicalKey: key)
                 } catch {
                     AppLog.ai.error("[batch-ai] auto-create tag failed: repo=\(repoId, privacy: .public), tag=\(normalized, privacy: .public), error=\(error.localizedDescription, privacy: .public)")
                 }
@@ -1380,6 +1409,20 @@ final class BatchAIQueueService {
             }
         }
         return outcome
+    }
+
+    /// 自动整理创建的新标签要立刻进入本轮内存词表，让后续领取的仓库优先交给 Jev 复用。
+    /// 首波并发 Worker 仍可能同时触发 LLM，这是有界并发冷启动的预期行为；从下一波开始
+    /// 即可看到已经落库的标签，不必等整轮结束后重新加载全库。
+    private func rememberTagInSharedLibrary(_ name: String, canonicalKey: String) {
+        guard !canonicalKey.isEmpty else { return }
+        var library = sharedTagLibrary ?? []
+        guard !library.contains(where: {
+            AITagSuggestionPolicy.canonicalKey($0) == canonicalKey
+        }) else { return }
+        // 共享词表有字符预算；新建标签前插，避免已有大词表把刚生成的标签截断在预算外。
+        library.insert(name, at: 0)
+        sharedTagLibrary = library
     }
 
     /// 创建或复用自动应用所需的新标签。
@@ -1546,6 +1589,11 @@ final class BatchAIQueueService {
         if error is AIRecommendationValidationError {
             return true
         }
+        if error is TypeSafeClientError {
+            // TypeSafeClient 已在单次请求内处理传输错误、408、429 与 5xx 的有限重试。
+            // 这里再按 job 重试会形成乘法放大；失败行仍保留给用户通过现有入口显式重试。
+            return true
+        }
         if let insight = error as? RepoAIInsightError {
             switch insight {
             case .missingAPIKey, .missingProvider:
@@ -1567,9 +1615,10 @@ final class BatchAIQueueService {
     }
 
     private func isRateLimited(_ error: Error) -> Bool {
-        guard let aiError = error as? AIClientError else { return false }
-        if case .rateLimited = aiError { return true }
-        return false
+        if let aiError = error as? AIClientError, case .rateLimited = aiError {
+            return true
+        }
+        return (error as? TypeSafeClientError)?.isRateLimitLike == true
     }
 
     // MARK: - 人工会话草稿

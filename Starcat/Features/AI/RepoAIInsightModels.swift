@@ -143,7 +143,7 @@ enum AITagSuggestionCountPolicy {
     static func clamp(minimum: Int, maximum: Int) -> (minimum: Int, maximum: Int) {
         let loBound = allowedRange.lowerBound
         let hiBound = allowedRange.upperBound
-        var hi = min(max(maximum, loBound), hiBound)
+        let hi = min(max(maximum, loBound), hiBound)
         var lo = min(max(minimum, loBound), hiBound)
         if lo > hi { lo = hi }
         return (lo, hi)
@@ -153,6 +153,36 @@ enum AITagSuggestionCountPolicy {
     static func displayRange(minimum: Int, maximum: Int) -> String {
         let clamped = clamp(minimum: minimum, maximum: maximum)
         return "\(clamped.minimum)–\(clamped.maximum)"
+    }
+}
+
+/// 批量标签模型在当前请求中的单一职责。
+///
+/// Jev 已经完成现有词表筛选后，LLM 只能补充一个词表外的新标签，不能重新选择
+/// 被 Jev 判定为不匹配的旧标签。显式建模用途，避免靠清空词表等隐式参数改变 Prompt 语义。
+enum AITagSuggestionPurpose: Equatable, Sendable {
+    case reuseFirst
+    case newOnly
+}
+
+/// 一次标签生成请求的业务策略。
+///
+/// JEV 只负责给现有标签打分；是否允许在现有标签不足时调用 LLM 创建新概念，必须由
+/// 发起场景显式决定。`minimumReusableConfidence` 只参与“现有标签是否已经足够”的判断，
+/// 不会在这里丢弃低分建议，最终展示或自动应用仍由各自界面的阈值策略负责。
+struct AITagGenerationPolicy: Equatable, Sendable {
+    var allowNewTags: Bool
+    var minimumReusableConfidence: Double
+
+    /// 单仓面板由用户逐项确认，允许在词表不足时补一个新标签。
+    static let manualReview = AITagGenerationPolicy(
+        allowNewTags: true,
+        minimumReusableConfidence: 0
+    )
+
+    init(allowNewTags: Bool, minimumReusableConfidence: Double) {
+        self.allowNewTags = allowNewTags
+        self.minimumReusableConfidence = min(max(minimumReusableConfidence, 0), 1)
     }
 }
 

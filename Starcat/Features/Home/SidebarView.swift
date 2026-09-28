@@ -225,8 +225,7 @@ struct SidebarView: View {
                 list: item.list,
                 service: dependencies.githubStarListSyncService,
                 onSaved: {
-                    await viewModel.refreshSidebar()
-                    await viewModel.reloadItems(forceRefresh: true)
+                    await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
                 }
             )
             .appLocaleEnvironment()
@@ -264,13 +263,12 @@ struct SidebarView: View {
             // 后台自动分组不依赖审核 Sheet 是否打开；回调必须在 Sidebar 生命周期内常驻。
             dependencies.githubStarListAIGroupingSession.onMembershipsChanged = {
                 Task { @MainActor in
-                    await viewModel.refreshSidebar()
-                    await viewModel.reloadItems(forceRefresh: true)
+                    await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
                 }
             }
             dependencies.githubStarListAIGroupingSession.onAutoIgnoredReposChanged = {
                 Task { @MainActor in
-                    await viewModel.refreshSidebar()
+                    await viewModel.refreshGitHubStarListData(reloadCurrentList: false)
                 }
             }
         }
@@ -1861,10 +1859,7 @@ struct SidebarView: View {
         guard let login = authSession.state.user?.login else { return }
         Task {
             await dependencies.githubStarListSyncService.sync(login: login)
-            await viewModel.refreshSidebar()
-            if viewModel.selection.isGitHubStarListContext {
-                await viewModel.reloadItems(forceRefresh: true)
-            }
+            await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
         }
     }
 
@@ -2386,8 +2381,7 @@ struct SidebarView: View {
             if viewModel.selection == .githubStarList(list.id) {
                 viewModel.selection = .githubStarListUngrouped
             }
-            await viewModel.refreshSidebar()
-            await viewModel.reloadItems(forceRefresh: true)
+            await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
         } catch {
             AppLog.network.error("Delete GitHub star list from sidebar failed: \(error.localizedDescription, privacy: .public)")
         }

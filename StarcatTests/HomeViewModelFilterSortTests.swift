@@ -1185,6 +1185,51 @@ struct HomeViewModelFilterSortTests {
         #expect(vm.githubStarListUngroupedCount == 1)
     }
 
+    @Test("GitHub Lists 窄刷新更新 membership 投影与计数")
+    func refreshGitHubStarListDataUpdatesMembershipProjection() async throws {
+        let db = try InMemoryDatabaseManager()
+        let repo = GRDBRepoRepository(database: db)
+        let tagRepo = GRDBTagRepository(database: db)
+        let rtRepo = GRDBRepoTagRepository(database: db)
+        let noteRepo = GRDBRepoNoteRepository(database: db)
+        let listRepo = GRDBGitHubStarListRepository(database: db)
+
+        try await insertRepo(db, id: 1, fullName: "o/one", stars: 1, starredAt: "2026-06-26T02:00:00Z")
+        try await insertRepo(db, id: 2, fullName: "o/two", stars: 1, starredAt: "2026-06-26T01:00:00Z")
+        try await listRepo.replaceRemoteSnapshot(
+            lists: [
+                GitHubStarListRemoteRecord(
+                    id: "list-1",
+                    name: "Tools",
+                    description: nil,
+                    isPrivate: false,
+                    position: 0,
+                    createdAt: nil,
+                    updatedAt: nil
+                )
+            ],
+            memberships: [
+                GitHubStarListRemoteMembership(listId: "list-1", repoFullName: "o/one")
+            ],
+            syncedAt: Date(timeIntervalSince1970: 0)
+        )
+        let vm = HomeViewModel(
+            repository: repo,
+            tagRepository: tagRepo,
+            repoTagRepository: rtRepo,
+            githubStarListRepository: listRepo,
+            repoNoteRepository: noteRepo
+        )
+        await vm.refreshSidebar()
+
+        try await listRepo.setListIds(forRepo: 2, listIds: ["list-1"])
+        await vm.refreshGitHubStarListData(reloadCurrentList: false)
+
+        #expect(vm.githubStarListCounts["list-1"] == 2)
+        #expect(vm.githubStarListUngroupedCount == 0)
+        #expect(vm.githubStarListIDsByRepo[2] == ["list-1"])
+    }
+
     @Test("GitHub Stars List: 切换分组临时跳过 row reveal")
     func githubStarListSwitchSkipsRowReveal() async throws {
         let db = try InMemoryDatabaseManager()

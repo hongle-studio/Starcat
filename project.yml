@@ -359,6 +359,9 @@ targets:
       - package: BorderBeamKit
       - package: ThinkingOrbsKit
       - target: StarcatDirectWidgets
+      - target: StarcatScreensaver
+        embed: true
+        codeSign: true
     postBuildScripts:
       - name: "Copy Changelog Resource"
         script: |
@@ -467,6 +470,64 @@ targets:
         showEnvVarsInLog: false
         basedOnDependencyAnalysis: false
 
+  # Direct 渠道系统屏保。App Store target 不依赖本 bundle。
+  # Core 只编进可移植模型 / Engine / 快照只读层；安装器和网络缓存留在主应用。
+  StarcatScreensaver:
+    type: bundle
+    platform: macOS
+    sources:
+      - path: StarcatScreensaver
+        excludes:
+          - "**/.DS_Store"
+      - path: Starcat/Features/Ambient/Core
+        excludes:
+          - AmbientCardFactory.swift
+      - path: Starcat/Core/Screensaver
+        excludes:
+          - ScreensaverInstaller.swift
+          - ScreensaverSnapshotPublisher.swift
+          - ScreensaverAvatarCache.swift
+          - ScreensaverRefreshCoordinator.swift
+      - path: Starcat/Resources/Assets.xcassets
+        buildPhase: resources
+    configFiles:
+      Debug: Configs/Build.xcconfig
+      Release: Configs/Build.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.starcat.app.direct.screensaver
+        PRODUCT_NAME: StarcatScreensaver
+        PRODUCT_MODULE_NAME: StarcatScreensaver
+        WRAPPER_EXTENSION: saver
+        MACH_O_TYPE: mh_bundle
+        GENERATE_INFOPLIST_FILE: YES
+        COMBINE_HIDPI_IMAGES: YES
+        SKIP_INSTALL: YES
+        CODE_SIGN_ENTITLEMENTS: StarcatScreensaver/StarcatScreensaver.entitlements
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+        INFOPLIST_KEY_NSPrincipalClass: StarcatScreensaver.StarcatScreenSaverView
+        INFOPLIST_KEY_CFBundleDisplayName: Starcat
+        INFOPLIST_KEY_CFBundleName: Starcat
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDirect
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.starcat.app.direct.debug.screensaver
+    info:
+      path: StarcatScreensaver/Info.generated.plist
+      properties:
+        NSPrincipalClass: StarcatScreensaver.StarcatScreenSaverView
+        CFBundleExecutable: StarcatScreensaver
+    dependencies:
+      - sdk: ScreenSaver.framework
+      - sdk: SwiftUI.framework
+      - sdk: AppKit.framework
+    postBuildScripts:
+      - name: "Auto Bump Version (from git)"
+        script: '"${SRCROOT}/scripts/bump-version.sh"'
+        runOnlyWhenInstalling: false
+        showEnvVarsInLog: false
+        basedOnDependencyAnalysis: false
+
 schemes:
   Starcat:
     build:
@@ -497,6 +558,7 @@ schemes:
     build:
       targets:
         StarcatDirect: all
+        StarcatScreensaver: all
     run:
       config: Debug
     profile:

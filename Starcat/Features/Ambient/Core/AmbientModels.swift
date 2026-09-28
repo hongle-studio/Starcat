@@ -2,25 +2,15 @@
 //  AmbientModels.swift
 //  Starcat
 //
-//  Ambient 全屏相册墙的纯值模型。Core 层只描述场景、卡片和单调时钟 deadline，
+//  屏保网格的纯值模型。Core 层只描述 Owner 场景、卡片和单调时钟 deadline，
 //  不依赖 SwiftUI / AppKit，确保抽卡与休眠恢复逻辑可以独立单测。
 //
 
 import Foundation
 
-/// Ambient v1 提供的两个独立浏览场景。
+/// 屏保快照只有 Owner 头像墙。仓库全屏场景已随 Debug 实验窗口一起移除。
 enum AmbientSceneKind: String, Sendable, CaseIterable {
-    case repos
     case owners
-}
-
-/// 卡片信息密度的预留枚举。
-///
-/// v1 固定使用 `minimal`；其余 case 只冻结未来扩展的模型语义，不提前渲染。
-enum AmbientDensity: String, Sendable, CaseIterable {
-    case minimal
-    case info
-    case rich
 }
 
 /// Engine 和 UI 之间共享的最小展示卡片。

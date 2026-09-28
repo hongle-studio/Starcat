@@ -2,34 +2,24 @@
 //  AmbientCardFactory.swift
 //  Starcat
 //
-//  把数据库 Repo 快照压缩为 Ambient minimal 卡片。Factory 不读取数据库、不做 I/O，
-//  并统一归一化 owner visualKey，避免共享头像的 Repo 在网格中相邻出现。
+//  把数据库 Repo 快照聚合成 Owner 卡片，供屏保快照发布。Factory 不读取数据库、不做 I/O，
+//  并统一归一化 owner visualKey，避免同一人头像重复进墙。
 //
 
 import Foundation
 
-/// Factory 的稳定输入，隔离 Repo 后续字段扩展对 Ambient 的影响。
+/// Factory 的稳定输入。屏保只消费 owner 与头像，仓库名不再进格子。
 struct AmbientRepoSeed: Equatable, Sendable {
-    let id: Int64
     let owner: String
-    let fullName: String
     let ownerAvatarURL: String?
-    let language: String?
-    let starsCount: Int
-    let description: String?
 
     init(repo: Repo) {
-        id = repo.id
         owner = repo.owner
-        fullName = repo.fullName
         ownerAvatarURL = repo.ownerAvatar
-        language = repo.language
-        starsCount = repo.starsCount
-        description = repo.description
     }
 }
 
-/// Repo / Owner 两类 minimal 卡片的纯值工厂。
+/// Owner 卡片的纯值工厂。仓库格子只存在于已删除的 Debug 全屏窗口。
 enum AmbientCardFactory {
     static func cards(from repos: [Repo], scene: AmbientSceneKind) -> [AmbientCardModel] {
         cards(from: repos.map(AmbientRepoSeed.init), scene: scene)
@@ -37,24 +27,8 @@ enum AmbientCardFactory {
 
     static func cards(from seeds: [AmbientRepoSeed], scene: AmbientSceneKind) -> [AmbientCardModel] {
         switch scene {
-        case .repos:
-            repoCards(from: seeds)
         case .owners:
             ownerCards(from: seeds)
-        }
-    }
-
-    private static func repoCards(from seeds: [AmbientRepoSeed]) -> [AmbientCardModel] {
-        seeds.map { seed in
-            let normalizedOwner = normalizeOwner(seed.owner)
-            return AmbientCardModel(
-                id: "repo:\(seed.id)",
-                visualKey: "owner:\(normalizedOwner)",
-                title: seed.fullName,
-                artworkURLString: preferredAvatar(explicit: seed.ownerAvatarURL, owner: seed.owner),
-                subtitle: nil,
-                metadata: [:]
-            )
         }
     }
 

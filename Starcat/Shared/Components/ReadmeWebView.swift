@@ -371,7 +371,10 @@ private struct ReadmeWebContentView: NSViewRepresentable {
             reduceMotion: reduceMotion
         )
         loadIfNeeded(into: webView, context: context)
-        context.coordinator.updateStarHistoryRenderState(starHistoryRenderState)
+        context.coordinator.updateStarHistoryRenderState(
+            starHistoryRenderState,
+            reduceMotion: reduceMotion
+        )
         return webView
     }
 
@@ -388,7 +391,10 @@ private struct ReadmeWebContentView: NSViewRepresentable {
             reduceMotion: reduceMotion
         )
         loadIfNeeded(into: webView, context: context)
-        context.coordinator.updateStarHistoryRenderState(starHistoryRenderState)
+        context.coordinator.updateStarHistoryRenderState(
+            starHistoryRenderState,
+            reduceMotion: reduceMotion
+        )
         scrollToTopIfNeeded(in: webView, context: context)
         performFindIfNeeded(in: webView, context: context)
     }
@@ -548,6 +554,9 @@ private struct ReadmeWebContentView: NSViewRepresentable {
         private var didReportApproachingBottom = false
         /// App 关动画或系统 Reduce Motion 时，DOM 入场一律关掉。
         private var translationReduceMotion = false
+        /// 同上，作用于 Star History 卡片的曲线生长入场；WebView 内 CSS 的
+        /// `prefers-reduced-motion` 只感知系统偏好，App 内开关必须由 Swift 侧 OR 后传入。
+        private var starHistoryReduceMotion = false
         private var mermaidDocumentRevision = 0
         private var mermaidRuntimeTask: Task<Void, Never>?
         private var findTask: Task<Void, Never>?
@@ -713,8 +722,13 @@ private struct ReadmeWebContentView: NSViewRepresentable {
         ///
         /// HTML 由 Swift 固定模板生成并完成转义，通过 `arguments` 桥接给 WebKit；这里不把
         /// HTML 插进 JavaScript 源码，避免引号或换行改变脚本结构。revision 相同则完全跳过。
-        func updateStarHistoryRenderState(_ state: ReadmeStarHistoryRenderState) {
+        /// `animate` 与翻译入场同一门控：状态声明「这是一次入场」且未开 Reduce Motion。
+        func updateStarHistoryRenderState(
+            _ state: ReadmeStarHistoryRenderState,
+            reduceMotion: Bool
+        ) {
             pendingStarHistoryRenderState = state
+            starHistoryReduceMotion = reduceMotion
             applyStarHistoryRenderStateIfNeeded()
         }
 
@@ -725,6 +739,7 @@ private struct ReadmeWebContentView: NSViewRepresentable {
 
             let state = pendingStarHistoryRenderState
             let revision = state.revision
+            let animateEntrance = state.prefersAnimatedEntrance && !starHistoryReduceMotion
             starHistoryDOMTask?.cancel()
             starHistoryDOMTask = Task { @MainActor [weak self, weak webView] in
                 guard let self, let webView, !Task.isCancelled else { return }
@@ -734,9 +749,12 @@ private struct ReadmeWebContentView: NSViewRepresentable {
                         if (typeof window.starcatReplaceReadmeStarHistory !== 'function') {
                             throw new Error('Starcat README Star History bridge is unavailable');
                         }
-                        window.starcatReplaceReadmeStarHistory(html);
+                        window.starcatReplaceReadmeStarHistory(html, animate);
                         """,
-                        arguments: ["html": state.html ?? ""],
+                        arguments: [
+                            "html": state.html ?? "",
+                            "animate": animateEntrance
+                        ],
                         in: nil,
                         contentWorld: .page
                     )
@@ -883,10 +901,42 @@ private struct ReadmeWebContentView: NSViewRepresentable {
                 return Math.max(0, scrollHeight - clientHeight);
             }
 
-            window.starcatReplaceReadmeStarHistory = function(html) {
+            // 每次调用递增：Swift 渲染状态（骨架 → 正式卡 → 刷新）每次都会重新调
+            // 用桥接函数，上一轮挂起的异步兜底闭包拿到旧 html 晚到时必须失效。
+            var starHistoryApplyEpoch = 0;
+
+            function removeReadmeStarHistory(host) {
+                host.replaceChildren();
+                host.hidden = true;
+                // 卡片被移除：尚未兑现的入场动画一并取消，不转移到之后无关的卡片。
+                host.starcatHistoryRevealOwed = false;
+            }
+
+            function applyReadmeStarHistory(host, html, animate) {
+                host.innerHTML = html;
+                host.querySelectorAll('.starcat-star-history-avatar img').forEach(function(image) {
+                    image.addEventListener('error', function() {
+                        // 缓存图片无法解码时移除损坏图像，保留圆角底框，不显示破图或字母占位。
+                        image.remove();
+                    }, { once: true });
+                });
+                host.hidden = false;
+                // animate 由 Swift 侧 OR 过 Reduce Motion 后传入：true 只在本仓首张
+                // 正式卡片（骨架 → 曲线的入场帧）出现，重渲染一律 false。
+                configureStarHistory(host, animate === true);
+            }
+
+            window.starcatReplaceReadmeStarHistory = function(html, animate) {
                 var host = document.getElementById('starcat-readme-star-history');
                 if (!host) { return; }
                 if (host.starcatHistoryCleanup) { host.starcatHistoryCleanup(); }
+                starHistoryApplyEpoch += 1;
+                var epoch = starHistoryApplyEpoch;
+                if (!html) {
+                    removeReadmeStarHistory(host);
+                    schedule();
+                    return;
+                }
                 // README 已内嵌 history-api 的星标历史卡片时跳过注入，避免同一页面
                 // 出现两张相同卡片。GitHub 渲染会剥掉 data-starcat-star-history
                 // 自定义属性，并把图片 URL 换成 camo 代理地址、原始 URL 保留在
@@ -898,23 +948,60 @@ private struct ReadmeWebContentView: NSViewRepresentable {
                     'img[src*="/embed/v1/repos/"][src*="star-history.svg"],' +
                     'source[srcset*="/embed/v1/repos/"][srcset*="star-history.svg"]'
                 );
-                if (embedded || !html) {
-                    host.replaceChildren();
-                    host.hidden = true;
+                if (!embedded) {
+                    applyReadmeStarHistory(host, html, animate === true);
                     schedule();
                     return;
                 }
-                host.innerHTML = html;
-                host.querySelectorAll('.starcat-star-history-avatar img').forEach(function(image) {
-                    image.addEventListener('error', function() {
-                        // 缓存图片无法解码时移除损坏图像，保留圆角底框，不显示破图或字母占位。
-                        image.remove();
+                // 内嵌标记只证明「作者放了卡片」，不代表图片真的加载成功：camo
+                // 偶发 429/503 或源站抖动时内嵌图裂开，原生卡片又被跳过，README
+                // 底部会彻底空白。因此图片确认加载失败时改注入原生卡片兜底，并
+                // 隐藏整张破损 picture（破图占位 + 兜底卡同框更难看）；若图片稍后
+                // 恢复加载（picture 按 prefers-color-scheme 换源成功等），还原
+                // picture 并撤下兜底卡片，始终只有一张卡片在页面上。
+                var embeddedContainer = embedded.tagName === 'IMG'
+                    ? null
+                    : (embedded.closest('picture') || embedded.parentElement);
+                var embeddedImage = embedded.tagName === 'IMG'
+                    ? embedded
+                    : (embeddedContainer ? embeddedContainer.querySelector('img') : null);
+                // 兜底显示目标：优先整个 <picture>；裸 <img> 时藏 img 自身。
+                var embeddedPicture = embeddedImage
+                    ? (embeddedImage.closest('picture') || embeddedImage)
+                    : null;
+                removeReadmeStarHistory(host);
+                // 先还原显示：上一轮兜底可能已把 picture 隐藏，本轮按图片真实
+                // 状态重新结算（epoch 推进后旧恢复监听已失效，这里兜住「恢复发
+                // 生在两轮调用之间」的窗口）。
+                if (embeddedPicture) { embeddedPicture.style.display = ''; }
+                if (!embeddedImage) { schedule(); return; }
+                if (embeddedImage.complete && embeddedImage.naturalWidth === 0) {
+                    // 加载已结束且失败：load 事件不会再触发，必须立即结算兜底。
+                    applyReadmeStarHistory(host, html, animate === true);
+                    embeddedPicture.style.display = 'none';
+                    watchEmbeddedStarHistoryRecovery(host, embeddedImage, embeddedPicture, epoch);
+                } else if (!embeddedImage.complete) {
+                    embeddedImage.addEventListener('error', function() {
+                        if (epoch !== starHistoryApplyEpoch) { return; }
+                        applyReadmeStarHistory(host, html, animate === true);
+                        embeddedPicture.style.display = 'none';
+                        schedule();
+                        watchEmbeddedStarHistoryRecovery(host, embeddedImage, embeddedPicture, epoch);
                     }, { once: true });
-                });
-                host.hidden = false;
-                configureStarHistory(host);
+                }
                 schedule();
             };
+
+            // 兜底卡片上屏后监听内嵌图片恢复：一旦加载成功就还原 picture 并撤下
+            // 兜底，避免双卡，也避免内嵌图被永久隐藏。
+            function watchEmbeddedStarHistoryRecovery(host, embeddedImage, embeddedPicture, epoch) {
+                embeddedImage.addEventListener('load', function() {
+                    if (epoch !== starHistoryApplyEpoch) { return; }
+                    embeddedPicture.style.display = '';
+                    removeReadmeStarHistory(host);
+                    schedule();
+                }, { once: true });
+            }
 
             function report() {
                 ticking = false;
@@ -975,18 +1062,32 @@ private struct ReadmeWebContentView: NSViewRepresentable {
                 image.dataset.readmeZoomable = 'true';
 
                 function markLoaded() {
+                    image.classList.remove('readme-image-failed');
                     image.classList.add('readme-image-loaded');
                 }
 
-                if (image.complete && image.naturalWidth > 0) {
-                    markLoaded();
+                // 加载失败也必须解除隐形：渐显样式把未标记的图片钉在 opacity:0，
+                // 失败图片若停留该状态，用户看到的是"图片凭空消失"而不是破图 /
+                // alt 文案。失败同时撤掉放大光标与点击预览，避免点开一张裂图。
+                function markFailed() {
+                    image.classList.add('readme-image-failed');
+                    image.removeAttribute('data-readme-zoomable');
+                }
+
+                if (image.complete) {
+                    // complete 且 naturalWidth 为 0 说明加载已经结束且失败
+                    //（404 / 解码错误 / camo 偶发 429-503），load 事件不会再触发，
+                    // 必须在这里直接结算，不能等永远不会来的事件。
+                    if (image.naturalWidth > 0) { markLoaded(); } else { markFailed(); }
                 } else {
                     image.addEventListener('load', markLoaded, { once: true });
+                    image.addEventListener('error', markFailed, { once: true });
                 }
 
                 image.addEventListener('click', function(event) {
                     event.preventDefault();
                     event.stopPropagation();
+                    if (image.classList.contains('readme-image-failed')) { return; }
                     openImagePreview(image);
                 });
             }
@@ -2283,6 +2384,14 @@ enum ReadmeCSS {
         opacity: 1;
         filter: blur(0);
         transform: translateY(0);
+    }
+    /* 失败图片必须与"未标记"区分：未标记=等待渐显，失败=立即显示（WebKit 会
+       退化渲染 alt 文案），否则加载失败表现为整张图凭空消失。放在 loaded 规则
+       之后，与 :not(.readme-image-loaded) 隐藏规则同特异性时由源顺序取胜。 */
+    body.readme-js-ready .markdown-body img.readme-image-failed {
+        opacity: 1;
+        filter: none;
+        transform: none;
     }
     /* 视频使用 WebKit 原生 controls；这里只约束正文布局，不自绘播放器。 */
     .markdown-body video {

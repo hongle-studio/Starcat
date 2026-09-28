@@ -10,7 +10,15 @@ import SwiftUI
 
 extension EnvironmentValues {
     /// 详情按钮把点击时的仓库快照交给稳定宿主，不自行持有 Sheet 或异步任务。
-    @Entry var presentRepoShare: (Repo) -> Void = { _ in }
+    @Entry var presentRepoShare: RepoSharePresenter = RepoSharePresenter()
+}
+
+/// `@Entry` 的值如果是函数类型，SwiftUI 会警告闭包不可比较、依赖可能每次更新都失效；
+/// 包一层 struct 让环境值持有明确的值语义，调用方走 `present` 触发分享。
+/// 不加 @MainActor：@Entry 宏的默认值在非隔离上下文求值，宿主注入的闭包本身
+/// 已是 `@MainActor` 方法，主线程约束由调用点保证。
+struct RepoSharePresenter {
+    var present: (Repo) -> Void = { _ in }
 }
 
 /// 主窗口详情栏和独立仓库窗口共用的分享 presentation host。
@@ -27,7 +35,7 @@ struct RepoShareHost: ViewModifier {
     func body(content: Content) -> some View {
         content
             .environment(taskStore)
-            .environment(\.presentRepoShare, presentOrStartShare)
+            .environment(\.presentRepoShare, RepoSharePresenter(present: presentOrStartShare))
             .toast(message: $completionMessage, icon: "link.circle")
             .sheet(item: $presentation) { presentation in
                 RepoShareTaskSheet(

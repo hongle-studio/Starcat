@@ -1892,13 +1892,14 @@ struct AutoTidySettingsTests {
         #expect(opts.autoApplyTags == false)
     }
 
-    @Test("makeBatchOptions: 勾了标签 → autoApplyTags=true（自动模式明示同意）")
+    @Test("makeBatchOptions: 勾了标签 → 自动应用并允许空词表冷启动")
     func batchOptionsAutoApply() {
         var t = AutoTidySettings.default
         t.enabled = true
         let opts = t.makeBatchOptions()
         #expect(opts.actions == [.tags])
         #expect(opts.autoApplyTags == true)
+        #expect(opts.autoCreateMissingTags == true)
         #expect(opts.confidenceThreshold == 0.90)
     }
 

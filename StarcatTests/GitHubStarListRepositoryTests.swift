@@ -131,6 +131,53 @@ struct GitHubStarListRepositoryTests {
         #expect(try await repo.repoCountsByList()["list-b"] == 1)
     }
 
+    @Test("本地覆盖参与有效分组，并在远端刷新后保留或收敛")
+    func localOverridesSurviveAndConvergeWithRemoteSnapshot() async throws {
+        let (repo, db) = try makeRepo()
+        try await db.insertRepoFixture(id: 1, owner: "octo", name: "one")
+        let lists = [
+            remoteList(id: "list-a", name: "A", position: 0),
+            remoteList(id: "list-b", name: "B", position: 1)
+        ]
+        try await repo.replaceRemoteSnapshot(
+            lists: lists,
+            memberships: [GitHubStarListRemoteMembership(listId: "list-a", repoFullName: "octo/one")],
+            syncedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        try await repo.setLocalListIds(
+            forRepo: 1,
+            listIds: ["list-b"],
+            failureReason: GitHubStarListAIAutoIgnoreReason.organizationOAuthRestriction.rawValue
+        )
+
+        #expect(try await repo.remoteListIds(forRepo: 1) == ["list-a"])
+        #expect(try await repo.listIds(forRepo: 1) == ["list-b"])
+        #expect(try await repo.repoCountsByList()["list-a"] == nil)
+        #expect(try await repo.repoCountsByList()["list-b"] == 1)
+        #expect(try await repo.ungroupedRepoCount() == 0)
+        #expect(try await repo.hasLocalListOverrides(forRepo: 1))
+        #expect(try await repo.fetchPendingLocalMembershipSyncs().first?.desiredListIDs == Set(["list-b"]))
+
+        // GitHub 仍未接受目标集合时，本地覆盖必须跨刷新保留。
+        try await repo.replaceRemoteSnapshot(
+            lists: lists,
+            memberships: [GitHubStarListRemoteMembership(listId: "list-a", repoFullName: "octo/one")],
+            syncedAt: Date(timeIntervalSince1970: 1)
+        )
+        #expect(try await repo.listIds(forRepo: 1) == ["list-b"])
+
+        // 远端最终与本地期望一致后，覆盖行自动收敛，不再进入待同步队列。
+        try await repo.replaceRemoteSnapshot(
+            lists: lists,
+            memberships: [GitHubStarListRemoteMembership(listId: "list-b", repoFullName: "octo/one")],
+            syncedAt: Date(timeIntervalSince1970: 2)
+        )
+        #expect(try await repo.listIds(forRepo: 1) == ["list-b"])
+        #expect(try await repo.hasLocalListOverrides(forRepo: 1) == false)
+        #expect(try await repo.fetchPendingLocalMembershipSyncs().isEmpty)
+    }
+
     @Test("fetchAllListAssignments: 一个仓库可同时属于多个 Lists")
     func fetchAllAssignmentsKeepsManyToManyMemberships() async throws {
         let (repo, db) = try makeRepo()

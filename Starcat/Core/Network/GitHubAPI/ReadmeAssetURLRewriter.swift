@@ -22,6 +22,16 @@
 //  - 一次性、单向（不会有"先存 raw 再渲染时 rewrite"的不一致风险）。
 //
 //  ────────────────────────────────────────────────────────────────────────────
+//  camo 回源策略（2026-09-18 新增，先于其它规则执行）
+//  ────────────────────────────────────────────────────────────────────────────
+//
+//  - GitHub 会把 README 里所有外链 <img src> / <source srcset> 换成
+//    camo.githubusercontent.com 代理地址，原始 URL 保留在 data-canonical-src；
+//  - App 的 WebKit 网络栈访问 camo 会间歇性失败（详见 rewriteCamoProxiedImages
+//    注释），因此改写回 data-canonical-src 原始地址，绕开 camo 跳数；
+//  - 该规则与 owner/repo 无关，在「owner/repo 缺失」保守短路之前执行。
+//
+//  ────────────────────────────────────────────────────────────────────────────
 //  图片策略（与原 ReadmeWebView 实现一致，**仅是位置迁移**）
 //  ────────────────────────────────────────────────────────────────────────────
 //
@@ -55,28 +65,143 @@ import Foundation
 /// README HTML 图片与视频资源地址重写工具。详见文件头注释。
 enum ReadmeAssetURLRewriter {
 
-    /// 规范化 README HTML 中的图片与 GitHub attachment 视频地址。
+    /// GitHub camo 代理图片的稳定前缀。
+    private static let camoImageProxyRoot = "https://camo.githubusercontent.com/"
+
+    /// 规范化 README HTML 中的图片与视频资源地址。
     ///
     /// 详见文件头 `策略` 节。
     ///
     /// - Parameters:
     ///   - html: GitHub `Accept: application/vnd.github.html` 返回的 HTML 片段
-    ///   - owner: 仓库 owner（缺失 / 空字符串则不重写）
-    ///   - repo: 仓库 name（缺失 / 空字符串则不重写）
+    ///   - owner: 仓库 owner（缺失 / 空字符串则不重写相对路径）
+    ///   - repo: 仓库 name（缺失 / 空字符串则不重写相对路径）
     /// - Returns: 重写后的 HTML；没有命中资源规则时返回原字符串
     static func rewrite(in html: String, owner: String?, repo: String?) -> String {
-        guard let owner, let repo, !owner.isEmpty, !repo.isEmpty else { return html }
+        // camo → canonical 与 owner/repo 无关，先于保守短路执行：
+        // 即使拿不到仓库身份，也至少把图片从不稳定的 camo 代理还原成原始地址。
+        let camoRewritten = rewriteCamoProxiedImages(in: html)
+        guard let owner, let repo, !owner.isEmpty, !repo.isEmpty else { return camoRewritten }
         let rawRoot = "https://raw.githubusercontent.com/\(owner)/\(repo)/HEAD/"
-        let documentDirectory = readmeDocumentDirectory(from: html)
+        let documentDirectory = readmeDocumentDirectory(from: camoRewritten)
         let rawBase = rawRoot + documentDirectory
 
         let imageRewritten = rewriteImageSources(
-            in: html,
+            in: camoRewritten,
             rawBase: rawBase,
             rawRoot: rawRoot,
             documentDirectory: documentDirectory
         )
         return rewriteGitHubVideoSources(in: imageRewritten)
+    }
+
+    /// 把 GitHub camo 代理的 `<img src>` / `<source srcset>` 改写回 `data-canonical-src`
+    /// 保留的原始地址。
+    ///
+    /// 触发原因（2026-09-18 无 GUI WKWebView 探针实测）：App 的 WebKit 网络栈访问
+    /// camo.githubusercontent.com 会间歇性失败（首载约 1/3，推测 HTTP/3/QUIC 走 UDP
+    /// 被 Surge / GFW 干扰；同机 curl 直连与走代理均 20/20 全通），README 内的外链
+    /// 图片（徽章、star-history 卡片）在 App 内随机裂图；而原始地址（shields.io、
+    /// 自托管 history.starcat.ink 等）在 WebKit 里直连稳定。GitHub 渲染 HTML 时在
+    /// camo 图片上保留了 data-canonical-src，因此改回原始地址以绕开 camo 跳数。
+    ///
+    /// 边界（全部命中才改写）：
+    /// - 标签是 `<img>` 或 `<source>`，`src` / `srcset` 指向 camo 前缀；
+    /// - 同标签携带 `data-canonical-src`，且值为 http(s) 绝对地址（按不可信输入
+    ///   校验，防止相对路径或 javascript: 一类怪值进入 src）；
+    /// - `srcset` 含多候选（逗号分隔）不改写，整体替换描述符列表容易破坏语义；
+    /// - `data-canonical-src` 属性原值保留（README 星标历史的内嵌检测依赖它）；
+    ///   替换直接复制源 HTML 里已转义的属性值（&amp; 等），不做二次编解码。
+    private static func rewriteCamoProxiedImages(in html: String) -> String {
+        let tagPattern = #"<(img|source)\b[^>]*>"#
+        guard let tagRegex = try? NSRegularExpression(
+            pattern: tagPattern,
+            options: [.caseInsensitive]
+        ) else {
+            return html
+        }
+
+        let nsHtml = html as NSString
+        let matches = tagRegex.matches(
+            in: html,
+            options: [],
+            range: NSRange(location: 0, length: nsHtml.length)
+        )
+        guard !matches.isEmpty else { return html }
+
+        var result = html
+        for match in matches.reversed() {
+            let tag = nsHtml.substring(with: match.range)
+            guard let rewrittenTag = rewriteCamoAttributes(inTag: tag),
+                  rewrittenTag != tag,
+                  let range = Range(match.range, in: result)
+            else { continue }
+            result.replaceSubrange(range, with: rewrittenTag)
+        }
+        return result
+    }
+
+    /// 单个 `<img>` / `<source>` 标签内的 camo 属性改写；无命中返回 nil。
+    private static func rewriteCamoAttributes(inTag tag: String) -> String? {
+        guard let canonical = attributeValue(named: "data-canonical-src", inTag: tag)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              let canonicalURL = URL(string: canonical),
+              let scheme = canonicalURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+
+        var working = tag
+        var changed = false
+        for attribute in ["src", "srcset"] {
+            guard let value = attributeValue(named: attribute, inTag: working)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  value.lowercased().hasPrefix(camoImageProxyRoot),
+                  !value.contains(",")
+            else { continue }
+            working = replaceAttributeValue(named: attribute, inTag: working, with: canonical)
+            changed = true
+        }
+        return changed ? working : nil
+    }
+
+    /// 从标签字符串中提取指定属性的原始值（保留 HTML 转义形态）。
+    ///
+    /// 只匹配双引号包裹的属性（GitHub 渲染输出稳定用双引号），与既有视频改写约定一致。
+    /// 属性名前置 `(?<=\s)` 断言而不是 `\b`：`data-canonical-src` 的尾部同样满足
+    /// `\bsrc`，属性顺序不保证时会取错值；标签内属性名必然由空白分隔。
+    ///
+    /// 注意模式字符串用原始字符串书写：正则的 `\s` 在 `#"..."#` 里就是单反斜杠，
+    /// 误写成 `\\s` 会变成「字面反斜杠 + s」导致永远不匹配（已踩过）。
+    private static func attributeValue(named name: String, inTag tag: String) -> String? {
+        let pattern = #"(?<=\s)"# + NSRegularExpression.escapedPattern(for: name) + #"\s*=\s*"([^"]+)""#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let nsTag = tag as NSString
+        guard let match = regex.firstMatch(
+            in: tag,
+            options: [],
+            range: NSRange(location: 0, length: nsTag.length)
+        ) else { return nil }
+        return nsTag.substring(with: match.range(at: 1))
+    }
+
+    /// 把标签内指定属性的值替换为新值（按匹配区间做字符串手术，不走正则模板，
+    /// 避免属性值里的 `$` / `\` 被当作模板占位符解释）。
+    private static func replaceAttributeValue(named name: String, inTag tag: String, with value: String) -> String {
+        let pattern = #"((?<=\s)"# + NSRegularExpression.escapedPattern(for: name) + #"\s*=\s*")([^"]+)(")"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return tag
+        }
+        let nsTag = tag as NSString
+        guard let match = regex.firstMatch(
+            in: tag,
+            options: [],
+            range: NSRange(location: 0, length: nsTag.length)
+        ),
+              let valueRange = Range(match.range(at: 2), in: tag)
+        else { return tag }
+        return tag.replacingCharacters(in: valueRange, with: value)
     }
 
     /// 图片规则沿用既有实现，单独收口后让视频规范化不会改变图片匹配边界。

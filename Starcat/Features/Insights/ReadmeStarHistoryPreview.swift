@@ -22,11 +22,20 @@ import Foundation
 /// SwiftUI 交给 `ReadmeWebView` 的不可变 DOM 更新状态。
 ///
 /// `revision` 是轻量身份，WebView 用它跳过重复 JavaScript；`html == nil` 表示移除摘要。
+/// `prefersAnimatedEntrance` 只在「本仓首张正式卡片」上屏时为 true（骨架 → 曲线的入场帧），
+/// 网络刷新、头像晚到触发的重渲染均为 false，避免曲线画完一遍又被原样重画；与
+/// `ReadmeTranslation.prefersAnimatedEntrance` 同一模式。Reduce Motion 的 OR 门控
+/// （系统偏好 + App 内开关）由 WebView 侧持有，这里只表达「这是一次入场」。
 struct ReadmeStarHistoryRenderState: Equatable, Sendable {
     let revision: String
     let html: String?
+    let prefersAnimatedEntrance: Bool
 
-    static let empty = ReadmeStarHistoryRenderState(revision: "empty", html: nil)
+    static let empty = ReadmeStarHistoryRenderState(
+        revision: "empty",
+        html: nil,
+        prefersAnimatedEntrance: false
+    )
 }
 
 /// README 只展示至少两个 GitHub 官方历史点；零 Star 仓库不展示摘要。
@@ -137,7 +146,8 @@ final class ReadmeStarHistoryViewModel {
             if changesRepository {
                 renderState = ReadmeStarHistoryRenderState(
                     revision: "\(identity.revisionPrefix)|empty",
-                    html: nil
+                    html: nil,
+                    prefersAnimatedEntrance: false
                 )
                 isShowingLoading = false
             }
@@ -298,6 +308,10 @@ final class ReadmeStarHistoryViewModel {
         )
         // 网络刷新拿到同一份数据、头像到达但内容不变时，这次生成没有意义。
         guard fingerprint != lastRenderedFingerprint else { return }
+        // 入场判定必须在指纹写回之前取：当前指纹为 nil 说明本仓还没有任何正式卡片
+        // （骨架或空态），这次上屏就是「曲线首次出现」的那一帧，值得播生长动画；
+        // 之后缓存 → 网络刷新、头像晚到的重渲染指纹非 nil，一律静默替换。
+        let prefersAnimatedEntrance = lastRenderedFingerprint == nil
 
         renderRequestSequence &+= 1
         let sequence = renderRequestSequence
@@ -325,7 +339,8 @@ final class ReadmeStarHistoryViewModel {
         guard let html, renderState.html != html else { return }
         renderState = ReadmeStarHistoryRenderState(
             revision: "\(identity.revisionPrefix)|\(UUID().uuidString)",
-            html: html
+            html: html,
+            prefersAnimatedEntrance: prefersAnimatedEntrance
         )
     }
 
@@ -334,7 +349,8 @@ final class ReadmeStarHistoryViewModel {
         isShowingLoading = true
         renderState = ReadmeStarHistoryRenderState(
             revision: "\(identity.revisionPrefix)|loading",
-            html: ReadmeStarHistoryHTMLRenderer.renderLoading()
+            html: ReadmeStarHistoryHTMLRenderer.renderLoading(),
+            prefersAnimatedEntrance: false
         )
     }
 
@@ -349,7 +365,8 @@ final class ReadmeStarHistoryViewModel {
         lastRenderedFingerprint = nil
         renderState = ReadmeStarHistoryRenderState(
             revision: "\(identity.revisionPrefix)|empty",
-            html: nil
+            html: nil,
+            prefersAnimatedEntrance: false
         )
     }
 

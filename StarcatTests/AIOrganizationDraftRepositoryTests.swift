@@ -47,6 +47,30 @@ struct AIOrganizationDraftRepositoryTests {
         #expect(restoredGroupingJob.applyState == .failed(.init(kind: .interrupted, detail: nil)))
     }
 
+    @Test("GitHub Lists 草稿保留本地应用状态")
+    func preservesLocallyAppliedGroupingState() {
+        var repo = Repo.makeMinimal(owner: "octo", name: "local-group")
+        repo.id = 43
+        let groupingJob = GitHubStarListAIGroupingJob(
+            repo: repo,
+            status: .completed,
+            applyState: .applied(["list-1"]),
+            isLocallyApplied: true
+        )
+
+        let restored = GitHubStarListAIOrganizationDraftItem(
+            job: groupingJob,
+            existingListIDs: ["list-1"],
+            selectedListIDs: [],
+            isSelectedForBulkApply: false,
+            editedListIDs: nil,
+            isIgnored: false
+        ).restoredJob()
+
+        #expect(restored.applyState == .applied(["list-1"]))
+        #expect(restored.isLocallyApplied)
+    }
+
     @Test("同类草稿原子替换并逐仓更新")
     func replaceAndUpdateItems() async throws {
         let database = try InMemoryDatabaseManager(userId: 1)

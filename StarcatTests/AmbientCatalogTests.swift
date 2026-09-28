@@ -2,7 +2,7 @@
 //  AmbientCatalogTests.swift
 //  StarcatTests
 //
-//  保证本地 Catalog 区分成功、真实空目录与 repository 故障。
+//  保证本地 Catalog 把 Star 聚成 Owner，并区分真实空目录与 repository 故障。
 //
 
 import Testing
@@ -14,15 +14,15 @@ struct AmbientCatalogTests {
         case unavailable
     }
 
-    @Test("成功读取 Repo 并按场景映射")
-    func loadsRepositoryCards() async throws {
+    @Test("成功读取 Star 并聚成 Owner")
+    func loadsOwnerCards() async throws {
         var repo = Repo.makeMinimal(owner: "apple", name: "swift")
         repo.id = 10
         let catalog = LocalAmbientCatalog(loadStarred: { [repo] in [repo] })
 
-        let cards = try await catalog.loadCards(scene: .repos)
+        let cards = try await catalog.loadCards(scene: .owners)
 
-        #expect(cards.map(\.id) == ["repo:10"])
+        #expect(cards.map(\.id) == ["owner:apple"])
     }
 
     @Test("空 repository 保持真实空目录")
@@ -37,7 +37,7 @@ struct AmbientCatalogTests {
         let catalog = LocalAmbientCatalog(loadStarred: { throw StubError.unavailable })
 
         do {
-            _ = try await catalog.loadCards(scene: .repos)
+            _ = try await catalog.loadCards(scene: .owners)
             Issue.record("Expected repository failure")
         } catch {
             #expect(error is StubError)

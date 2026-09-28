@@ -186,4 +186,96 @@ struct ReadmeAssetURLRewriterTests {
         #expect(ReadmeAssetURLRewriter.rewriteOne("  ./logo.png  \n", rawBase: rawBase)
             == rawBase + "logo.png")
     }
+
+    // MARK: - camo 代理图片回源（2026-09-18）
+
+    @Test("camo 图片改写回 data-canonical-src 原始地址")
+    func rewrite_camoImgRestoredToCanonicalSrc() {
+        let html = #"""
+        <img alt="badge" src="https://camo.githubusercontent.com/abc123/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f746573742d626c75652e737667" data-canonical-src="https://img.shields.io/badge/test-blue.svg" style="max-width: 100%;">
+        """#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: "alice", repo: "foo")
+
+        // 断言锚定到标签开头，避免误匹配 data-canonical-src 属性里的同段子串。
+        #expect(result.contains(#"<img alt="badge" src="https://img.shields.io/badge/test-blue.svg""#))
+        #expect(result.contains(#"data-canonical-src="https://img.shields.io/badge/test-blue.svg""#))
+        #expect(!result.contains("camo.githubusercontent.com"))
+    }
+
+    @Test("picture 内 source srcset 的 camo 地址改写回原始地址并保留转义")
+    func rewrite_camoSourceSrcsetRestoredWithEscaping() {
+        let html = #"""
+        <source media="(prefers-color-scheme: dark)" srcset="https://camo.githubusercontent.com/def456/68747470733a2f2f686973746f72792e6578616d706c65" data-canonical-src="https://history.example.com/embed/v1/repos/a/b/star-history.svg?theme=dark&amp;locale=en">
+        """#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: "alice", repo: "foo")
+
+        // canonical 值按源 HTML 的转义形态复制，&amp; 不做二次编解码。
+        #expect(result.contains(#"srcset="https://history.example.com/embed/v1/repos/a/b/star-history.svg?theme=dark&amp;locale=en""#))
+        #expect(!result.contains("camo.githubusercontent.com"))
+    }
+
+    @Test("camo 改写不依赖 owner/repo（保守短路之前执行）")
+    func rewrite_camoRestoredEvenWithoutOwner() {
+        let html = #"<img src="https://camo.githubusercontent.com/abc123/68747470" data-canonical-src="https://example.com/a.png">"#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: nil, repo: nil)
+
+        // 整串等值断言，杜绝 src= 命中 data-canonical-src 子串的假阳性。
+        #expect(result == #"<img src="https://example.com/a.png" data-canonical-src="https://example.com/a.png">"#)
+    }
+
+    @Test("无 data-canonical-src 的 camo 图片保持原样")
+    func rewrite_camoWithoutCanonicalUnchanged() {
+        let html = #"""
+        <img src="https://camo.githubusercontent.com/abc123/68747470" alt="x">
+        """#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: "alice", repo: "foo")
+
+        #expect(result.contains("camo.githubusercontent.com"))
+    }
+
+    @Test("data-canonical-src 非 http(s) 绝对地址不改写")
+    func rewrite_camoWithNonHTTPCanonicalUnchanged() {
+        let html = #"""
+        <img src="https://camo.githubusercontent.com/abc123/68747470" data-canonical-src="javascript:void(0)">
+        """#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: "alice", repo: "foo")
+
+        #expect(result.contains(#"src="https://camo.githubusercontent.com/abc123"#))
+    }
+
+    @Test("多候选 srcset 不改写")
+    func rewrite_camoSrcsetWithDescriptorsUnchanged() {
+        let html = #"""
+        <source srcset="https://camo.githubusercontent.com/abc123/68747470 1x, https://camo.githubusercontent.com/def456/68747471 2x" data-canonical-src="https://example.com/a.png">
+        """#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: "alice", repo: "foo")
+
+        #expect(result.contains("camo.githubusercontent.com"))
+    }
+
+    @Test("非 camo 的绝对地址图片不受影响")
+    func rewrite_nonCamoAbsoluteImgUntouched() {
+        let html = #"""
+        <img src="https://example.com/logo.png" data-canonical-src="https://other.example.com/logo.png">
+        """#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: "alice", repo: "foo")
+
+        #expect(result.contains(#"src="https://example.com/logo.png""#))
+    }
+
+    @Test("picture 内 img 与 source 同时命中时都改写")
+    func rewrite_camoPictureImgAndSourceBothRestored() {
+        let html = #"""
+        <picture data-starcat-star-history>
+          <source media="(prefers-color-scheme: dark)" srcset="https://camo.githubusercontent.com/h1/6871" data-canonical-src="https://history.example.com/dark.svg">
+          <img alt="history" src="https://camo.githubusercontent.com/h2/6872" data-canonical-src="https://history.example.com/light.svg">
+        </picture>
+        """#
+        let result = ReadmeAssetURLRewriter.rewrite(in: html, owner: "alice", repo: "foo")
+
+        #expect(result.contains(#"srcset="https://history.example.com/dark.svg""#))
+        #expect(result.contains(#"<img alt="history" src="https://history.example.com/light.svg""#))
+        #expect(!result.contains("camo.githubusercontent.com"))
+        #expect(result.contains(#"data-starcat-star-history"#))
+    }
 }

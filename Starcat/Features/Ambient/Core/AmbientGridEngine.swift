@@ -18,7 +18,7 @@ struct AmbientGridEngine: Sendable {
     }
 
     private let config: AmbientGridConfig
-    private let cards: [AmbientCardModel]
+    private var cards: [AmbientCardModel]
     private var slots: [Slot]
     private var random: SplitMix64
     private var pendingSlotIndices: [Int] = []
@@ -75,6 +75,24 @@ struct AmbientGridEngine: Sendable {
 
     var nextDeadline: TimeInterval? {
         nextChangeAt
+    }
+
+    /// 头像稍后落盘时只替换卡面，不重排格子、不重置翻转时钟。
+    mutating func refreshCards(_ newCards: [AmbientCardModel]) {
+        let unique = Self.uniqueCards(newCards)
+        cards = unique
+        let byID = Dictionary(uniqueKeysWithValues: unique.map { ($0.id, $0) })
+        for index in slots.indices {
+            if let id = slots[index].card?.id, let updated = byID[id] {
+                slots[index].card = updated
+            }
+            if let id = slots[index].nextCard?.id, let updated = byID[id] {
+                slots[index].nextCard = updated
+            }
+            if let id = slots[index].previousCard?.id, let updated = byID[id] {
+                slots[index].previousCard = updated
+            }
+        }
     }
 
     /// 到达全局 deadline 后，从 shuffle-bag 随机取一个尚未轮换的槽位。

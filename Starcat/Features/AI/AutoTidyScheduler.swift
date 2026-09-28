@@ -378,7 +378,11 @@ final class AutoTidyScheduler {
             } else {
                 let options = snapshot.makeBatchOptions(standardActionRepoIDs: Set(standardPicked.map(\.id)))
                 if options.isValidForStart {
-                    let didStart = batchService.start(repos: standardPicked, options: options, silent: true)
+                    let didStart = batchService.start(
+                        repos: standardPicked,
+                        options: options,
+                        invocationMode: .automatic
+                    )
                     startedStandardCount = didStart ? standardPicked.count : 0
                 }
             }

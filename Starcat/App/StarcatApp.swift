@@ -254,6 +254,7 @@ struct StarcatApp: App {
                 .environment(dependencies)
                 .environment(dependencies.authSession)
                 .environment(dependencies.syncManager)
+                .environment(dependencies.externalStarInbox)
                 .environment(dependencies.settings)
                 .environment(dependencies.telemetryManager)
                 .environment(dependencies.subscriptionManager)
@@ -819,6 +820,13 @@ struct DebugMenuCommands: Commands {
             }
             .disabled(!FirstRunOnboardingPreferences.canReplayManually)
 
+            Button("Replay App Store Import Prompt") {
+                NotificationCenter.default.post(
+                    name: AppStoreToDirectImportIdentity.debugReplayNotification,
+                    object: nil
+                )
+            }
+
             Toggle(
                 "Activate Pro",
                 isOn: Binding(
@@ -829,22 +837,6 @@ struct DebugMenuCommands: Commands {
                     }
                 )
             )
-
-            Divider()
-
-            Button("ambient.menu.openRepos") {
-                if let dependencies {
-                    AmbientWindowController.show(dependencies: dependencies, scene: .repos)
-                }
-            }
-            .disabled(dependencies == nil)
-
-            Button("ambient.menu.openOwners") {
-                if let dependencies {
-                    AmbientWindowController.show(dependencies: dependencies, scene: .owners)
-                }
-            }
-            .disabled(dependencies == nil)
 
             Divider()
 

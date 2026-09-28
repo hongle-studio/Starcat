@@ -241,6 +241,9 @@ struct GitHubStarListAIGroupingSheet: View {
                 onRetryApply: { repoID in
                     performReviewUpdate { session.retryApply(repoID: repoID) }
                 },
+                onRetryLocalSync: { repoID in
+                    performReviewUpdate { session.retryLocalMembershipSync(repoID: repoID) }
+                },
                 onDiscardAppliedChanges: { repoID in
                     performReviewUpdate { session.discardAppliedMembershipChanges(repoID: repoID) }
                 },

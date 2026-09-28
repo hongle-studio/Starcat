@@ -460,6 +460,35 @@ enum AppEndpoints {
                     .joined(separator: "/")
                 return "/repos/\(owner)/\(repo)/contents/\(encodedPath)"
             }
+            /// `GET /repos/{owner}/{repo}/git/trees/{ref}?recursive=1` —— 一次拿整棵文件树。
+            ///
+            /// `ref` 可以是 commit SHA、tag 或分支名。分支名可能含 `/`（如 `release/1.0`），
+            /// 必须按 path 分段编码，不能整段当一个 segment。
+            static func repoGitTree(owner: String, repo: String, ref: String) -> String {
+                let encodedRef = ref
+                    .split(separator: "/", omittingEmptySubsequences: false)
+                    .map { component in
+                        String(component).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                            ?? String(component)
+                    }
+                    .joined(separator: "/")
+                return "/repos/\(owner)/\(repo)/git/trees/\(encodedRef)"
+            }
+            /// `GET /repos/{owner}/{repo}/git/blobs/{sha}` —— 按 blob SHA 拉文件字节。
+            ///
+            /// 勾选下载走这条而不是 Contents JSON：Contents 对 >1MB 文件会截断，
+            /// blob + `Accept: application/vnd.github.raw` 可以流式落盘。
+            static func repoGitBlob(owner: String, repo: String, sha: String) -> String {
+                "/repos/\(owner)/\(repo)/git/blobs/\(sha)"
+            }
+            /// `GET /repos/{owner}/{repo}/branches` —— 分支名列表（切树用）。
+            static func repoBranches(owner: String, repo: String) -> String {
+                "/repos/\(owner)/\(repo)/branches"
+            }
+            /// `GET /repos/{owner}/{repo}/commits` —— 按 path 取最近一次提交。
+            static func repoCommits(owner: String, repo: String) -> String {
+                "/repos/\(owner)/\(repo)/commits"
+            }
             /// `GET /repos/{owner}/{repo}/releases` —— release 列表。
             static func repoReleases(owner: String, repo: String) -> String {
                 "/repos/\(owner)/\(repo)/releases"
@@ -619,6 +648,28 @@ enum AppEndpoints {
         AppLog.network.info("endpoint.recommend= \(Recommend.baseURL.absoluteString, privacy: .public)")
         AppLog.network.info("endpoint.discovery= \(Discovery.baseURL.absoluteString, privacy: .public)")
         AppLog.network.info("endpoint.history  = \(History.baseURL.absoluteString, privacy: .public)")
+    }
+
+    // MARK: - 外部公开 API：TypeSafe(Jev,实验性)
+
+    /// TypeSafe AI "System One" 决策端点集合(实验性功能 Labs,后续可能整体下线)。
+    ///
+    /// 与自建后端命名空间的差异:
+    /// - 官方固定域名,POC 阶段不提供自托管 URL 覆盖,因此没有 @MainActor baseURL getter;
+    /// - 鉴权走用户 BYOK Key(`service_api_key::typesafe-ai`,见 KeychainManager),
+    ///   不接入 `StarcatAPIKeyResolver` 的内置生产 Key 混合解析。
+    enum TypeSafe {
+        /// 生产环境固定域名。
+        static let productionURL = URL(string: "https://api.typesafe.ai")!
+
+        enum Paths {
+            /// `POST /v1/systemone` —— 唯一推理端点:state + questions → 类型化答案。
+            static let systemOne = "/v1/systemone"
+        }
+
+        static func url(_ path: String) -> URL {
+            appendPath(path, to: productionURL)
+        }
     }
 
     // MARK: - Private

@@ -67,12 +67,51 @@ struct ReadmeStarHistoryPreviewTests {
 
         #expect(viewModel.renderState.html?.contains("starcat-star-history-skeleton") == true)
         #expect(viewModel.renderState.html?.contains(#"aria-busy="true""#) == true)
+        // 骨架本身不算入场帧；官方历史替换骨架才是曲线首次出现的那一帧。
+        #expect(viewModel.renderState.prefersAnimatedEntrance == false)
 
         await gate.release()
         await load.value
 
         #expect(viewModel.renderState.html?.contains("starcat-star-history-line") == true)
         #expect(viewModel.renderState.html?.contains("starcat-star-history-skeleton") == false)
+        #expect(viewModel.renderState.prefersAnimatedEntrance == true)
+    }
+
+    @Test("入场生长动画只在首张正式卡片标记，网络刷新重渲染不重播")
+    func entranceAnimationMarksOnlyFirstCard() async {
+        let gate = ReadmeStarHistoryLoadGate()
+        let refreshed = Self.snapshot(points: [
+            StarHistoryPoint(date: StarHistoryDateCodec.date(from: "2020-02-01")!, count: 10),
+            StarHistoryPoint(date: StarHistoryDateCodec.date(from: "2026-09-05")!, count: 300)
+        ], state: .fresh)
+        let repository = ReadmeStarHistoryRepositoryStub(
+            cachedSnapshot: Self.snapshot(state: .cached),
+            refreshSnapshot: refreshed,
+            refreshGate: gate
+        )
+        let viewModel = ReadmeStarHistoryViewModel(
+            repository: repository,
+            projectVisibilityProvider: { _ in .public }
+        )
+
+        let load = Task {
+            await viewModel.loadIfNeeded(
+                repo: Self.repo(),
+                databaseScopeRevision: 1,
+                locale: Locale(identifier: "en")
+            )
+        }
+        await gate.waitUntilBlocked()
+
+        // 缓存命中的首张正式卡片是入场帧，值得播曲线生长动画。
+        #expect(viewModel.renderState.prefersAnimatedEntrance == true)
+
+        await gate.release()
+        await load.value
+
+        // 网络刷新带回新数据属于原地更新，曲线不能整条重画一遍。
+        #expect(viewModel.renderState.prefersAnimatedEntrance == false)
     }
 
     @Test("无缓存且远端无可用历史时移除骨架")
@@ -603,6 +642,8 @@ struct ReadmeStarHistoryPreviewTests {
             context: ReadmeStarHistoryHTMLRenderer.ReadmeStarHistoryRenderContext.prepare(language: Self.repo().language)
         ))
         #expect(html.contains("<strong>50.5K</strong>"))
+        // 总星标数字 ticker 的数值来源：元数据原始值，不能用历史曲线最后读数。
+        #expect(html.contains(#"data-count="50511""#))
         #expect(!html.contains("<script>"))
         #expect(!html.contains("<img src=x"))
         #expect(html.contains("&lt;script&gt;"))
