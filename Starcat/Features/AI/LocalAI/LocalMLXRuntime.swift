@@ -37,6 +37,9 @@ actor LocalMLXRuntime {
     private var embedderDirectoryID: String?
     private var rerankerContainer: RerankerContainer?
     private var rerankerDirectoryID: String?
+    /// 每个驻留容器对应的跨进程共享读锁。必须晚于容器引用释放，避免另一个渠道
+    /// 在 MLX 仍 mmap 权重时删除模型目录。
+    private var modelAccessLeases: [LocalAIModelType: LocalAIModelAccessLease] = [:]
     private let gate = LocalAIOperationGate()
     private var residents: [LocalAIModelType: LocalAIResidentModel] = [:]
     private var generations: [LocalAIModelType: Int] = [:]
@@ -176,6 +179,8 @@ actor LocalMLXRuntime {
         if case .failure(let error) = result, residents[type]?.phase == .loading {
             residents[type]?.phase = .failed
             residents[type]?.error = error.localizedDescription
+            // 工厂加载失败时没有可用容器，不能把读锁一直留到闲置回收。
+            modelAccessLeases.removeValue(forKey: type)?.release()
             LocalAILog.record("model.load.failed", "Model loading ended without a usable container.",
                               level: error is CancellationError ? .info : .error,
                               fields: LocalAILogEvent.errorFields(error))
@@ -214,11 +219,12 @@ actor LocalMLXRuntime {
         }
     }
 
-    /// 快照不初始化 Metal；仅打开状态面板不会加载模型或分配 GPU 内存。
-    func snapshot() -> LocalAIRuntimeSnapshot {
+    /// 快照不主动初始化 Metal。Laya 使用独立容器，但共享同一套 MLX 进程级统计；
+    /// 只有它已经初始化 MLX 时，状态面板才通过参数读取全局内存。
+    func snapshot(includeExternallyInitializedMemory: Bool = false) -> LocalAIRuntimeSnapshot {
         var result = LocalAIRuntimeSnapshot(
             models: residents, budgetBytes: budget, queuedCount: queuedCount, notice: notice)
-        if initialized {
+        if initialized || includeExternallyInitializedMemory {
             result.activeBytes = Memory.activeMemory
             result.cacheBytes = Memory.cacheMemory
             result.peakBytes = Memory.peakMemory
@@ -226,7 +232,7 @@ actor LocalMLXRuntime {
         return result
     }
 
-    private func beginLoading(_ type: LocalAIModelType, directory: URL) throws -> Int {
+    private func beginLoading(_ type: LocalAIModelType, directory: URL) async throws -> Int {
         clearContainer(type)
         Memory.clearCache()
         residents[type] = .init(directory: directory, phase: .loading)
@@ -246,6 +252,10 @@ actor LocalMLXRuntime {
                 Memory.clearCache()
             }
         }
+        // 目录检查与实际权重读取必须处于同一个租约内；只在工厂 load 之前检查存在
+        // 仍有 TOCTOU 窗口，另一渠道可能紧接着删除。
+        modelAccessLeases[type] = try await LocalAISharedModelCoordinator.shared
+            .acquireModelRead(at: directory)
         return Memory.activeMemory
     }
 
@@ -268,7 +278,7 @@ actor LocalMLXRuntime {
             LocalAILog.record("model.reused", "Reusing resident generation model.")
             return container
         }
-        let before = try beginLoading(.llm, directory: directory)
+        let before = try await beginLoading(.llm, directory: directory)
         try ensureRuntimeAvailable()
         let container = try await LLMModelFactory.shared.loadContainer(
             from: directory,
@@ -285,7 +295,7 @@ actor LocalMLXRuntime {
             LocalAILog.record("model.reused", "Reusing resident embedding model.")
             return container
         }
-        let before = try beginLoading(.embedding, directory: directory)
+        let before = try await beginLoading(.embedding, directory: directory)
         try ensureRuntimeAvailable()
         let container = try await EmbedderModelFactory.shared.loadContainer(
             from: directory,
@@ -302,7 +312,7 @@ actor LocalMLXRuntime {
             LocalAILog.record("model.reused", "Reusing resident reranker model.")
             return container
         }
-        let before = try beginLoading(.reranker, directory: directory)
+        let before = try await beginLoading(.reranker, directory: directory)
         try ensureRuntimeAvailable()
         let container = try await RerankerModelFactory.shared.loadContainer(
             from: directory,
@@ -361,6 +371,9 @@ actor LocalMLXRuntime {
             rerankerContainer = nil
             rerankerDirectoryID = nil
         }
+        // 先清空容器，再放行文件删除；顺序反过来会让另一进程看见“可删”但本进程
+        // 仍持有 mmap / tokenizer 文件引用。
+        modelAccessLeases.removeValue(forKey: type)?.release()
         residents[type]?.phase = .unloaded
         residents[type]?.loadedBytes = 0
         loadStartedAt.removeValue(forKey: type)
@@ -372,15 +385,23 @@ actor LocalMLXRuntime {
         }
     }
 
-    func clearMemoryCache() {
-        if initialized { Memory.clearCache() }
-        LocalAILog.record("memory.cache.cleared", "Reclaimable MLX cache cleared manually.", fields: memoryLogFields())
+    func clearMemoryCache(includeExternallyInitializedMemory: Bool = false) {
+        if initialized || includeExternallyInitializedMemory { Memory.clearCache() }
+        LocalAILog.record(
+            "memory.cache.cleared",
+            "Reclaimable MLX cache cleared manually.",
+            fields: memoryLogFields(
+                includeExternallyInitializedMemory: includeExternallyInitializedMemory
+            )
+        )
     }
 
     /// MLX 统计不是整个进程内存；尚未初始化时不能为了日志触发 Metal 初始化。
-    private func memoryLogFields() -> [String: String] {
+    private func memoryLogFields(
+        includeExternallyInitializedMemory: Bool = false
+    ) -> [String: String] {
         var result = ["budgetBytes": String(budget)]
-        if initialized {
+        if initialized || includeExternallyInitializedMemory {
             result["mlxActiveBytes"] = String(Memory.activeMemory)
             result["mlxCacheBytes"] = String(Memory.cacheMemory)
         }

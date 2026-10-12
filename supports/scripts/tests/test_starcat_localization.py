@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import difflib
 import importlib.util
 import io
 import json
@@ -481,7 +482,7 @@ class StarcatLocalizationTests(unittest.TestCase):
 
         with mock.patch.object(
             localization,
-            "save_catalog",
+            "save_catalog_text",
             side_effect=OSError("simulated write failure"),
         ):
             with self.assertRaisesRegex(OSError, "simulated write failure"):
@@ -495,6 +496,76 @@ class StarcatLocalizationTests(unittest.TestCase):
         backups = list(self.backup_dir.glob("*.bak"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), original)
+
+    def test_layout_preserving_patch_keeps_unrelated_catalog_bytes(self) -> None:
+        original = self.catalog_path.read_text(encoding="utf-8")
+        custom = original.replace(
+            '"sourceLanguage" : "en"',
+            '"sourceLanguage":"en"',
+        ).replace(
+            '"plain" : {',
+            '"plain"    : {',
+        )
+
+        patched = localization.patch_catalog_text(
+            custom,
+            {"greeting": {"ja": ("translated", "こんにちは %@")}},
+        )
+
+        payload = json.loads(patched)
+        unit = payload["strings"]["greeting"]["localizations"]["ja"][
+            "stringUnit"
+        ]
+        self.assertEqual(unit, {"state": "translated", "value": "こんにちは %@"})
+        self.assertIn('"sourceLanguage":"en"', patched)
+        self.assertIn('"plain"    : {', patched)
+        tags = {
+            tag
+            for tag, *_ in difflib.SequenceMatcher(
+                None,
+                custom.splitlines(keepends=True),
+                patched.splitlines(keepends=True),
+                autojunk=False,
+            ).get_opcodes()
+        }
+        self.assertEqual(tags, {"equal", "insert"})
+
+    def test_layout_preserving_patch_expands_empty_entry(self) -> None:
+        payload = localization.load_catalog(self.catalog_path)
+        payload["strings"]["empty.key"] = {}
+        original = localization.serialize_catalog(payload)
+
+        patched = localization.patch_catalog_text(
+            original,
+            {"empty.key": {"ja": ("translated", "空")}},
+        )
+
+        updated = json.loads(patched)
+        self.assertEqual(
+            updated["strings"]["empty.key"]["localizations"]["ja"][
+                "stringUnit"
+            ],
+            {"state": "translated", "value": "空"},
+        )
+        self.assertIn('"empty.key" : {\n      "localizations" : {', patched)
+
+    def test_layout_preserving_patch_replaces_only_existing_value(self) -> None:
+        self.write_catalog(
+            {
+                "greeting": {
+                    "en": ("translated", "Hello %@"),
+                    "ja": ("translated", "古い %@"),
+                }
+            }
+        )
+        original = self.catalog_path.read_text(encoding="utf-8")
+
+        patched = localization.patch_catalog_text(
+            original,
+            {"greeting": {"ja": ("translated", "新しい %@")}},
+        )
+
+        self.assertEqual(patched, original.replace('"古い %@"', '"新しい %@"'))
 
     def test_catalog_writer_preserves_xcode_colon_style(self) -> None:
         catalog = localization.load_catalog(self.catalog_path)

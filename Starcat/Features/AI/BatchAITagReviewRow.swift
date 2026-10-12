@@ -156,6 +156,7 @@ struct BatchAITagReviewRow: View {
                         .foregroundStyle(detailColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(detailText)
                 }
             }
             Spacer(minLength: 6)
@@ -248,6 +249,9 @@ struct BatchAITagReviewRow: View {
             )
             .foregroundStyle(.secondary)
             .monospacedDigit()
+            Text(engineTitleKey(for: suggestion))
+                .font(interfaceScale.font(.captionSmall))
+                .foregroundStyle(.secondary)
             if let availabilityKey = availabilityTitleKey(for: suggestion) {
                 Text(availabilityKey)
                     .font(interfaceScale.font(.captionSmall))
@@ -290,6 +294,9 @@ struct BatchAITagReviewRow: View {
                 )
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+                Text(engineTitleKey(for: suggestion))
+                    .font(interfaceScale.font(.captionSmall))
+                    .foregroundStyle(.secondary)
                 if let availabilityKey = availabilityTitleKey(for: suggestion) {
                     Text(availabilityKey)
                         .font(interfaceScale.font(.captionSmall))
@@ -307,6 +314,22 @@ struct BatchAITagReviewRow: View {
         .disabled(!canEditSelection)
         .help(suggestion.name)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// 来源与“已有 / 需新建”是两个正交维度；旧草稿缺字段时必须明确显示未知，不能猜成 LLM。
+    private func engineTitleKey(for suggestion: AITagSuggestion) -> LocalizedStringKey {
+        switch suggestion.engine {
+        case .some(.jev):
+            return "batchAI.panel.review.modelOrigin.jev"
+        case .some(.laya):
+            return "batchAI.panel.review.modelOrigin.laya"
+        case .some(.llm):
+            return "batchAI.panel.review.modelOrigin.llm"
+        case .some(.local):
+            return "search.footer.source.local"
+        case .none:
+            return "batchAI.panel.review.modelOrigin.unknown"
+        }
     }
 
     /// 来源读取失败时不显示标识，避免把未知状态误报为“需新建”。
@@ -463,9 +486,7 @@ struct BatchAITagReviewRow: View {
         case .completed:
             completedDetailText
         case .ignored:
-            job.belowThresholdTags.prefix(3).map { suggestion in
-                "\(suggestion.name)(\(Int((suggestion.confidence * 100).rounded()))%)"
-            }.joined(separator: ", ")
+            ignoredDetailText
         case .failed:
             job.failure?.localizedMessage ?? String.l10n("batchAI.panel.row.failedUnknown")
         }
@@ -498,7 +519,7 @@ struct BatchAITagReviewRow: View {
         case .applied:
             return appliedTagsText
         case .ignored:
-            return String.l10n("batchAI.panel.review.ignored")
+            return ignoredDetailText
         case .notRequired:
             if !job.appliedTagNames.isEmpty { return appliedTagsText }
             return job.didGenerateSummary
@@ -510,6 +531,31 @@ struct BatchAITagReviewRow: View {
     private var appliedTagsText: String {
         let names = job.appliedTagNames.prefix(5).joined(separator: ", ")
         return String(format: String.l10n("batchAI.panel.row.appliedTagsFormat"), names)
+    }
+
+    /// “已忽略”必须说明是体系覆盖边界、自动策略还是用户操作；旧草稿没有原因时保留通用兜底。
+    private var ignoredDetailText: String {
+        switch job.ignoreReason {
+        case .some(.taxonomyUncovered):
+            return String.l10n("batchAI.panel.ignoreReason.taxonomyUncovered")
+        case .some(.vocabularyMiss):
+            return String.l10n("batchAI.panel.ignoreReason.vocabularyMiss")
+        case .some(.belowConfidenceThreshold):
+            let tags = job.belowThresholdTags.prefix(3).map { suggestion in
+                "\(suggestion.name)(\(Int((suggestion.confidence * 100).rounded()))%)"
+            }.joined(separator: ", ")
+            return String(
+                format: String.l10n("batchAI.panel.row.ignoredFormat"),
+                locale: locale,
+                tags
+            )
+        case .some(.emptyTagLibrary):
+            return String.l10n("batchAI.panel.ignoreReason.emptyTagLibrary")
+        case .some(.userSkipped):
+            return String.l10n("batchAI.panel.ignoreReason.userSkipped")
+        case .none:
+            return String.l10n("batchAI.panel.review.ignored")
+        }
     }
 
     private var canEditSelection: Bool {

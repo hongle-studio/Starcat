@@ -82,17 +82,23 @@ struct DirectLicenseAPI: Sendable {
             throw DirectLicenseAPIError.transport(code: nil)
         }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw mapHTTPError(response: response, data: data)
+            throw mapHTTPError(response: response, data: data, path: path)
         }
         return try decoder.decode(Response.self, from: data)
     }
 
-    private func mapHTTPError(response: URLResponse, data: Data) -> DirectLicenseAPIError {
+    private func mapHTTPError(response: URLResponse, data: Data, path: String) -> DirectLicenseAPIError {
         guard let http = response as? HTTPURLResponse else {
             return .invalidResponse
         }
         let body = (try? decoder.decode(DirectLicenseErrorResponse.self, from: data)) ?? DirectLicenseErrorResponse()
         let code = body.normalizedCode
+        // 只记录编译期路径、固定错误码与 UUID trace；原始 message 可能包含授权码或上游密钥。
+        let traceID = DirectLicenseAPIError.safeTraceID(body.traceID) ?? "-"
+        let diagnosticCode = code ?? "http_\(http.statusCode)"
+        AppLog.general.error(
+            "[direct-license-api] path=\(path, privacy: .public) http_status=\(http.statusCode) code=\(diagnosticCode, privacy: .public) trace_id=\(traceID, privacy: .public)"
+        )
         // 业务错误码优先于 HTTP status：后端可能用 403/409/502 承载同一 code，
         // 若先按 403→unauthorizedClient 会把「座位已满」误判成客户端鉴权失败。
         if code == "billing_not_ready" {
@@ -101,20 +107,21 @@ struct DirectLicenseAPI: Sendable {
         if code == "activation_limit_reached" {
             return .activationLimitReached
         }
+        if code == "license_not_found" {
+            return .licenseNotFound
+        }
+        if let code, ["license_revoked", "license_expired", "invalid_license"].contains(code) {
+            return .licenseRejected(code: code)
+        }
         switch http.statusCode {
         case 401, 403:
             return .unauthorizedClient
         case 404:
-            return .licenseNotFound
+            // 路由 404 / 非 JSON 响应不能作为撤销本地 Pro 的证据，只认明确的业务 code。
+            return .invalidResponse
         case 408, 429, 500...599:
             return .temporaryServerFailure(statusCode: http.statusCode, code: code)
         default:
-            if code == "license_not_found" || code == "not_found" {
-                return .licenseNotFound
-            }
-            if let code, code == "license_revoked" || code == "license_expired" || code == "invalid_license" {
-                return .licenseRejected(code: code)
-            }
             return .invalidResponse
         }
     }
@@ -166,7 +173,7 @@ enum DirectLicenseAPIError: Error, Equatable {
     case licenseNotFound
     case billingNotReady
     /// 授权码激活席位已满（Creem activation_limit）。后端约定 code=`ACTIVATION_LIMIT_REACHED`。
-    /// 官方正式错误码未确认前，客户端只认这个自家 code，不依赖 Creem message 字符串匹配。
+    /// 客户端只认自家 code；Creem 响应语义的识别留在服务端。
     case activationLimitReached
     case licenseRejected(code: String)
 
@@ -187,7 +194,7 @@ enum DirectLicenseAPIError: Error, Equatable {
         case let .transport(code):
             return code.map { "transport_\($0)" } ?? "transport_error"
         case let .temporaryServerFailure(statusCode, code):
-            return code ?? "http_\(statusCode)"
+            return Self.safeServerCode(code) ?? "http_\(statusCode)"
         case .unauthorizedClient:
             return "unauthorized_client"
         case .licenseNotFound:
@@ -197,8 +204,28 @@ enum DirectLicenseAPIError: Error, Equatable {
         case .activationLimitReached:
             return "activation_limit_reached"
         case let .licenseRejected(code):
-            return code
+            return Self.safeServerCode(code) ?? "license_rejected"
         }
+    }
+
+    /// 只让协议中明确的固定 code 进入日志与持久化验证记录，禁止从 message 推导诊断码。
+    static func safeServerCode(_ raw: String?) -> String? {
+        guard let code = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return nil }
+        switch code {
+        case "billing_not_ready", "activation_limit_reached", "license_not_found",
+             "license_revoked", "license_expired", "invalid_license", "provider_error",
+             "provider_not_configured", "provider_unavailable", "license_provider_error",
+             "payment_provider_error", "bad_request", "bad_json", "unauthorized_client",
+             "rate_limit_exceeded":
+            return code
+        default:
+            return nil
+        }
+    }
+
+    /// 上游 trace 仅接受 UUID 并规范化，防止错误响应将用户内容或换行注入公开日志。
+    static func safeTraceID(_ raw: String?) -> String? {
+        UUID(uuidString: raw ?? "")?.uuidString.lowercased()
     }
 }
 
@@ -206,21 +233,21 @@ extension DirectLicenseAPIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "Invalid response from Starcat License API."
+            return String.l10n("settings.pro.direct.error.invalidResponse")
         case .transport:
-            return "Unable to reach Starcat License API."
+            return String.l10n("settings.pro.direct.error.transport")
         case let .temporaryServerFailure(statusCode, _):
-            return "Starcat License API is temporarily unavailable. HTTP \(statusCode)."
+            return String(format: String.l10n("settings.pro.direct.error.temporaryServerFailure"), statusCode)
         case .unauthorizedClient:
-            return "Starcat License API rejected the client key."
+            return String.l10n("settings.pro.direct.error.unauthorizedClient")
         case .licenseNotFound:
-            return "License was not found."
+            return String.l10n("settings.pro.direct.error.licenseNotFound")
         case .billingNotReady:
             return String.l10n("settings.pro.direct.portal.syncing")
         case .activationLimitReached:
             return String.l10n("settings.pro.direct.error.activationLimitReached")
         case .licenseRejected:
-            return "License is no longer active."
+            return String.l10n("settings.pro.direct.error.licenseRejected")
         }
     }
 }
@@ -228,15 +255,10 @@ extension DirectLicenseAPIError: LocalizedError {
 private struct DirectLicenseErrorResponse: Decodable {
     var code: String?
     var error: String?
-    var message: String?
+    var traceID: String?
 
     var normalizedCode: String? {
-        let raw = code ?? error ?? message
-        return raw?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "_")
-            .nilIfEmpty
+        DirectLicenseAPIError.safeServerCode(code ?? error)
     }
 }
 

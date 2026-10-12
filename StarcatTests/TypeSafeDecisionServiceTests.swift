@@ -1,11 +1,11 @@
 //
-//  TypeSafeDecisionServiceTests.swift
+//  RepositoryDecisionServiceTests.swift
 //  StarcatTests
 //
 //  覆盖 Labs POC 的 TypeSafe(Jev)链路:
 //  - TypeSafeClient 的 wire contract(请求体 / 鉴权 / 错误映射 / 429 重试);
-//  - TypeSafeDecisionService 的 Noul 扇出 → 建议映射(阈值过滤 / 避重 / 封闭集校验);
-//  - 两个路由器的分流矩阵（分组保持手动边界；标签覆盖所有入口并按需回退 LLM）。
+//  - RepositoryDecisionService 的 Noul 扇出 → 建议映射(阈值过滤 / 避重 / 封闭集校验);
+//  - 两个路由器的分流矩阵（分组与标签均覆盖手动 / 自动入口，并按配置回退 LLM）。
 //
 //  所有网络均由 URLProtocolStub 拦截,不依赖 api.typesafe.ai 实时状态。
 //
@@ -19,10 +19,15 @@ import Foundation
 @Suite("TypeSafeClient", .serialized)
 struct TypeSafeClientTests {
     private let baseURL = URL(string: "https://typesafe.test.invalid")!
+    private let openRouterBaseURL = URL(string: "https://openrouter.test.invalid")!
 
     private func makeClient() -> TypeSafeClient {
         URLProtocolStub.reset()
-        return TypeSafeClient(baseURL: baseURL, session: URLProtocolStub.ephemeralSession())
+        return TypeSafeClient(
+            baseURL: baseURL,
+            openRouterBaseURL: openRouterBaseURL,
+            session: URLProtocolStub.ephemeralSession()
+        )
     }
 
     private func response(
@@ -85,6 +90,28 @@ struct TypeSafeClientTests {
         let criteria = try #require(q1["criteria"] as? [String: Any])
         #expect(criteria["true"] as? String == "yes")
         #expect(criteria["false"] as? String == "no")
+    }
+
+    @Test("OpenRouter fallback 使用 Decisions 路径与独立 Jev 模型命名空间")
+    func openRouterDecisionContract() async throws {
+        let client = makeClient()
+        URLProtocolStub.requestHandler = { request in
+            self.response(for: request, status: 200, body: self.successBody)
+        }
+
+        _ = try await client.evaluate(
+            state: "demo",
+            model: JevDecisionEngine.openRouterModelID,
+            questions: ["q1": .noul(instructions: "demo", criteria: nil)],
+            apiKey: "sk-or-test",
+            api: .openRouter
+        )
+
+        let request = try #require(URLProtocolStub.receivedRequests.first)
+        #expect(request.url?.absoluteString == "https://openrouter.test.invalid/api/alpha/decisions")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-or-test")
+        let body = try JSONSerialization.jsonObject(with: #require(request.httpBody)) as? [String: Any]
+        #expect(body?["model"] as? String == "typesafe/jev-1.13")
     }
 
     @Test("无 criteria 的 Noul 问题不编码 criteria 键")
@@ -240,24 +267,25 @@ private final class RequestCounter: @unchecked Sendable {
 // MARK: - Service 映射
 
 @MainActor
-@Suite("TypeSafeDecisionService", .serialized)
-struct TypeSafeDecisionServiceTests {
+@Suite("RepositoryDecisionService", .serialized)
+struct RepositoryDecisionServiceTests {
 
     private var defaults: UserDefaults {
-        let suite = UserDefaults(suiteName: "TypeSafeDecisionServiceTests")!
-        suite.removePersistentDomain(forName: "TypeSafeDecisionServiceTests")
+        let suite = UserDefaults(suiteName: "RepositoryDecisionServiceTests")!
+        suite.removePersistentDomain(forName: "RepositoryDecisionServiceTests")
         return suite
     }
 
     private func makeService(
         settings: AppSettings,
         keychain: InMemoryKeychain
-    ) throws -> TypeSafeDecisionService {
+    ) throws -> RepositoryDecisionService {
         URLProtocolStub.reset()
         let database = try InMemoryDatabaseManager()
-        return TypeSafeDecisionService(
+        return RepositoryDecisionService(
             client: TypeSafeClient(
                 baseURL: URL(string: "https://typesafe.test.invalid")!,
+                openRouterBaseURL: URL(string: "https://openrouter.test.invalid")!,
                 session: URLProtocolStub.ephemeralSession()
             ),
             settings: settings,
@@ -267,7 +295,7 @@ struct TypeSafeDecisionServiceTests {
     }
 
     private func storeKey(_ key: InMemoryKeychain) throws {
-        try key.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+        try key.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
     }
 
     private func stubAnswers(_ json: String) {
@@ -296,6 +324,19 @@ struct TypeSafeDecisionServiceTests {
 
     private func makeCandidate(id: String, name: String, instruction: String) -> GitHubStarListAIContext {
         GitHubStarListAIContext(listId: id, name: name, instruction: instruction, autoApplyEnabled: false)
+    }
+
+    private func makeOpenRouterProfile(
+        isEnabled: Bool = true,
+        status: AIProviderTestStatus = .success(modelCount: 1)
+    ) -> AIProviderProfile {
+        AIProviderProfile(
+            id: "openrouter-primary",
+            provider: .openRouter,
+            displayName: "OpenRouter Primary",
+            isEnabled: isEnabled,
+            lastTestStatus: status
+        )
     }
 
     // MARK: 分组
@@ -512,6 +553,7 @@ struct TypeSafeDecisionServiceTests {
         // 默认上限 3:ai(0.9)/cli(0.8)/swift(0.7) 入选;unrelated(0.3) 低于 0.5 下限被过滤。
         #expect(suggestions.map(\.name) == ["ai", "cli", "swift"])
         #expect(suggestions.map(\.confidence) == [0.9, 0.8, 0.7])
+        #expect(suggestions.allSatisfy { $0.engine == .jev })
 
         let body = try lastRequestBody()
         let state = try #require(body["state"] as? [String: Any])
@@ -587,22 +629,166 @@ struct TypeSafeDecisionServiceTests {
         #expect(URLProtocolStub.receivedRequests.isEmpty)
     }
 
-    @Test("Key 未配置时 canResolveAPIKey 为 false")
+    @Test("原生 Key 缺失时复用已验证 OpenRouter Key 调用 Decisions API")
+    func openRouterFallbackActivatesWhenNativeKeyIsMissing() async throws {
+        let keychain = InMemoryKeychain()
+        let settings = AppSettings(defaults: defaults, keychain: keychain)
+        let profile = makeOpenRouterProfile()
+        settings.aiProviderProfiles = [profile]
+        try keychain.storeAIKey("sk-or-test", forProvider: profile.id)
+        let service = try makeService(settings: settings, keychain: keychain)
+        stubAnswers(
+            #"{"model":"typesafe/jev-1.13","answers":{"tag::swift":{"type":"noul","noul":0.9}}}"#
+        )
+
+        var repo = Repo.makeMinimal(owner: "acme", name: "r1")
+        repo.id = 1
+        let results = try await service.generateBatchTagSuggestions(
+            for: [repo],
+            tagHintsByRepoID: [1: AITagHints(repoTags: [], libraryTags: ["swift"])]
+        )
+
+        #expect(results[1]?.map(\.name) == ["swift"])
+        let request = try #require(URLProtocolStub.receivedRequests.last)
+        #expect(request.url?.absoluteString == "https://openrouter.test.invalid/api/alpha/decisions")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-or-test")
+        #expect(try lastRequestBody()["model"] as? String == JevDecisionEngine.openRouterModelID)
+    }
+
+    @Test("原生 TypeSafe Key 始终优先于 OpenRouter fallback")
+    func nativeKeyTakesPrecedenceOverOpenRouter() async throws {
+        let keychain = InMemoryKeychain()
+        let settings = AppSettings(defaults: defaults, keychain: keychain)
+        let profile = makeOpenRouterProfile()
+        settings.aiProviderProfiles = [profile]
+        try keychain.storeAIKey("sk-or-test", forProvider: profile.id)
+        try keychain.storeServiceAPIKey(
+            "tsk-native",
+            forService: JevDecisionEngine.keychainServiceID
+        )
+        let service = try makeService(settings: settings, keychain: keychain)
+        stubAnswers(
+            #"{"model":"jev-1.13.0","answers":{"tag::swift":{"type":"noul","noul":0.9}}}"#
+        )
+
+        var repo = Repo.makeMinimal(owner: "acme", name: "r1")
+        repo.id = 1
+        _ = try await service.generateBatchTagSuggestions(
+            for: [repo],
+            tagHintsByRepoID: [1: AITagHints(repoTags: [], libraryTags: ["swift"])]
+        )
+
+        let request = try #require(URLProtocolStub.receivedRequests.last)
+        #expect(request.url?.absoluteString == "https://typesafe.test.invalid/v1/systemone")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tsk-native")
+        #expect(try lastRequestBody()["model"] as? String == JevDecisionEngine.defaultModelID)
+    }
+
+    @Test("原生 Key 最近测试失败时保留 Key 但改走 OpenRouter")
+    func nativeTestFailureActivatesOpenRouterFallback() async throws {
+        let keychain = InMemoryKeychain()
+        let settings = AppSettings(defaults: defaults, keychain: keychain)
+        let profile = makeOpenRouterProfile()
+        settings.aiProviderProfiles = [profile]
+        settings.typesafeNativeKeyTestFailed = true
+        try keychain.storeAIKey("sk-or-test", forProvider: profile.id)
+        try keychain.storeServiceAPIKey(
+            "tsk-native",
+            forService: JevDecisionEngine.keychainServiceID
+        )
+        let service = try makeService(settings: settings, keychain: keychain)
+        stubAnswers(
+            #"{"model":"typesafe/jev-1.13","answers":{"tag::swift":{"type":"noul","noul":0.9}}}"#
+        )
+
+        var repo = Repo.makeMinimal(owner: "acme", name: "r1")
+        repo.id = 1
+        _ = try await service.generateBatchTagSuggestions(
+            for: [repo],
+            tagHintsByRepoID: [1: AITagHints(repoTags: [], libraryTags: ["swift"])]
+        )
+
+        let request = try #require(URLProtocolStub.receivedRequests.last)
+        #expect(request.url?.absoluteString == "https://openrouter.test.invalid/api/alpha/decisions")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-or-test")
+        #expect(try lastRequestBody()["model"] as? String == JevDecisionEngine.openRouterModelID)
+    }
+
+    @Test("显式原生 Key override 可绕过失败标记执行重测")
+    func nativeOverrideCanRetryAfterFailure() throws {
+        let keychain = InMemoryKeychain()
+        let settings = AppSettings(defaults: defaults, keychain: keychain)
+        let profile = makeOpenRouterProfile()
+        settings.aiProviderProfiles = [profile]
+        settings.typesafeNativeKeyTestFailed = true
+        try keychain.storeAIKey("sk-or-test", forProvider: profile.id)
+        try keychain.storeServiceAPIKey(
+            "tsk-stored",
+            forService: JevDecisionEngine.keychainServiceID
+        )
+
+        let access = try #require(
+            JevDecisionEngine.resolveAccess(
+                settings: settings,
+                keychain: keychain,
+                nativeAPIKeyOverride: "tsk-retry"
+            )
+        )
+
+        #expect(access.source == .typeSafe)
+        #expect(access.apiKey == "tsk-retry")
+        #expect(access.modelID == JevDecisionEngine.defaultModelID)
+    }
+
+    @Test("原生 Key 测试失败且 OpenRouter 不可用时 Jev 凭据不可解析")
+    func failedNativeKeyWithoutOpenRouterIsUnavailable() async throws {
+        let keychain = InMemoryKeychain()
+        let settings = AppSettings(defaults: defaults, keychain: keychain)
+        settings.typesafeNativeKeyTestFailed = true
+        try keychain.storeServiceAPIKey(
+            "tsk-native",
+            forService: JevDecisionEngine.keychainServiceID
+        )
+        let service = try makeService(settings: settings, keychain: keychain)
+
+        #expect(!service.isSelectedEngineAvailable)
+    }
+
+    @Test("未验证、已停用或缺 Key 的 OpenRouter profile 不启用 fallback")
+    func unusableOpenRouterProfilesDoNotActivateFallback() async throws {
+        let keychain = InMemoryKeychain()
+        let settings = AppSettings(defaults: defaults, keychain: keychain)
+        let service = try makeService(settings: settings, keychain: keychain)
+
+        let unverified = makeOpenRouterProfile(status: .notTested)
+        settings.aiProviderProfiles = [unverified]
+        try keychain.storeAIKey("sk-or-test", forProvider: unverified.id)
+        #expect(!service.isSelectedEngineAvailable)
+
+        settings.aiProviderProfiles = [makeOpenRouterProfile(isEnabled: false)]
+        #expect(!service.isSelectedEngineAvailable)
+
+        try keychain.deleteAIKey(forProvider: unverified.id)
+        settings.aiProviderProfiles = [makeOpenRouterProfile()]
+        #expect(!service.isSelectedEngineAvailable)
+    }
+
+    @Test("Key 未配置时所选引擎不可用")
     func keyResolution() async throws {
         let keychain = InMemoryKeychain()
         let settings = AppSettings(defaults: defaults, keychain: keychain)
         let service = try makeService(settings: settings, keychain: keychain)
-        #expect(!service.canResolveAPIKey())
+        #expect(!service.isSelectedEngineAvailable)
         try storeKey(keychain)
-        #expect(service.canResolveAPIKey())
+        #expect(service.isSelectedEngineAvailable)
     }
 }
 
 // MARK: - 路由矩阵
 
 @MainActor
-@Suite("TypeSafeSuggestionRouters", .serialized)
-struct TypeSafeSuggestionRoutersTests {
+@Suite("DecisionSuggestionRouters", .serialized)
+struct DecisionSuggestionRoutersTests {
 
     private final class RecordingListProvider: GitHubStarListSuggestionProviding {
         private(set) var callCount = 0
@@ -642,12 +828,12 @@ struct TypeSafeSuggestionRoutersTests {
         grouping: Bool,
         tags: Bool
     ) -> AppSettings {
-        let suite = UserDefaults(suiteName: "TypeSafeSuggestionRoutersTests")!
-        suite.removePersistentDomain(forName: "TypeSafeSuggestionRoutersTests")
+        let suite = UserDefaults(suiteName: "DecisionSuggestionRoutersTests")!
+        suite.removePersistentDomain(forName: "DecisionSuggestionRoutersTests")
         let settings = AppSettings(defaults: suite, keychain: keychain)
-        settings.typesafeDecisionEnabled = enabled
-        settings.typesafeGroupingSuggestionsEnabled = grouping
-        settings.typesafeTagSuggestionsEnabled = tags
+        settings.decisionEngineEnabled = enabled
+        settings.decisionGroupingSuggestionsEnabled = grouping
+        settings.decisionTagSuggestionsEnabled = tags
         return settings
     }
 
@@ -655,7 +841,7 @@ struct TypeSafeSuggestionRoutersTests {
         settings: AppSettings,
         keychain: InMemoryKeychain,
         noulProbability: Double = 0.1
-    ) throws -> TypeSafeDecisionService {
+    ) throws -> RepositoryDecisionService {
         URLProtocolStub.reset()
         URLProtocolStub.requestHandler = { request in
             let response = HTTPURLResponse(
@@ -679,9 +865,10 @@ struct TypeSafeSuggestionRoutersTests {
             return (response, body)
         }
         let database = try InMemoryDatabaseManager()
-        return TypeSafeDecisionService(
+        return RepositoryDecisionService(
             client: TypeSafeClient(
                 baseURL: URL(string: "https://typesafe.test.invalid")!,
+                openRouterBaseURL: URL(string: "https://openrouter.test.invalid")!,
                 session: URLProtocolStub.ephemeralSession()
             ),
             settings: settings,
@@ -698,17 +885,16 @@ struct TypeSafeSuggestionRoutersTests {
 
     // MARK: 分组路由
 
-    @Test("手动 + 总开关开 + 有 Key → 分组走 Jev")
-    func groupingRoutesToTypesafeWhenManualAndEnabled() async throws {
+    @Test("总开关开 + 有 Key → 手动分组走 Jev")
+    func groupingRoutesToTypesafeWhenEnabled() async throws {
         let keychain = InMemoryKeychain()
-        try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+        try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
         let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
         let llm = RecordingListProvider()
-        let router = TypeSafeGitHubListSuggestionRouter(
+        let router = DecisionGitHubListSuggestionRouter(
             llmProvider: llm,
-            typesafeProvider: try makeJevStubService(settings: settings, keychain: keychain),
-            settings: settings,
-            isManualInvocation: { true }
+            decisionProvider: try makeJevStubService(settings: settings, keychain: keychain),
+            settings: settings
         )
 
         _ = try await router.generateGitHubListSuggestions(
@@ -725,24 +911,30 @@ struct TypeSafeSuggestionRoutersTests {
         #expect(URLProtocolStub.receivedRequests.count == 1)
     }
 
-    @Test("非手动上下文(自动整理) → 分组走 LLM")
-    func groupingFallsBackWhenAutomatic() async throws {
+    @Test("共享路由不再限制手动上下文 → 自动分组也走 Jev")
+    func groupingRoutesToTypesafeWhenAutomatic() async throws {
         let keychain = InMemoryKeychain()
-        try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+        try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
         let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
         let llm = RecordingListProvider()
-        let router = TypeSafeGitHubListSuggestionRouter(
+        let router = DecisionGitHubListSuggestionRouter(
             llmProvider: llm,
-            typesafeProvider: try makeJevStubService(settings: settings, keychain: keychain),
-            settings: settings,
-            isManualInvocation: { false }
+            decisionProvider: try makeJevStubService(settings: settings, keychain: keychain),
+            settings: settings
         )
 
         _ = try await router.generateGitHubListSuggestions(
-            for: sampleRepos, candidates: [], existingListIDsByRepo: [:], existingListNamesByRepo: [:]
+            for: sampleRepos,
+            candidates: [
+                GitHubStarListAIContext(
+                    listId: "ml", name: "ML", instruction: "machine learning tools", autoApplyEnabled: true
+                )
+            ],
+            existingListIDsByRepo: [:],
+            existingListNamesByRepo: [:]
         )
-        #expect(llm.callCount == 1)
-        #expect(URLProtocolStub.receivedRequests.isEmpty)
+        #expect(llm.callCount == 0)
+        #expect(URLProtocolStub.receivedRequests.count == 1)
     }
 
     @Test("总开关关 / Key 缺失 → 分组走 LLM")
@@ -750,14 +942,13 @@ struct TypeSafeSuggestionRoutersTests {
         // 关:开关关但 Key 在
         do {
             let keychain = InMemoryKeychain()
-            try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+            try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
             let settings = makeSettings(keychain: keychain, enabled: false, grouping: true, tags: true)
             let llm = RecordingListProvider()
-            let router = TypeSafeGitHubListSuggestionRouter(
+            let router = DecisionGitHubListSuggestionRouter(
                 llmProvider: llm,
-                typesafeProvider: try makeJevStubService(settings: settings, keychain: keychain),
-                settings: settings,
-                isManualInvocation: { true }
+                decisionProvider: try makeJevStubService(settings: settings, keychain: keychain),
+                settings: settings
             )
             _ = try await router.generateGitHubListSuggestions(
                 for: sampleRepos, candidates: [], existingListIDsByRepo: [:], existingListNamesByRepo: [:]
@@ -771,11 +962,10 @@ struct TypeSafeSuggestionRoutersTests {
             let keychain = InMemoryKeychain()
             let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
             let llm = RecordingListProvider()
-            let router = TypeSafeGitHubListSuggestionRouter(
+            let router = DecisionGitHubListSuggestionRouter(
                 llmProvider: llm,
-                typesafeProvider: try makeJevStubService(settings: settings, keychain: keychain),
-                settings: settings,
-                isManualInvocation: { true }
+                decisionProvider: try makeJevStubService(settings: settings, keychain: keychain),
+                settings: settings
             )
             _ = try await router.generateGitHubListSuggestions(
                 for: sampleRepos, candidates: [], existingListIDsByRepo: [:], existingListNamesByRepo: [:]
@@ -791,11 +981,11 @@ struct TypeSafeSuggestionRoutersTests {
     func tagRoutingMatrix() async throws {
         do {
             let keychain = InMemoryKeychain()
-            try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+            try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
             let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
             let fallback = RecordingTagFallback()
-            let router = TypeSafeTagSuggestionRouter(
-                typesafeProvider: try makeJevStubService(settings: settings, keychain: keychain),
+            let router = DecisionTagSuggestionRouter(
+                decisionProvider: try makeJevStubService(settings: settings, keychain: keychain),
                 settings: settings
             )
             _ = try await router.generateTagSuggestions(
@@ -813,7 +1003,7 @@ struct TypeSafeSuggestionRoutersTests {
         for hasKey in [true, false] {
             let keychain = InMemoryKeychain()
             if hasKey {
-                try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+                try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
             }
             let settings = makeSettings(
                 keychain: keychain,
@@ -822,8 +1012,8 @@ struct TypeSafeSuggestionRoutersTests {
                 tags: !hasKey
             )
             let fallback = RecordingTagFallback()
-            let router = TypeSafeTagSuggestionRouter(
-                typesafeProvider: try makeJevStubService(settings: settings, keychain: keychain),
+            let router = DecisionTagSuggestionRouter(
+                decisionProvider: try makeJevStubService(settings: settings, keychain: keychain),
                 settings: settings
             )
             _ = try await router.generateTagSuggestions(
@@ -841,11 +1031,11 @@ struct TypeSafeSuggestionRoutersTests {
     @Test("Jev 结果满足数量和置信度时不调用 LLM")
     func tagsSkipLLMWhenJevIsSufficient() async throws {
         let keychain = InMemoryKeychain()
-        try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+        try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
         let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
         let fallback = RecordingTagFallback()
-        let router = TypeSafeTagSuggestionRouter(
-            typesafeProvider: try makeJevStubService(
+        let router = DecisionTagSuggestionRouter(
+            decisionProvider: try makeJevStubService(
                 settings: settings,
                 keychain: keychain,
                 noulProbability: 0.92
@@ -869,10 +1059,10 @@ struct TypeSafeSuggestionRoutersTests {
     @Test("单仓标签生成经统一路由走 Jev，且不要求无关的 LLM 配置")
     func singleRepoInsightUsesUnifiedTagRouter() async throws {
         let keychain = InMemoryKeychain()
-        try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+        try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
         let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
-        let router = TypeSafeTagSuggestionRouter(
-            typesafeProvider: try makeJevStubService(
+        let router = DecisionTagSuggestionRouter(
+            decisionProvider: try makeJevStubService(
                 settings: settings,
                 keychain: keychain,
                 noulProbability: 0.94
@@ -904,16 +1094,26 @@ struct TypeSafeSuggestionRoutersTests {
     @Test("Jev 结果不足时仅生成新标签并合并，且不二次验证新标签")
     func tagsFallbackToNewOnlyAndMerge() async throws {
         let keychain = InMemoryKeychain()
-        try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+        try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
         let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
         settings.applyAITagSuggestionCounts(minimum: 2, maximum: 3)
         let fallback = RecordingTagFallback()
         fallback.tagSuggestions = [
-            AITagSuggestion(name: "Rust", confidence: 0.83, reason: "new systems language"),
-            AITagSuggestion(name: "swift", confidence: 0.99, reason: "must be rejected")
+            AITagSuggestion(
+                name: "Rust",
+                confidence: 0.83,
+                reason: "new systems language",
+                engine: .llm
+            ),
+            AITagSuggestion(
+                name: "swift",
+                confidence: 0.99,
+                reason: "must be rejected",
+                engine: .llm
+            )
         ]
-        let router = TypeSafeTagSuggestionRouter(
-            typesafeProvider: try makeJevStubService(
+        let router = DecisionTagSuggestionRouter(
+            decisionProvider: try makeJevStubService(
                 settings: settings,
                 keychain: keychain,
                 noulProbability: 0.91
@@ -933,6 +1133,8 @@ struct TypeSafeSuggestionRoutersTests {
 
         #expect(results[1]?.count == 3)
         #expect(results[1]?.contains(where: { $0.name == "Rust" }) == true)
+        #expect(results[1]?.first(where: { $0.name == "Rust" })?.engine == .llm)
+        #expect(results[1]?.filter { $0.name != "Rust" }.allSatisfy { $0.engine == .jev } == true)
         #expect(fallback.callCount == 1)
         #expect(fallback.tagPurposes == [.newOnly])
         #expect(URLProtocolStub.receivedRequests.count == 1)
@@ -941,11 +1143,11 @@ struct TypeSafeSuggestionRoutersTests {
     @Test("禁止新增时 Jev 不足也不调用 LLM")
     func tagsDoNotFallbackWhenNewTagsAreDisabled() async throws {
         let keychain = InMemoryKeychain()
-        try keychain.storeServiceAPIKey("tsk-test", forService: TypeSafeDecisionService.keychainServiceID)
+        try keychain.storeServiceAPIKey("tsk-test", forService: JevDecisionEngine.keychainServiceID)
         let settings = makeSettings(keychain: keychain, enabled: true, grouping: true, tags: true)
         let fallback = RecordingTagFallback()
-        let router = TypeSafeTagSuggestionRouter(
-            typesafeProvider: try makeJevStubService(
+        let router = DecisionTagSuggestionRouter(
+            decisionProvider: try makeJevStubService(
                 settings: settings,
                 keychain: keychain,
                 noulProbability: 0.6

@@ -16,7 +16,7 @@
 #   APPLE_ID / APPLE_TEAM_ID / APPLE_APP_PASSWORD
 #                                     未配置 STARCAT_NOTARY_PROFILE 时的兼容凭证。
 #   STARCAT_GENERATE_APPCAST=1         使用 Sparkle generate_appcast 生成当前版本 appcast。
-#   STARCAT_DOWNLOAD_BASE_URL          appcast 下载前缀，默认 https://starcat.ink/downloads/。
+#   STARCAT_DOWNLOAD_BASE_URL          appcast 下载前缀，默认 GitHub Release 的 v<version>/ 目录。
 #                                     生成后会从 CHANGELOG 注入 Sparkle 更新说明（description）。
 #   STARCAT_DMG_TOOL=create-dmg|hdiutil
 #                                     默认 create-dmg；仅显式设置 hdiutil 时生成裸 DMG。
@@ -59,6 +59,8 @@ PLUGINS_DIR="${APP_PATH}/Contents/PlugIns"
 # Direct Widget 仍是独立沙箱扩展；重新签名时必须用这份正式 entitlement，
 # 不能 --preserve-metadata=entitlements，否则会把开发签名注入的 get-task-allow 带进公证包。
 DIRECT_WIDGET_ENTITLEMENTS="${PROJECT_ROOT}/Starcat/Resources/Widget/StarcatDirectWidgets.entitlements"
+DIRECT_DISTRIBUTION_ENTITLEMENTS="${PROJECT_ROOT}/Starcat/StarcatDirectDistribution.entitlements"
+LOCAL_AI_APP_GROUP="8WCUMGCWMB.com.starcat.app.localai"
 # 1.8.0 起嵌入 Direct 包的系统屏保 bundle。Xcode 构建期只带 Apple Development 签名，
 # 公证要求显式换 Developer ID + 安全时间戳。注意不能传 --entitlements：macOS 27
 # 工具链的 codesign 对 MH_BUNDLE（屏保二进制文件类型）会静默丢弃 entitlement，
@@ -235,6 +237,21 @@ sign_distribution_code() {
   fi
 }
 
+sign_main_app() {
+  [ -f "$DIRECT_DISTRIBUTION_ENTITLEMENTS" ] \
+    || fail "缺少 Direct distribution entitlements: $DIRECT_DISTRIBUTION_ENTITLEMENTS"
+
+  # 主 App 需要共享模型 App Group；仍使用一份发布专用最小 entitlement，不能从
+  # Apple Development 签名继承 get-task-allow 或其它开发期能力。
+  if [ "$SIGN_IDENTITY" = "-" ]; then
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none \
+      --entitlements "$DIRECT_DISTRIBUTION_ENTITLEMENTS" "$APP_PATH" >/dev/null
+  else
+    codesign --force --options runtime --sign "$SIGN_IDENTITY" --timestamp \
+      --entitlements "$DIRECT_DISTRIBUTION_ENTITLEMENTS" "$APP_PATH" >/dev/null
+  fi
+}
+
 sign_appex_code() {
   local target_path="$1"
   local entitlements_path="$2"
@@ -317,7 +334,7 @@ done
 # MH_BUNDLE 吃不进 entitlement（见顶部 SAVER_PATH 注释），走 distribution 签名。
 sign_distribution_code "$SAVER_PATH"
 
-sign_distribution_code "$APP_PATH"
+sign_main_app
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
@@ -339,6 +356,9 @@ if [ "$SIGN_IDENTITY" != "-" ]; then
     if ! grep -q 'com.apple.security.app-sandbox' <<<"$APPEX_ENTITLEMENTS"; then
       fail "$(basename "$APPEX_PATH") 缺少 app-sandbox entitlement"
     fi
+    if grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$APPEX_ENTITLEMENTS"; then
+      fail "$(basename "$APPEX_PATH") 不应获得本地 AI 共享 App Group"
+    fi
   done
   verify_developer_id_code "StarcatScreensaver.saver" "$SAVER_PATH"
 fi
@@ -346,6 +366,9 @@ fi
 FINAL_ENTITLEMENTS="$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)"
 if grep -Eq 'com\.apple\.security\.(app-sandbox|get-task-allow)' <<<"$FINAL_ENTITLEMENTS"; then
   fail "Direct 包最终签名仍包含 App Sandbox 或 get-task-allow entitlement"
+fi
+if ! grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$FINAL_ENTITLEMENTS"; then
+  fail "Direct 包最终签名缺少本地 AI 共享 App Group"
 fi
 
 log "生成 DMG"
@@ -454,7 +477,8 @@ fi
 if [ "${STARCAT_GENERATE_APPCAST:-0}" = "1" ]; then
   GENERATE_APPCAST="$(find "$DERIVED_DIR" -path '*/Sparkle/bin/generate_appcast' -type f | head -1)"
   [ -n "$GENERATE_APPCAST" ] || fail "未找到 Sparkle generate_appcast"
-  DOWNLOAD_BASE_URL="${STARCAT_DOWNLOAD_BASE_URL:-https://starcat.ink/downloads/}"
+  # 每次只生成当前版本 item，前缀必须绑定同版本 tag，保证官网与 Sparkle 共用下载源。
+  DOWNLOAD_BASE_URL="${STARCAT_DOWNLOAD_BASE_URL:-https://github.com/starcat-app/Starcat/releases/download/v${VERSION}/}"
   log "生成当前版本 appcast: $CURRENT_APPCAST_PATH"
   # 这里只生成当前版本 item。历史版本由 release-direct.sh 增量合并进
   # supports/starcat-site/direct/appcast.xml，避免发布机必须保存所有旧 DMG。

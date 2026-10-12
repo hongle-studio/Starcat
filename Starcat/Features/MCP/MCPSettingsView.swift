@@ -15,6 +15,7 @@ struct MCPSettingsTab: View {
     @Environment(AppSettings.self) private var settings
     @Environment(AppDependencies.self) private var dependencies
     @Environment(EntitlementGate.self) private var entitlementGate
+    @Environment(\.locale) private var locale
 
     /// 端口输入草稿：编辑期不钳制、不写盘，避免全选替换被 binding setter 打断。
     /// 点「重启」或离开字段时再 `commitPortDraft()`。
@@ -95,10 +96,20 @@ struct MCPSettingsTab: View {
                     }
                 }
 
+                Toggle(isOn: $settings.mcpAllowGitHubStarWrites) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.mcp.githubStarWrites.title")
+                        Text("settings.mcp.githubStarWrites.help")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 Toggle(isOn: $settings.mcpAllowBatchWrites) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("settings.mcp.batchWrites.title")
-                        Text("settings.mcp.batchWrites.help")
+                        Text("settings.mcp.batchOrganize.help")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -125,7 +136,32 @@ struct MCPSettingsTab: View {
 
             Section {
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.cli.manual.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.agent",
+                    operation: "settings.mcp.agentSetup.execution.action.completeSetup",
+                    help: "settings.mcp.agentSetup.complete.help"
+                ) {
+                    pairingCopyButton(
+                        providesContent: { try mcpService.createCompleteAgentSetupInstruction() },
+                        tooltip: "settings.mcp.agentSetup.complete.copy",
+                        isEnabled: isRunning(mcpService.state)
+                    )
+                }
+            } header: {
+                SettingsSectionHeader(
+                    "settings.mcp.agentSetup.complete.sectionTitle",
+                    systemImage: "checklist"
+                )
+            } footer: {
+                Text("settings.mcp.agentSetup.complete.footer")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section {
+                setupActionRow(
+                    executionContext: "settings.mcp.agentSetup.execution.context.terminal",
+                    operation: "settings.mcp.agentSetup.execution.action.installCLI",
                     help: "settings.mcp.agentSetup.cli.manual.help"
                 ) {
                     setupCopyButton(
@@ -135,7 +171,8 @@ struct MCPSettingsTab: View {
                 }
 
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.cli.agent.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.agent",
+                    operation: "settings.mcp.agentSetup.execution.action.installCLI",
                     help: "settings.mcp.agentSetup.cli.agent.help"
                 ) {
                     setupCopyButton(
@@ -145,7 +182,8 @@ struct MCPSettingsTab: View {
                 }
 
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.cli.verify.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.terminal",
+                    operation: "settings.mcp.agentSetup.execution.action.verifyCLI",
                     help: "settings.mcp.agentSetup.cli.verify.help"
                 ) {
                     setupCopyButton(
@@ -162,7 +200,8 @@ struct MCPSettingsTab: View {
 
             Section {
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.pair.manual.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.targetTerminal",
+                    operation: "settings.mcp.agentSetup.execution.action.pairDevice",
                     help: "settings.mcp.agentSetup.pair.manual.help"
                 ) {
                     pairingCopyButton(
@@ -173,7 +212,8 @@ struct MCPSettingsTab: View {
                 }
 
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.pair.agent.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.agent",
+                    operation: "settings.mcp.agentSetup.execution.action.pairDevice",
                     help: "settings.mcp.agentSetup.pair.agent.help"
                 ) {
                     pairingCopyButton(
@@ -196,7 +236,8 @@ struct MCPSettingsTab: View {
 
             Section {
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.mcp.claude.title",
+                    executionContext: "settings.mcp.agentSetup.mcp.claude.title",
+                    operation: "settings.mcp.agentSetup.execution.action.mcpConfig",
                     help: "settings.mcp.agentSetup.mcp.claude.help"
                 ) {
                     setupCopyButton(
@@ -206,7 +247,8 @@ struct MCPSettingsTab: View {
                 }
 
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.mcp.codex.title",
+                    executionContext: "settings.mcp.agentSetup.mcp.codex.title",
+                    operation: "settings.mcp.agentSetup.execution.action.mcpConfig",
                     help: "settings.mcp.agentSetup.mcp.codex.help"
                 ) {
                     setupCopyButton(
@@ -216,7 +258,8 @@ struct MCPSettingsTab: View {
                 }
 
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.mcp.agent.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.agent",
+                    operation: "settings.mcp.agentSetup.execution.action.configureMCP",
                     help: "settings.mcp.agentSetup.mcp.agent.help"
                 ) {
                     setupCopyButton(
@@ -238,7 +281,8 @@ struct MCPSettingsTab: View {
 
             Section {
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.skill.manual.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.terminal",
+                    operation: "settings.mcp.agentSetup.execution.action.installSkill",
                     help: "settings.mcp.agentSetup.skill.manual.help"
                 ) {
                     setupCopyButton(
@@ -248,7 +292,8 @@ struct MCPSettingsTab: View {
                 }
 
                 setupActionRow(
-                    title: "settings.mcp.agentSetup.skill.agent.title",
+                    executionContext: "settings.mcp.agentSetup.execution.context.agent",
+                    operation: "settings.mcp.agentSetup.execution.action.installSkill",
                     help: "settings.mcp.agentSetup.skill.agent.help"
                 ) {
                     setupCopyButton(
@@ -270,6 +315,9 @@ struct MCPSettingsTab: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(device.name)
                                 Text("\(device.platform) / \(device.architecture) · \(device.cliVersion)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(pairedAtText(for: device))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -348,16 +396,42 @@ struct MCPSettingsTab: View {
         return false
     }
 
+    /// 使用绝对日期时间帮助用户稳定区分新旧配对；配对较早不等于凭据已失效，
+    /// 因此这里只展示事实时间，不派生容易误导的 stale 状态。
+    private func pairedAtText(for device: StarcatMCPPairedDevice) -> String {
+        let timestamp = device.pairedAt.formatted(
+            .dateTime
+                .year()
+                .month(.abbreviated)
+                .day()
+                .hour()
+                .minute()
+                .locale(locale)
+        )
+        return String(
+            format: String.l10n("settings.mcp.devices.pairedAtFormat"),
+            timestamp
+        )
+    }
+
     /// 设置页动作保持“说明在左、独立按钮在右”的统一密度；复制状态与剪贴板写入由
     /// `CopyFeedbackButton` 负责，避免每一行各自维护反馈计时器。
     private func setupActionRow<Action: View>(
-        title: LocalizedStringKey,
+        executionContext: LocalizedStringKey,
+        operation: LocalizedStringKey,
         help: LocalizedStringKey,
         @ViewBuilder action: () -> Action
     ) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                // 把执行位置放在动作前面，用户无需先阅读说明即可区分终端命令、
+                // Agent 提示词与客户端配置，避免把复制内容粘贴到错误的位置。
+                HStack(spacing: 0) {
+                    Text(executionContext)
+                    Text(verbatim: " · ")
+                    Text(operation)
+                }
+                .accessibilityElement(children: .combine)
                 Text(help)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -372,14 +446,13 @@ struct MCPSettingsTab: View {
         content: @escaping () -> String,
         tooltip: LocalizedStringKey
     ) -> some View {
-        CopyFeedbackButton(providesContent: content, tooltip: tooltip, style: .bordered) { didCopy in
+        CopyFeedbackButton(providesContent: content, tooltip: tooltip) { didCopy in
             setupCopyLabel(didCopy: didCopy, key: tooltip)
         }
-        .controlSize(.regular)
     }
 
-    /// 配对命令每次点击即时生成，不能先缓存到 View state。这样用户手工配对与
-    /// Agent 配对永远拿到相互独立、五分钟有效的一次性 secret。
+    /// 携带 invitation 的内容每次点击即时生成，不能先缓存到 View state。这样手工配对、
+    /// Agent 配对与完整配置永远拿到相互独立、五分钟有效的一次性 secret。
     private func pairingCopyButton(
         providesContent: @escaping () throws -> String,
         tooltip: LocalizedStringKey,
@@ -391,24 +464,28 @@ struct MCPSettingsTab: View {
                 NSPasteboard.general.clearContents()
                 return NSPasteboard.general.setString(content, forType: .string)
             },
-            tooltip: tooltip,
-            style: .bordered
+            tooltip: tooltip
         ) { didCopy in
             setupCopyLabel(didCopy: didCopy, key: tooltip)
         }
-        .controlSize(.regular)
         .disabled(!isEnabled)
     }
 
-    @ViewBuilder
     private func setupCopyLabel(didCopy: Bool, key: LocalizedStringKey) -> some View {
-        if didCopy {
-            Label("common.copy.copied", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(Color.green)
-        } else {
-            Label(key, systemImage: "doc.on.doc")
-                .foregroundStyle(.primary)
-        }
+        let accessibilityKey: LocalizedStringKey = didCopy ? "common.copy.copied" : key
+
+        return Label(
+            accessibilityKey,
+            systemImage: didCopy ? "checkmark.circle.fill" : "doc.on.doc"
+        )
+        .labelStyle(.iconOnly)
+        .font(.system(size: 15, weight: .medium))
+        .foregroundStyle(didCopy ? Color.green : Color.secondary)
+        // 设置页 icon-only 操作统一使用 28pt 命中区；详细语义仍由 tooltip 与
+        // accessibility label 承担，视觉上只保留可扫描的复制 / 成功图标。
+        .frame(width: 28, height: 28)
+        .contentShape(Rectangle())
+        .accessibilityLabel(Text(accessibilityKey))
     }
 }
 

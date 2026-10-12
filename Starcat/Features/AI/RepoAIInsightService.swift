@@ -234,7 +234,7 @@ final class RepoAIInsightService {
     private let keychain: any KeychainManaging
     private let externalContextProvider: ExternalSearchContextProvider
     private let entitlementGate: EntitlementGate?
-    private let tagSuggestionRouter: TypeSafeTagSuggestionRouter?
+    private let tagSuggestionRouter: DecisionTagSuggestionRouter?
     private var repositoryInsightsContextProvider:
         (any RepositoryInsightsAIContextProviding)?
 
@@ -301,7 +301,7 @@ final class RepoAIInsightService {
         repositoryInsightsContextProvider:
             (any RepositoryInsightsAIContextProviding)? = nil,
         entitlementGate: EntitlementGate? = nil,
-        tagSuggestionRouter: TypeSafeTagSuggestionRouter? = nil,
+        tagSuggestionRouter: DecisionTagSuggestionRouter? = nil,
         onSummaryGenerated: (@MainActor (Repo) -> Void)? = nil
     ) {
         self.summaryRepository = summaryRepository
@@ -712,9 +712,11 @@ final class RepoAIInsightService {
 
             # Jev New-Tag Fallback Override (STRICT)
             Jev has already evaluated the repository against every reusable tag supplied in this request.
-            For every repository, return exactly ONE genuinely new reusable tag name.
+            For every repository, return ZERO OR ONE genuinely new reusable tag name.
             The name MUST NOT equal or canonically duplicate any name in that repository's existing tags or in <shared_library_tags>.
             Do not return an existing vocabulary tag even when the base prompt says to prefer reuse.
+            Across the entire results array, use at most FIVE distinct new tag names. Reuse the same name for repositories that share a stable concept.
+            When more than one repository is provided, omit repository-specific or one-off concepts and prefer names supported by at least two repositories.
             This section overrides every conflicting reuse, minimum-count, and decision-order instruction above.
             """
         }
@@ -773,7 +775,9 @@ final class RepoAIInsightService {
             responseFormat: .jsonObject,
             usageContext: AIUsageContext(
                 feature: .repoTags,
-                phase: purpose == .newOnly ? "batch-new-tag-fallback" : "batch-recommendation"
+                phase: purpose == .newOnly && repos.count > 1
+                    ? "batch-vocabulary-discovery"
+                    : (purpose == .newOnly ? "batch-new-tag-fallback" : "batch-recommendation")
             )
         ))
         try Task.checkCancellation()
@@ -1087,7 +1091,7 @@ final class RepoAIInsightService {
         tagGenerationPolicy: AITagGenerationPolicy
     ) throws {
         _ = tagGenerationPolicy
-        let requiresLLMTagClient = includeTags && tagSuggestionRouter?.isRoutingToTypesafe != true
+        let requiresLLMTagClient = includeTags && tagSuggestionRouter?.isRoutingToDecisionEngine != true
         try ensureGenerationClientsReady(
             includeSummary: includeSummary,
             includeTags: requiresLLMTagClient
@@ -1909,10 +1913,10 @@ final class RepoAIInsightService {
         let json = extractJSONObject(from: raw)
         guard let data = json.data(using: .utf8) else { throw RepoAIInsightError.invalidJSON }
         if let envelope = try? JSONDecoder().decode(AITagSuggestionEnvelope.self, from: data) {
-            return envelope.suggestedTags
+            return markAsLLMGenerated(envelope.suggestedTags)
         }
         if let list = try? JSONDecoder().decode([AITagSuggestion].self, from: data) {
-            return list
+            return markAsLLMGenerated(list)
         }
         // Anthropic / 中转常给 snake_case、缺 reason、或把标签写成字符串数组。
         guard let parsed = try? JSONSerialization.jsonObject(with: data),
@@ -1920,7 +1924,7 @@ final class RepoAIInsightService {
         else {
             throw RepoAIInsightError.invalidJSON
         }
-        return tags
+        return markAsLLMGenerated(tags)
     }
 
     nonisolated static func decodeBatchTagSuggestions(
@@ -1936,12 +1940,23 @@ final class RepoAIInsightService {
             for result in envelope.results {
                 // 漏项不能伪装成“没有标签”，重复项也不能静默覆盖前一个结果。
                 guard decoded[result.repoID] == nil else { throw RepoAIInsightError.invalidJSON }
-                decoded[result.repoID] = result.suggestedTags
+                decoded[result.repoID] = markAsLLMGenerated(result.suggestedTags)
             }
             guard Set(decoded.keys) == expectedRepoIDs else { throw RepoAIInsightError.invalidJSON }
             return decoded
         } catch {
             throw RepoAIInsightError.invalidJSON
+        }
+    }
+
+    /// 来源在本地调用边界统一盖章，避免模型输出伪造 `engine` 后在审核界面冒充 Jev。
+    private nonisolated static func markAsLLMGenerated(
+        _ suggestions: [AITagSuggestion]
+    ) -> [AITagSuggestion] {
+        suggestions.map { suggestion in
+            var stamped = suggestion
+            stamped.engine = .llm
+            return stamped
         }
     }
 

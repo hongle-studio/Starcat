@@ -1,5 +1,7 @@
 # Starcat CLI、Skill 与外部 MCP 桥接设计
 
+> 范围更新（2026-10-07）：#119 的 MCP 配对时间剩余跟进取消；已有配对时间显示、连接修复和安全边界保留，不影响其他 CLI / MCP 工作。 逐项见[任务取消与范围同步](../../4-工程进度/2026-10-07-任务取消与范围同步.md)；本说明优先于下文同范围的旧排期与验收要求。
+
 > 状态：v3 实现中（2026-07-20）
 >
 > 目标：让 macOS、Linux、Windows 上的 Codex、Claude Code 等 Agent 安全操作另一台 Mac 上的 Starcat。
@@ -94,12 +96,15 @@ starcat-pair://connect?v=1&endpoint=...&fingerprint=...&secret=...
 6. Starcat 显示设备确认 sheet；用户确认后签发独立 device token。
 7. invitation 立即失效，CLI 把 token 写入系统安全存储。
 
+目标域名解析失败时，CLI 在请求发出前尝试同端口的 `127.0.0.1`，继续使用 HTTPS 和原指纹；配对成功后保存实际连接地址。两次连接均失败时报告两次失败原因。证书不匹配时提示核实 App 后生成新 URI 重新配对，不自动更新信任，也不重放已提交的配对或业务请求。
+
 `/pairing/exchange` 是 MCP listener 上唯一的非 MCP 窄路由，只交换设备凭据，不承载任何 Starcat 业务数据。
 
 ## 5. 网络与 TLS
 
 - 默认关闭远程访问，只监听 `127.0.0.1`，使用 loopback HTTP。
 - 用户显式开启「允许可信网络设备连接」后，listener 才绑定网络接口并强制 TLS 1.3。
+- 可信网络默认地址来自 `SCDynamicStoreCopyLocalHostName` 的 Bonjour 名称加 `.local`，不使用可能来自公网 DNS 的 `ProcessInfo.hostName`。Bonjour 名称缺失时使用 HTTPS loopback；Host/Origin 白名单精确允许 Bonjour、本机地址和当前系统 DNS 名称。
 - Starcat 使用 Security.framework 为当前 Mac 生成独立 P-256 私钥和自签名 X.509 certificate。
 - CLI 不使用公共 CA/hostname 信任，而是 pin invitation 中的完整 certificate SHA-256。
 - 不允许远程 HTTP 降级。公网暴露不属于本方案；推荐可信 LAN 或 Tailscale/WireGuard。

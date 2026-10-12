@@ -6,7 +6,7 @@
 >
 > 操作规范：[`docs/5-规范/Git-分支与Worktree规范.md`](docs/5-规范/Git-分支与Worktree规范.md)
 >
-> 最后核对：2026-09-23
+> 最后核对：2026-10-11
 
 ## 登记说明
 
@@ -32,9 +32,9 @@
 
 | 分支 | 位置 | 用途 | 当前状态 | 下一步 |
 |---|---|---|---|---|
-| `dev` | 本地 + `origin/dev`；仓库根目录 worktree | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；1.8.0 发布基线与 `main` 已同步（`892ca01d`）。Direct 1.8.0 已于 2026-09-23 发布（公证、appcast、官网、GitHub Release），App Store 包已就绪待上传。 | App Store 上传由 dong4j 完成；继续承载 1.8.x 维护与下版本开发。 |
-| `codex/performance-optimization` | 本地；无独立 worktree | Starcat macOS App 的 UI、列表分页、数据加载与缓存性能专项优化。 | `已合并`；多轮优化与交互修复已于 2026-09-06 合入 `dev`，独有提交为 0，原 worktree 已安全删除。 | 暂时保留本地分支；如需删除分支，等待 dong4j 单独授权。 |
-| `main` | 本地 + `origin/main`；仓库根目录 worktree | 远端默认稳定主线和发布基线。 | `长期保留`；1.8.0 已于 2026-09-23 发布：`v1.8.0` tag（`46ec70bc`，其后仅打包脚本修复至 `892ca01d`）、Direct 公证 / appcast / 官网 / GitHub Release 完成；App Store 包已就绪待上传。 | 保持 1.8.0 发布基线；App Store 上传与处理由 dong4j 完成，后续版本继续从已验收的 `dev` 快进。 |
+| `dev` | 本地 + `origin/dev`；当前未检出 | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；本地与远端已与 `main` 对齐。`v1.9.0` Direct 已公开发布，App Store archive 已生成但未上传；当前分支仅在发布 tag 之后包含本次分支登记更新。 | 继续承载后续开发；新增变更不得回写已公开的 `v1.9.0` tag。 |
+| `codex/laya-mlx-swift-poc` | 本地；无独立 worktree、无远端分支 | Laya MLX 决策引擎 PoC 的历史分支。 | `已合并`；分支头 `706f6bff` 已是 `dev` 的 ancestor，独有提交为 0。 | 暂时保留本地分支；如需删除，等待 dong4j 单独授权。 |
+| `main` | 本地 + `origin/main`；仓库根目录 worktree | 远端默认稳定主线和发布基线。 | `长期保留`；本地与远端已与 `dev` 对齐。`v1.9.0` Direct 已公开发布，App Store archive 已生成但未上传；当前分支仅在发布 tag 之后包含本次分支登记更新。 | 保持稳定；App Store Connect 上传由 dong4j 后续处理，下一版本验收后再从 `dev` 提升。 |
 
 ## 推荐数据链路跨仓分支
 
@@ -44,6 +44,7 @@
 
 | 分支 | 处理结论 | 清理依据 |
 |---|---|---|
+| `codex/performance-optimization` | 已删除 | 截至 2026-10-11，本地与远端均已不存在该分支，且没有对应 worktree；性能专项改动已在 `dev`。 |
 | `feature/anthropic-cc-switch-import` | 已删除 | 2026-09-14 dong4j 确认删除。已以 merge commit（`1341600a`）合入 `dev`，删除前 `merge-base --is-ancestor` 成立、独有提交 0、`git cherry` 为空、diff 为空；`../Starcat-anthropic-cc-switch` worktree 干净后 `git worktree remove`，再 `git branch -d`（HEAD `2ab786f2`）。从未存在远端分支。 |
 | `feature/settings-ui-unify` | 已删除 | 2026-09-14 dong4j 确认删除。已以 merge commit（`a7a4c5c7`）合入 `dev`，删除前 `merge-base --is-ancestor` 成立、独有提交 0、`git cherry` 为空、`../Starcat-settings-ui-unify` worktree 干净后 `git worktree remove`，再 `git branch -d`（HEAD `bb013ab1`）。从未存在远端分支。 |
 | `feature/local-ai` | 已删除 | 2026-09-13 dong4j 确认删除。2026-09-12 已以 merge commit（`84b7e5c5`）合入 `dev`，删除前 `merge-base --is-ancestor` 成立、独有提交 0、`git cherry` 为空、diff 为空；`../Starcat-local-ai` worktree 干净后 `git worktree remove`，再 `git branch -d`（HEAD `d78b6fcb`）。从未存在远端分支。 |

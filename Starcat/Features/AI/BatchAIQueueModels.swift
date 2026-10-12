@@ -42,6 +42,25 @@ enum BatchAIJobStatus: String, Codable, Equatable, Sendable {
     case failed
 }
 
+// MARK: - BatchAIIgnoreReason
+
+/// 批量任务进入“已忽略”时的结构化原因。
+///
+/// 原因必须保存为稳定枚举而不是已翻译字符串：草稿恢复后仍能按当前应用语言展示，
+/// 同时避免把“本地标签体系未覆盖”“低于阈值”和“用户主动忽略”混成同一种结果。
+enum BatchAIIgnoreReason: String, Codable, Equatable, Sendable {
+    /// 首次建立的本地标签体系没有任何已确认候选命中当前仓库。
+    case taxonomyUncovered
+    /// 闭集分类没有找到可复用的现有标签。
+    case vocabularyMiss
+    /// 静默自动整理的全部可用建议都低于自动应用阈值。
+    case belowConfidenceThreshold
+    /// 后台自动整理遇到空标签库，为避免逐仓自由造词而跳过标签任务。
+    case emptyTagLibrary
+    /// 用户在审核界面主动忽略了本仓库的全部建议。
+    case userSkipped
+}
+
 // MARK: - BatchAITagReviewState
 
 /// 标签生成完成后的人工审核状态。
@@ -74,6 +93,15 @@ enum BatchAITagSuggestionAvailability: String, Codable, Equatable, Sendable {
     case missing
     /// 批次启动前不存在，已经在本轮自动或手动创建并应用。
     case created
+}
+
+/// 人工确认后的批量标签落库进度。
+///
+/// 这里统计的是已经完成数据库与草稿 checkpoint 的仓库，而不是标签关联条数；用户勾选的是
+/// 仓库，按仓库计数才能与底栏的「已选 N 个」保持一致，也不会因每仓标签数不同产生跳变。
+struct BatchAITagApplicationProgress: Equatable, Sendable {
+    let processedRepositoryCount: Int
+    let totalRepositoryCount: Int
 }
 
 // MARK: - BatchAIFailure
@@ -201,6 +229,9 @@ struct BatchAIJob: Identifiable, Equatable, Sendable {
     /// 与 AI 生成终态分离的人工审核状态。
     var tagReviewState: BatchAITagReviewState = .notRequired
 
+    /// `status` 或 `tagReviewState` 为 ignored 时记录真实原因；nil 兼容旧草稿。
+    var ignoreReason: BatchAIIgnoreReason?
+
     /// 低于自动应用阈值、需要人工确认的标签；静默后台任务会将其作为 ignored 结果展示。
     /// 保留 `(name, confidence)` 二元组，避免提示阈值原因时再次扫描完整建议数组。
     var belowThresholdTags: [(name: String, confidence: Double)] = []
@@ -239,6 +270,7 @@ struct BatchAIJob: Identifiable, Equatable, Sendable {
               lhs.selectedSuggestedTagIDs == rhs.selectedSuggestedTagIDs,
               lhs.suggestedTagAvailability == rhs.suggestedTagAvailability,
               lhs.tagReviewState == rhs.tagReviewState,
+              lhs.ignoreReason == rhs.ignoreReason,
               lhs.finishedAt == rhs.finishedAt,
               lhs.didGenerateSummary == rhs.didGenerateSummary,
               lhs.belowThresholdTags.count == rhs.belowThresholdTags.count
@@ -296,10 +328,11 @@ struct BatchAIQueueOptions: Codable, Equatable, Sendable {
     /// 用户首次大批量整理时主动开启，平时小批量保持手动确认更安全。
     var autoApplyTags: Bool = false
 
-    /// 自动应用时，是否同时创建标签库中尚不存在的标签。
+    /// 是否允许人工批次扩充标签库中尚不存在的全局标签。
     ///
-    /// 默认关闭。它同时控制“Jev 现有标签不足时是否允许 LLM 补新标签”；自动应用关闭时，
-    /// 新标签只进入当前窗口等待人工确认，不会因为允许生成就直接写库。
+    /// 默认关闭。开启后首轮仍只让 Jev / Provider 复用现有词表；全部仓库结束后，把未覆盖
+    /// 仓库汇总成一次 LLM 概念发现，最多给出 5 个候选。用户确认扩词并重新分类后，
+    /// repo_tags 仍在当前窗口逐仓确认。自动后台整理永不自行扩充词表。
     var autoCreateMissingTags: Bool = false
 
     /// 本次摘要生成是否启用代码上下文。
@@ -351,7 +384,8 @@ struct BatchAIQueueOptions: Codable, Equatable, Sendable {
         return standardActionRepoIDs?.contains(repoID) ?? true
     }
 
-    /// 生成与落库共用同一个“允许新增”意图；阈值只在自动应用时参与 Jev 结果是否足够的判断。
+    /// “允许新增”意图由队列在第二阶段统一消费；首轮 Worker 会复制该策略并强制关闭新增。
+    /// 阈值仍只在自动应用现有标签时参与 Jev 结果是否足够的判断。
     var tagGenerationPolicy: AITagGenerationPolicy {
         AITagGenerationPolicy(
             allowNewTags: autoCreateMissingTags,

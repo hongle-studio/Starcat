@@ -2,6 +2,32 @@
 
 Release notes for the Mac App Store edition of Starcat.
 
+## 1.9.0
+
+### New
+
+- Initial tag taxonomy: When the tag library is empty, analyzes all starred repositories locally with visible phase and progress feedback, then lets you confirm a controlled vocabulary before reviewing repository assignments—no AI provider required.
+- Labs decision engines: Choose Jev or the on-device Laya model for repository grouping and tag reuse. Laya runs inside Starcat without Python, with model downloads, runtime testing, residency and memory status, queue details, manual load and unload, and runtime logs.
+- MCP repository management: AI agents can query repositories by tag, Star or Unstar them, and batch-edit tags and notes behind write confirmation and audit protections.
+
+### Improvements
+
+- Expanded interface languages: Adds Arabic, Brazilian Portuguese, Dutch, French, German, Indonesian, Italian, Japanese, Korean, Polish, Russian, Spanish, Traditional Chinese, Turkish, Ukrainian, and Vietnamese, with placeholders and technical literals validated across all 18 localizations.
+- Repository header actions: Click the logo to view the owner card, or click the owner or project name to open its GitHub page in your default browser; project-name clicks no longer copy the full repository name.
+- Shared local AI models: App Store and Direct now use one protected model store on this Mac; existing verified downloads migrate automatically, avoiding duplicate multi-gigabyte copies.
+- Batch tag vocabulary control: Jev first reuses existing tags; uncovered repositories are pooled into one AI request with at most five shared candidates, then reclassified after confirmation. Large reviewed batches now apply through chunked transactions with live progress, while Auto Tidy never expands the vocabulary.
+- AI tag review: Shows whether each suggestion came from Jev, LLM, or local analysis, and explains skipped repositories with specific reasons such as taxonomy coverage, vocabulary misses, or confidence thresholds.
+- Labs Jev OpenRouter fallback: Uses a verified OpenRouter configuration for Jev when no TypeSafe key is set; the native key remains preferred, and the LLM still fills gaps when no existing tag fits.
+- MCP paired devices: Shows each device's pairing date and time, making recent pairings easier to distinguish from older records.
+- MCP setup workflow: Settings provides a complete prompt that can be copied directly to an AI agent, with CLI version checks and updates before installation.
+
+### Fixes
+
+- Tag organization window: Opening Background Tasks from the status panel now closes the popover first, and both entry points use the originating main window to avoid attaching to the wrong window.
+- CLI pairing: With the updated CLI, fixes pairing failures on some networks and provides a re-pairing hint when the certificate changes.
+- GitHub Lists sync: Splits deeply nested GraphQL requests to prevent server-side 502 responses from interrupting synchronization.
+- Sidebar edit controls: Keeps a stable button placeholder so list titles no longer shift when hovering.
+
 ## 1.8.0
 
 ### New

@@ -64,12 +64,13 @@ final class StarcatMCPFacade {
     /// Skill 依赖“能连接就一定能生成摘要”这一隐式假设。
     func getCapabilities() -> MCPCapabilitiesDTO {
         MCPCapabilitiesDTO(
-            server_version: "0.4.0",
+            server_version: StarcatMCPServerMetadata.version,
             loopback_only: !settings.mcpAllowRemoteConnections,
             private_notes_read: settings.mcpExposePrivateNotes,
             statistics_read: true,
             global_repository_search: globalRepositorySearchService != nil,
             local_writes: settings.mcpAllowLocalWrites,
+            github_star_writes: settings.mcpAllowGitHubStarWrites,
             batch_writes: settings.mcpAllowLocalWrites && settings.mcpAllowBatchWrites,
             destructive_writes: settings.mcpAllowLocalWrites && settings.mcpAllowDestructiveWrites,
             ai_summary_generation: entitlementGate.isProUser
@@ -209,6 +210,26 @@ final class StarcatMCPFacade {
 
     func listTags() async throws -> [MCPTagDTO] {
         try await tagRepository.fetchAll().map(MCPTagDTO.init(tag:))
+    }
+
+    /// 查询指定标签下仍处于 Star 状态的仓库；排序与 Starcat Tags 视图保持一致。
+    func listReposByTag(tagName: String, limit: Int) async throws -> MCPReposByTagResult {
+        let resolvedName = tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !resolvedName.isEmpty else {
+            throw StarcatMCPError.invalidArguments("tag must not be empty")
+        }
+        guard let tag = try await tagRepository.findByName(resolvedName) else {
+            throw StarcatMCPError.notFound("Tag not found: \(resolvedName)")
+        }
+
+        let sanitizedLimit = Self.sanitizeLimit(limit, defaultValue: 20, maxValue: 100)
+        let repositories = try await repoTagRepository.fetchRepos(forTag: tag.id)
+        return MCPReposByTagResult(
+            tag: MCPTagDTO(tag: tag),
+            total: repositories.count,
+            limit: sanitizedLimit,
+            repos: repositories.prefix(sanitizedLimit).map(MCPRepoDTO.init(repo:))
+        )
     }
 
     func getRepoNote(repoID: Int64?, owner: String?, name: String?) async throws -> MCPRepoNoteDTO? {
