@@ -211,6 +211,8 @@ struct HomeView: View {
     @State private var selectedInsightsTopic: InsightsTopic = .overview
     @State private var selectedInsightsScope: InsightsScope = .starred
     @State private var selectedInsightsSelection: InsightsSelection = .overviewSummary
+    /// 仅协调洞察两栏顶栏的自然高度；不参与分栏宽度、选择或数据加载。
+    @State private var insightsHeaderHeight = InsightsColumnChrome.minimumHeaderHeight
     /// 中栏和详情栏共用同一个快照状态，避免相同范围重复查询或短暂显示不同数字。
     @State private var myInsightsViewModel: MyInsightsViewModel
 
@@ -316,6 +318,12 @@ struct HomeView: View {
             .background {
                 WorkspaceSceneWindowReader(reference: batchAIParentWindow, minimumContentSize: nil)
                     .frame(width: 0, height: 0)
+            }
+            .onPreferenceChange(InsightsColumnHeaderHeightPreferenceKey.self) { contentHeight in
+                let height = InsightsColumnChrome.headerHeight(fitting: contentHeight)
+                if insightsHeaderHeight != height {
+                    insightsHeaderHeight = height
+                }
             }
     }
 
@@ -1324,7 +1332,8 @@ struct HomeView: View {
             InsightsListView(
                 topic: $selectedInsightsTopic,
                 selection: $selectedInsightsSelection,
-                snapshot: myInsightsViewModel.snapshot
+                snapshot: myInsightsViewModel.snapshot,
+                headerHeight: insightsHeaderHeight
             )
             .transition(insightsBoundaryTransition)
         } else {
@@ -1403,7 +1412,8 @@ struct HomeView: View {
                 topic: $selectedInsightsTopic,
                 scope: $selectedInsightsScope,
                 selection: $selectedInsightsSelection,
-                viewModel: myInsightsViewModel
+                viewModel: myInsightsViewModel,
+                headerHeight: insightsHeaderHeight
             )
         } else if selectedSidebarPage == .activity, selectedActivityCategory == .undoStar {
             RepoDetailView(selectedTrendingRepo: nil)
