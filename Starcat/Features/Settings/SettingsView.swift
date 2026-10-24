@@ -673,6 +673,38 @@ struct SettingsView: View {
         @Bindable var settings = settings
 
         return Form {
+            // 与通用页沿用同一说明卡片结构，表面仍由 grouped Form 提供。
+            Section {
+                HStack(spacing: 16) {
+                    Image(systemName: "bell.fill")
+                        .font(.title)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 48, height: 48)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityHidden(true)
+
+                    Divider()
+                        .frame(height: 48)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("settings.notifications.title")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text("settings.notifications.introduction.description")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .help(Text("settings.notifications.introduction.description"))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+            }
+
             Section {
                 Toggle(isOn: $settings.notificationsEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -683,7 +715,12 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+            } header: {
+                SettingsSectionHeader("settings.notifications.system.title", systemImage: "bell")
+            }
 
+            // 总开关只影响可操作性，不覆盖各类型偏好；重新开启时保留原选择。
+            Section {
                 Toggle("settings.notifications.release.title", isOn: $settings.releaseNotificationsEnabled)
                     .disabled(!settings.notificationsEnabled)
                 Toggle("settings.notifications.githubInbox.title", isOn: $settings.githubInboxNotificationsEnabled)
@@ -696,9 +733,13 @@ struct SettingsView: View {
                     .disabled(!settings.notificationsEnabled)
             } header: {
                 SettingsSectionHeader(
-                    "settings.notifications.title",
-                    systemImage: "bell"
+                    "settings.notifications.types.title",
+                    systemImage: "line.3.horizontal.decrease.circle"
                 )
+            } footer: {
+                Text("settings.notifications.types.footer")
+                    .lineLimit(2)
+                    .help(Text("settings.notifications.types.footer"))
             }
         }
         .formStyle(.grouped)
@@ -710,23 +751,39 @@ struct SettingsView: View {
         @Bindable var settings = settings
 
         return Form {
+            // 与通用、通知页保持一致，分类说明仍由原生 grouped Section 承载。
             Section {
-                Toggle(isOn: $settings.aiChatRequiresCommandReturn) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.general.shortcuts.aiCommandReturn.title")
-                        Text(
-                            settings.aiChatRequiresCommandReturn
-                                ? "settings.general.shortcuts.aiCommandReturn.description.on"
-                                : "settings.general.shortcuts.aiCommandReturn.description.off"
-                        )
+                HStack(spacing: 16) {
+                    Image(systemName: "keyboard")
+                        .font(.title)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 48, height: 48)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityHidden(true)
+
+                    Divider()
+                        .frame(height: 48)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("settings.general.shortcuts")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text("settings.shortcuts.introduction.description")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
+                            .help(Text("settings.shortcuts.introduction.description"))
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+            }
 
-                // 应用命令快捷键总开关只控制键盘触发；AI 输入发送方式是独立偏好，
-                // 因此保留在总开关上方且不会被 `.disabled(...)` 连带关闭。
+            Section {
                 Toggle(isOn: $settings.keyboardShortcutsEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("settings.general.shortcuts.enabled.title")
@@ -808,16 +865,41 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Text("settings.general.shortcuts.configuration.description")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             } header: {
                 SettingsSectionHeader(
-                    "settings.general.shortcuts",
+                    "settings.shortcuts.application.title",
                     systemImage: "keyboard"
                 )
+            } footer: {
+                Text("settings.general.shortcuts.configuration.description")
+                    .lineLimit(2)
+                    .help(Text("settings.general.shortcuts.configuration.description"))
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 2) {
+                    // 下拉项直接映射既有 Bool，不复制偏好状态，也不受应用快捷键总开关影响。
+                    Picker("settings.shortcuts.input.sendMode.title", selection: $settings.aiChatRequiresCommandReturn) {
+                        Text("settings.shortcuts.input.sendMode.return").tag(false)
+                        Text("settings.shortcuts.input.sendMode.commandReturn").tag(true)
+                    }
+                    .pickerStyle(.menu)
+
+                    Text(
+                        settings.aiChatRequiresCommandReturn
+                            ? "settings.general.shortcuts.aiCommandReturn.description.on"
+                            : "settings.general.shortcuts.aiCommandReturn.description.off"
+                    )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(Text(settings.aiChatRequiresCommandReturn
+                                   ? "settings.general.shortcuts.aiCommandReturn.description.on"
+                                   : "settings.general.shortcuts.aiCommandReturn.description.off"))
+                }
+            } header: {
+                SettingsSectionHeader("settings.shortcuts.input.title", systemImage: "return")
             }
         }
         .formStyle(.grouped)
