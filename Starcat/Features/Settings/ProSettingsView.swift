@@ -271,6 +271,14 @@ struct ProSettingsTab: View {
                 // 避免网络或服务端技术错误打断用户浏览和配置 Pro 的流程。
             }
             .padding(.vertical, 2)
+            // 当前 grouped Form 的内容与卡片外框相隔 10pt；只扩展背景的绘制范围，
+            // 不移动文字或改变行高。不能给前景做负 padding，否则会挤掉原有留白。
+            .background {
+                if settings.isProUser {
+                    ProHeroBackground()
+                        .padding(-10)
+                }
+            }
         } footer: {
             // App Store 保留 StoreKit 说明；Direct 不再展示 License API 技术备注。
             if !isDirectBuild {
