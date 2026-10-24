@@ -324,10 +324,14 @@ struct SettingsView: View {
 
     private var settingsSidebar: some View {
         List(selection: settingsTabSelection) {
-            Section("settings.navigation.group.account") {
+            Section("settings.sidebar.group.application") {
                 settingsSidebarRow(.general)
                 settingsSidebarRow(.notifications)
                 settingsSidebarRow(.shortcuts)
+            }
+
+            // 账户相关入口独立归类，继续复用原 tab 身份，保留搜索、深链和历史导航。
+            Section("settings.sidebar.group.account") {
                 settingsSidebarRow(.pro)
                 settingsSidebarRow(.privacy)
             }
