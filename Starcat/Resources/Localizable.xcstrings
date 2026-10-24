@@ -462205,13 +462205,685 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无障碍"
+            "value" : "辅助功能"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "輔助使用"
+          }
+        }
+      }
+    },
+    "settings.general.appearanceAndLanguage.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "المظهر واللغة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Darstellung und Sprache"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appearance & Language"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apariencia e idioma"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apparence et langue"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tampilan dan Bahasa"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aspetto e lingua"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "外観と言語"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모양 및 언어"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Weergave en taal"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wygląd i język"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aparência e idioma"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Оформление и язык"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Görünüm ve Dil"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Оформлення та мова"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giao diện và ngôn ngữ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "外观与语言"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "外觀與語言"
+          }
+        }
+      }
+    },
+    "settings.general.advanced.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "الإعدادات المتقدمة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erweiterte Einstellungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Advanced Settings"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustes avanzados"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réglages avancés"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pengaturan Lanjutan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impostazioni avanzate"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "詳細設定"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "고급 설정"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geavanceerde instellingen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ustawienia zaawansowane"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustes avançados"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дополнительные настройки"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gelişmiş Ayarlar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Розширені параметри"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cài đặt nâng cao"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "高级设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "進階設定"
+          }
+        }
+      }
+    },
+    "settings.general.advanced.summary" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "سلوك التصفح ونمط مخطط المساهمات وإعادة التعيين"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verhalten beim Durchsuchen, Beitragsdiagramm und Zurücksetzen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Browsing behavior, contribution graph style, and resets"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comportamiento de navegación, estilo del gráfico de contribuciones y restablecimientos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Navigation, style du graphique des contributions et réinitialisations"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Perilaku penelusuran, gaya grafik kontribusi, dan pengaturan ulang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comportamento di navigazione, stile del grafico dei contributi e ripristini"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "閲覧時の動作、コントリビューショングラフのスタイル、リセット"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "탐색 동작, 기여 그래프 스타일 및 초기화"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Navigatiegedrag, stijl van de bijdragegrafiek en opnieuw instellen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zachowanie podczas przeglądania, styl wykresu aktywności i resetowanie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comportamento de navegação, estilo do gráfico de contribuições e redefinições"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поведение при просмотре, стиль графика вклада и сброс настроек"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gezinme davranışı, katkı grafiği stili ve sıfırlama"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поведінка під час перегляду, стиль графіка внесків і скидання налаштувань"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hành vi duyệt, kiểu biểu đồ đóng góp và đặt lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "浏览行为、草坪样式与重置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "瀏覽行為、貢獻圖樣式與重設"
+          }
+        }
+      }
+    },
+    "settings.general.advanced.effects.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "التخصيص"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalisierung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalization"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalización"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personnalisation"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalisasi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalizzazione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "カスタマイズ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "개인화 효과"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalisatie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalizacja"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personalização"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Персонализация"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kişiselleştirme"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Персоналізація"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cá nhân hóa"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "个性化效果"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "個人化效果"
+          }
+        }
+      }
+    },
+    "settings.general.disclosure.expanded" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "موسّع"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ausgeklappt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Expanded"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Expandido"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Développé"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diperluas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Espanso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "展開中"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "펼쳐짐"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uitgeklapt"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rozwinięte"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Expandido"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Развёрнуто"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Genişletilmiş"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Розгорнуто"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã mở rộng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已展开"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已展開"
+          }
+        }
+      }
+    },
+    "settings.general.disclosure.collapsed" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "مطوي"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eingeklappt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Collapsed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contraído"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réduit"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diciutkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compresso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "折りたたみ中"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "접힘"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ingeklapt"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zwinięte"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recolhido"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Свёрнуто"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Daraltılmış"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Згорнуто"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã thu gọn"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已收起"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已收合"
           }
         }
       }
@@ -464021,109 +464693,109 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ضبط حجم النص الخاص بـ Starcat. ينطبق حاليًا على مساحة عمل الوكيل أولاً."
+            "value" : "ضبط حجم النص الخاص بـ Starcat."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Passen Sie die Starcat-spezifische Textgröße an. Gilt derzeit zuerst für den Agent-Arbeitsbereich."
+            "value" : "Passen Sie die Starcat-spezifische Textgröße an."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Adjust Starcat-specific text size. Currently applies to the Agent workspace first."
+            "value" : "Adjust Starcat-specific text size."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ajusta el tamaño del texto específico de Starcat. Actualmente se aplica primero al espacio de trabajo del Agente."
+            "value" : "Ajusta el tamaño del texto específico de Starcat."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ajuster la taille du texte propre à Starcat. S'applique d'abord à l'espace de travail Agent."
+            "value" : "Ajuster la taille du texte propre à Starcat."
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sesuaikan ukuran teks khusus Starcat. Saat ini berlaku untuk ruang kerja Agen terlebih dahulu."
+            "value" : "Sesuaikan ukuran teks khusus Starcat."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Regola la dimensione del testo specifica di Starcat. Attualmente si applica principalmente all'area di lavoro Agent."
+            "value" : "Regola la dimensione del testo specifica di Starcat."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Starcat固有のテキストサイズを調整します。現在は主にエージェントワークスペースに適用されます。"
+            "value" : "Starcat固有のテキストサイズを調整します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Starcat 특정 텍스트 크기를 조정합니다. 현재는 에이전트 작업 공간에 먼저 적용됩니다."
+            "value" : "Starcat 특정 텍스트 크기를 조정합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pas de Starcat-specifieke tekstgrootte aan. Dit is momenteel van toepassing op de Agent-werkruimte."
+            "value" : "Pas de Starcat-specifieke tekstgrootte aan."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dostosuj rozmiar tekstu specyficzny dla Starcat. Obecnie dotyczy przede wszystkim obszaru roboczego Agenta."
+            "value" : "Dostosuj rozmiar tekstu specyficzny dla Starcat."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ajusta o tamanho do texto específico do Starcat. Atualmente se aplica primeiro ao espaço de trabalho do Agente."
+            "value" : "Ajusta o tamanho do texto específico do Starcat."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настройте размер текста для Starcat. Сначала применяется к рабочей области Агента."
+            "value" : "Настройте размер текста для Starcat."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Starcat'a özel metin boyutunu ayarlayın. Şu anda öncelikle Ajan çalışma alanına uygulanır."
+            "value" : "Starcat'a özel metin boyutunu ayarlayın."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Налаштуйте розмір тексту Starcat. Наразі застосовується спочатку до робочої області Агента."
+            "value" : "Налаштуйте розмір тексту Starcat."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Điều chỉnh cỡ chữ riêng của Starcat. Hiện áp dụng cho không gian làm việc Agent trước."
+            "value" : "Điều chỉnh cỡ chữ riêng của Starcat."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "调整 Starcat 内的文字大小；当前优先应用到 Agent 工作台。"
+            "value" : "调整 Starcat 内的文字大小。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "調整 Starcat 專用的文字大小。目前優先套用於 Agent 工作區。"
+            "value" : "調整 Starcat 專用的文字大小。"
           }
         }
       }
@@ -464350,6 +465022,230 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "標準"
+          }
+        }
+      }
+    },
+    "settings.general.introduction.autosave" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "تُحفظ التغييرات تلقائيًا."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Änderungen werden automatisch gespeichert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Changes are saved automatically."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los cambios se guardan automáticamente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les modifications sont enregistrées automatiquement."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Perubahan disimpan secara otomatis."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le modifiche vengono salvate automaticamente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "変更は自動的に保存されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "변경 사항은 자동으로 저장됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wijzigingen worden automatisch opgeslagen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zmiany są zapisywane automatycznie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As alterações são salvas automaticamente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Изменения сохраняются автоматически."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Değişiklikler otomatik olarak kaydedilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зміни зберігаються автоматично."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Các thay đổi được lưu tự động."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "更改自动保存。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "變更會自動儲存。"
+          }
+        }
+      }
+    },
+    "settings.general.introduction.description" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "أدر الإعدادات الأساسية في Starcat، بما في ذلك المظهر ولغة العرض والسلوك أثناء الاستخدام اليومي."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verwalte die Grundeinstellungen von Starcat, darunter Erscheinungsbild, Anzeigesprache und Verhalten im Alltag."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manage Starcat’s basic settings, including appearance, display language, and everyday behavior."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gestiona los ajustes básicos de Starcat, como la apariencia, el idioma de la interfaz y el comportamiento diario."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gérez les réglages de base de Starcat : apparence, langue d’affichage et comportement au quotidien."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kelola pengaturan dasar Starcat, termasuk tampilan, bahasa antarmuka, dan perilaku penggunaan sehari-hari."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gestisci le impostazioni di base di Starcat, tra cui aspetto, lingua dell’interfaccia e comportamento nell’uso quotidiano."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat の基本設定を管理し、外観、表示言語、普段の使い方に合わせた動作を調整します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat의 기본 설정에서 모양, 표시 언어, 평소 사용 방식에 맞는 동작을 조정하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beheer de basisinstellingen van Starcat, zoals de weergave, interfacetaal en het gedrag bij dagelijks gebruik."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zarządzaj podstawowymi ustawieniami Starcat, w tym wyglądem, językiem interfejsu i działaniem na co dzień."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gerencie os ajustes básicos do Starcat, incluindo aparência, idioma da interface e comportamento no dia a dia."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Настройте основные параметры Starcat: внешний вид, язык интерфейса и поведение при повседневном использовании."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Görünüm, arayüz dili ve günlük kullanım davranışları dahil Starcat’in temel ayarlarını yönetin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керуйте основними налаштуваннями Starcat: виглядом, мовою інтерфейсу та поведінкою під час щоденного використання."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quản lý các cài đặt cơ bản của Starcat, gồm giao diện, ngôn ngữ hiển thị và cách hoạt động khi sử dụng hằng ngày."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "管理 Starcat 的基础设置，调整外观、显示语言与日常使用习惯。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "管理 Starcat 的基本設定，調整外觀、顯示語言與日常使用習慣。"
           }
         }
       }
@@ -466485,6 +467381,118 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重置"
+          }
+        }
+      }
+    },
+    "settings.general.resetOnboarding.label" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "إعادة تعيين دليل بدء استخدام التطبيق"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "App-Einführung zurücksetzen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reset App Onboarding"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restablecer la guía inicial de la app"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réinitialiser le guide de démarrage de l’app"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atur Ulang Panduan Awal Aplikasi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reimposta la guida introduttiva dell’app"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アプリの初回ガイドをリセット"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "앱 시작 안내 재설정"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "App-introductie opnieuw instellen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zresetuj przewodnik po aplikacji"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Redefinir a introdução ao app"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сбросить вводное руководство приложения"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uygulama tanıtımını sıfırla"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скинути вступний посібник програми"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đặt lại hướng dẫn ban đầu của ứng dụng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "重置应用引导"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "重設應用程式導覽"
           }
         }
       }
@@ -470895,110 +471903,446 @@
       "localizations" : {
         "ar" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "عام"
+            "state" : "needs_review",
+            "value" : "عام والمظهر"
           }
         },
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Allgemein"
+            "state" : "needs_review",
+            "value" : "Allgemein & Erscheinungsbild"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "General"
+            "value" : "General & Appearance"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "General"
+            "state" : "needs_review",
+            "value" : "General y apariencia"
           }
         },
         "fr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Général"
+            "state" : "needs_review",
+            "value" : "Général et apparence"
           }
         },
         "id" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Umum"
+            "state" : "needs_review",
+            "value" : "Umum & Tampilan"
           }
         },
         "it" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Generali"
+            "state" : "needs_review",
+            "value" : "Generali e aspetto"
           }
         },
         "ja" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "一般"
+            "state" : "needs_review",
+            "value" : "一般と外観"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "일반"
+            "state" : "needs_review",
+            "value" : "일반 및 외관"
           }
         },
         "nl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Algemeen"
+            "state" : "needs_review",
+            "value" : "Algemeen en weergave"
           }
         },
         "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ogólne"
+            "state" : "needs_review",
+            "value" : "Ogólne i wygląd"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Geral"
+            "state" : "needs_review",
+            "value" : "Geral e aparência"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Основные"
+            "state" : "needs_review",
+            "value" : "Основные и оформление"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Genel"
+            "state" : "needs_review",
+            "value" : "Genel ve Görünüm"
           }
         },
         "uk" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загальні"
+            "state" : "needs_review",
+            "value" : "Загальні та вигляд"
           }
         },
         "vi" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chung"
+            "state" : "needs_review",
+            "value" : "Chung & Giao diện"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通用"
+            "value" : "通用与外观"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "一般"
+            "state" : "needs_review",
+            "value" : "一般與外觀"
+          }
+        }
+      }
+    },
+    "settings.general.updates.channel.preview" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "معاينة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorschau"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preview"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vista previa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aperçu"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pratinjau"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anteprima"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プレビュー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "미리 보기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voorbeeld"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Podgląd"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prévia"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Предпросмотр"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önizleme"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Попередній перегляд"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Xem trước"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "预览"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "預覽"
+          }
+        }
+      }
+    },
+    "settings.general.updates.channel.preview.help" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "قد تتضمن تحديثات المعاينة ميزات غير مكتملة أو غير مستقرة. لن يؤدي الرجوع إلى القناة المستقرة إلى خفض الإصدار المثبّت."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorschau-Updates können unfertige oder instabile Funktionen enthalten. Beim Wechsel zurück zu Stabil wird die installierte Version nicht herabgestuft."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preview updates may include unfinished or unstable features. Switching back to Stable will not downgrade the installed version."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las actualizaciones de Vista previa pueden incluir funciones incompletas o inestables. Volver al canal Estable no instalará una versión anterior a la que tienes instalada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les mises à jour Aperçu peuvent inclure des fonctionnalités inachevées ou instables. Revenir au canal Stable ne rétablit pas une version antérieure à celle installée."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pembaruan Pratinjau mungkin menyertakan fitur yang belum selesai atau tidak stabil. Beralih kembali ke kanal Stabil tidak akan menurunkan versi yang terpasang."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli aggiornamenti di Anteprima possono includere funzionalità incomplete o instabili. Tornare al canale Stabile non ripristinerà una versione precedente a quella installata."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プレビュー更新には、未完成または不安定な機能が含まれる場合があります。安定チャネルに戻しても、インストール済みのバージョンはダウングレードされません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "미리 보기 업데이트에는 아직 완성되지 않았거나 불안정한 기능이 포함될 수 있습니다. 안정 채널로 돌아가도 설치된 버전은 다운그레이드되지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voorbeeldupdates kunnen onvoltooide of instabiele functies bevatten. Terugschakelen naar Stabiel zet de geïnstalleerde versie niet terug naar een oudere versie."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktualizacje kanału Podgląd mogą zawierać nieukończone lub niestabilne funkcje. Powrót do kanału Stabilny nie spowoduje obniżenia zainstalowanej wersji."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As atualizações de Prévia podem incluir recursos inacabados ou instáveis. Voltar ao canal Estável não reverterá a versão instalada para uma versão anterior."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Предварительные обновления могут содержать незавершённые или нестабильные функции. Возврат на стабильный канал не приведёт к понижению установленной версии."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önizleme güncellemeleri tamamlanmamış veya kararsız özellikler içerebilir. Kararlı kanalına dönmek, yüklü sürümü önceki bir sürüme düşürmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Попередні оновлення можуть містити незавершені або нестабільні функції. Повернення на стабільний канал не призведе до зниження встановленої версії."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Các bản cập nhật Xem trước có thể chứa tính năng chưa hoàn thiện hoặc chưa ổn định. Chuyển về kênh Ổn định sẽ không hạ cấp phiên bản đã cài đặt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "预览更新可能包含尚未完成或不稳定的功能。切回正式通道不会降级当前已安装版本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "預覽更新可能包含尚未完成或不穩定的功能。切回正式通道不會降級目前已安裝的版本。"
+          }
+        }
+      }
+    },
+    "settings.general.updates.channel.stable" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "مستقر"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stabil"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estable"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stable"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stabil"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stabile"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "安定"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "안정"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stabiel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stabilny"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estável"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Стабильный"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kararlı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Стабільний"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ổn định"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正式"
           }
         }
       }
@@ -514380,119 +515724,6 @@
         }
       }
     },
-    "settings.pro.direct.updates.footer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "يُعد التنزيل التلقائي التحديثات في الخلفية. قد يطلب Sparkle التأكيد قبل التثبيت أو إعادة التشغيل."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatischer Download bereitet Updates im Hintergrund vor. Sparkle fragt möglicherweise vor der Installation oder dem Neustart um Bestätigung."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatic download prepares updates in the background. Sparkle may still ask for confirmation before installing or restarting."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La descarga automática prepara las actualizaciones en segundo plano. Sparkle puede pedir confirmación antes de instalar o reiniciar."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le téléchargement automatique prépare les mises à jour en arrière-plan. Sparkle peut encore demander une confirmation avant d’installer ou de redémarrer."
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unduhan otomatis menyiapkan pembaruan di latar belakang. Sparkle mungkin masih meminta konfirmasi sebelum menginstal atau memulai ulang."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il download automatico prepara gli aggiornamenti in background. Sparkle potrebbe chiedere conferma prima di installare o riavviare."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自動ダウンロードはバックグラウンドでアップデートを準備します。Sparkle はインストールまたは再起動の前に確認を求める場合があります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "자동 다운로드는 백그라운드에서 업데이트를 준비합니다. Sparkle이 설치 또는 재시작 전에 확인을 요청할 수 있습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatisch downloaden bereidt updates op de achtergrond voor. Sparkle kan nog om bevestiging vragen voordat wordt geïnstalleerd of opnieuw opgestart."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatyczne pobieranie przygotowuje aktualizacje w tle. Sparkle może poprosić o potwierdzenie przed instalacją lub ponownym uruchomieniem."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O download automático prepara as atualizações em segundo plano. O Sparkle ainda pode pedir confirmação antes de instalar ou reiniciar."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автоматическая загрузка подготавливает обновления в фоне. Sparkle может запросить подтверждение перед установкой или перезапуском."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Otomatik indirme, güncellemeleri arka planda hazırlar. Sparkle, yükleme veya yeniden başlatma öncesinde onay isteyebilir."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автоматичне завантаження готує оновлення у фоновому режимі. Sparkle може запитати підтвердження перед встановленням або перезапуском."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tải xuống tự động chuẩn bị các bản cập nhật trong nền. Sparkle có thể vẫn yêu cầu xác nhận trước khi cài đặt hoặc khởi động lại."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动下载会在后台准备更新；正式安装或重启前，Sparkle 仍可能要求你确认。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自動下載會在背景準備更新；安裝或重新啟動前，Sparkle 仍可能要求確認。"
-          }
-        }
-      }
-    },
     "settings.pro.direct.updates.notConfigured" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -526776,110 +528007,110 @@
       "localizations" : {
         "ar" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "نمط الحركة"
+            "state" : "needs_review",
+            "value" : "أنيميشن عشب المساهمات"
           }
         },
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Animationsstil"
+            "state" : "needs_review",
+            "value" : "Beitragsrasen-Animation"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Animation Style"
+            "value" : "Contribution Lawn Animation"
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Estilo de animación"
+            "state" : "needs_review",
+            "value" : "Animación del césped de contribuciones"
           }
         },
         "fr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Style d'animation"
+            "state" : "needs_review",
+            "value" : "Animation de la pelouse des contributions"
           }
         },
         "id" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gaya Animasi"
+            "state" : "needs_review",
+            "value" : "Animasi lapangan kontribusi"
           }
         },
         "it" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stile animazione"
+            "state" : "needs_review",
+            "value" : "Animazione del prato dei contributi"
           }
         },
         "ja" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "アニメーションスタイル"
+            "state" : "needs_review",
+            "value" : "コントリビューション芝生アニメーション"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "애니메이션 스타일"
+            "state" : "needs_review",
+            "value" : "기여 잔디 애니메이션"
           }
         },
         "nl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Animatiestijl"
+            "state" : "needs_review",
+            "value" : "Bijdragegazon-animatie"
           }
         },
         "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Styl animacji"
+            "state" : "needs_review",
+            "value" : "Animacja trawnika kontrybucji"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Estilo de Animação"
+            "state" : "needs_review",
+            "value" : "Animação do gramado de contribuições"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Стиль анимации"
+            "state" : "needs_review",
+            "value" : "Анимация газона вкладов"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Animasyon Stili"
+            "state" : "needs_review",
+            "value" : "Katkı çimeni animasyonu"
           }
         },
         "uk" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Стиль анімації"
+            "state" : "needs_review",
+            "value" : "Анімація газону внесків"
           }
         },
         "vi" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kiểu hoạt ảnh"
+            "state" : "needs_review",
+            "value" : "Hoạt ảnh sân cỏ đóng góp"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "动画玩法"
+            "value" : "贡献草坪动画"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "動畫玩法"
+            "state" : "needs_review",
+            "value" : "貢獻草坪動畫"
           }
         }
       }

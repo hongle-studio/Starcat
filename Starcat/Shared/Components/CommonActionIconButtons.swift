@@ -68,14 +68,17 @@ struct DestructiveIconButton: View {
 
 /// icon-only 重置 / 恢复默认入口。
 ///
-/// 点击后与 `CopyFeedbackButton` 对齐：1.5s 内切为绿色 `checkmark.circle.fill`，
+/// 默认点击后与 `CopyFeedbackButton` 对齐：1.5s 内切为绿色 `checkmark.circle.fill`，
 /// 连点取消旧复位任务并重新计时；开启「减少动态效果」时跳过状态与 Symbol 动画。
+/// 仅发起确认或引导流程的入口应关闭成功反馈，避免把开始流程误报为重置完成。
 ///
 /// 静止态用 `arrow.counterclockwise.circle`（圆形同源），避免与 `checkmark.circle.fill`
 /// 做 `.symbolEffect(.replace)` 时几何差太大、回切时卡在成功态不还原（RAG 设置页曾踩）。
 struct ResetIconButton: View {
     let help: Text
     let action: () -> Void
+    /// 只打开确认或引导流程的入口不代表重置完成，不应立即显示成功标记。
+    let showsSuccessFeedback: Bool
     /// 设置页 icon-only 统一采用 15pt glyph + 28pt 命中区；不要再继承旧刷新按钮的 18pt 紧凑尺寸。
     var font: Font = SettingsIconMetrics.standardGlyph
     var frameSize: CGFloat = SettingsIconMetrics.actionFrameSize
@@ -88,12 +91,14 @@ struct ResetIconButton: View {
         help: Text,
         font: Font = SettingsIconMetrics.standardGlyph,
         frameSize: CGFloat = SettingsIconMetrics.actionFrameSize,
+        showsSuccessFeedback: Bool = true,
         action: @escaping () -> Void
     ) {
         self.help = help
         self.action = action
         self.font = font
         self.frameSize = frameSize
+        self.showsSuccessFeedback = showsSuccessFeedback
     }
 
     var body: some View {
@@ -120,6 +125,7 @@ struct ResetIconButton: View {
     /// 先执行业务重置；等父级状态落定后再进成功反馈，避免同帧重建打断 Symbol 回切。
     private func performReset() {
         action()
+        guard showsSuccessFeedback else { return }
         feedbackResetTask?.cancel()
         feedbackResetTask = Task { @MainActor in
             // 让 `apply` / `restoreCurrentTab` 触发的父级刷新先跑完。
