@@ -198,10 +198,11 @@ struct GeneralSettingsView: View {
                 isOn: $settings.hideDockIcon
             )
             preferenceToggle(
-                "settings.general.spotlightSearch.title",
-                description: "settings.general.spotlightSearch.help",
+                "settings.general.spotlightSearch.label",
+                description: "settings.general.spotlightSearch.summary",
                 isOn: $settings.spotlightSearchEnabled
             )
+            .help(Text("settings.general.spotlightSearch.tooltip"))
 
             if DistributionChannel.current.isDirect {
                 ScreensaverSettingsSection()
@@ -216,59 +217,52 @@ struct GeneralSettingsView: View {
         Section {
             DisclosureGroup(isExpanded: $isAdvancedExpanded) {
                 Text("settings.general.detailBehavior")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 detailBehaviorRows
 
                 Divider()
 
                 Text("settings.general.advanced.effects.title")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 contributionStyleRow
 
                 Divider()
 
                 Text("settings.general.reset")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 preferenceResetRows
             } label: {
-                // 原生 chevron 保留展开语义；label 使用全宽 Button，文字和空白均可切换。
-                Button {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
-                        isAdvancedExpanded.toggle()
-                    }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "slider.horizontal.3")
-                                .font(SettingsIconMetrics.smallGlyph)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 20, height: 20)
-                                .accessibilityHidden(true)
-                            Text("settings.general.advanced.title")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .help(Text("settings.general.advanced.title"))
-                        }
-                        Text("settings.general.advanced.summary")
-                            .font(.caption)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(SettingsIconMetrics.smallGlyph)
                             .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                            .accessibilityHidden(true)
+                        Text("settings.general.advanced.title")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
-                            .help(Text("settings.general.advanced.summary"))
+                            .help(Text("settings.general.advanced.title"))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    Text("settings.general.advanced.summary")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(Text("settings.general.advanced.summary"))
+                        // 摘要跳过 20pt 图标列及 6pt 间距，与标题文字对齐。
+                        .padding(.leading, 26)
                 }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .accessibilityLabel(Text("settings.general.advanced.title"))
-                .accessibilityValue(Text(LocalizedStringKey(isAdvancedExpanded
-                                                            ? "settings.general.disclosure.expanded"
-                                                            : "settings.general.disclosure.collapsed")))
             }
+            .disclosureGroupStyle(SettingsDisclosureGroupStyle(
+                accessibilityLabel: Text("settings.general.advanced.title")
+            ))
         }
     }
 

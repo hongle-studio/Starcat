@@ -1036,7 +1036,6 @@ struct SettingsView: View {
 struct InterestedLanguagesSettingsSection: View {
 
     @Binding var languages: [String]
-    @Environment(\.starcatReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
     @State private var isExpanded = false
     @State private var draftLanguage = ""
@@ -1057,38 +1056,29 @@ struct InterestedLanguagesSettingsSection: View {
                 languageEditor
             } label: {
                 // 收起仅影响编辑器可见性；已选数量和标签摘要始终读取同一份长期偏好。
-                Button {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
-                        isExpanded.toggle()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                            .font(SettingsIconMetrics.smallGlyph)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                            .accessibilityHidden(true)
+                        Text("settings.filters.interestedLanguages.title")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .help(Text("settings.filters.interestedLanguages.title"))
                     }
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                                .font(SettingsIconMetrics.smallGlyph)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 20, height: 20)
-                                .accessibilityHidden(true)
-                            Text("settings.filters.interestedLanguages.title")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .help(Text("settings.filters.interestedLanguages.title"))
-                        }
 
-                        selectedLanguageSummary
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    selectedLanguageSummary
+                        // 与标题文字对齐；图标列宽 20pt，标题间距 6pt。
+                        .padding(.leading, 26)
                 }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .accessibilityLabel(Text("settings.filters.interestedLanguages.title"))
-                .accessibilityValue(Text(LocalizedStringKey(isExpanded
-                                                            ? "settings.general.disclosure.expanded"
-                                                            : "settings.general.disclosure.collapsed")))
-                .accessibilityHint(Text(verbatim: selectedLanguageCountText))
             }
+            .disclosureGroupStyle(SettingsDisclosureGroupStyle(
+                accessibilityLabel: Text("settings.filters.interestedLanguages.title"),
+                accessibilityHint: Text(verbatim: selectedLanguageCountText)
+            ))
         }
     }
 

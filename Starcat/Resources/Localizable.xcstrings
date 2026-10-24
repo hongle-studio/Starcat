@@ -470877,6 +470877,342 @@
         }
       }
     },
+    "settings.general.spotlightSearch.label" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "بحث Spotlight"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight-Suche"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight Search"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Búsqueda en Spotlight"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recherche Spotlight"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pencarian Spotlight"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ricerca Spotlight"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight 検索"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight 검색"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zoeken met Spotlight"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyszukiwanie Spotlight"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Busca no Spotlight"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поиск Spotlight"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight Araması"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пошук Spotlight"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tìm kiếm Spotlight"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight 搜索"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight 搜尋"
+          }
+        }
+      }
+    },
+    "settings.general.spotlightSearch.summary" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "يشمل المستودعات الخاصة والملاحظات. يؤدي إيقافه إلى حذف الفهرس."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Umfasst private Repositorys und Notizen. Deaktivieren entfernt den Index."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Includes private repositories and notes. Turning this off removes the index."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Incluye repositorios privados y notas. Al desactivarlo se elimina el índice."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inclut les dépôts privés et les notes. La désactivation supprime l’index."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mencakup repositori privat dan catatan. Menonaktifkan opsi ini akan menghapus indeks."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Include repository privati e note. Disattivando l’opzione, l’indice viene rimosso."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "非公開リポジトリとメモも対象です。オフにするとインデックスが削除されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "비공개 저장소와 메모도 포함됩니다. 끄면 색인이 삭제됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inclusief privérepository’s en notities. Uitschakelen verwijdert de index."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obejmuje prywatne repozytoria i notatki. Wyłączenie usuwa indeks."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inclui repositórios privados e notas. Ao desativar, o índice é removido."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Включает частные репозитории и заметки. При отключении индекс удаляется."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Özel depoları ve notları da kapsar. Kapatıldığında dizin kaldırılır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Включає приватні репозиторії та нотатки. Вимкнення видаляє індекс."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bao gồm kho riêng tư và ghi chú. Tắt sẽ xóa chỉ mục."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "包含私有仓库和笔记；关闭后移除索引。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "包含私人儲存庫和筆記；關閉後移除索引。"
+          }
+        }
+      }
+    },
+    "settings.general.spotlightSearch.tooltip" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ابحث في Spotlight عن أسماء المستودعات المميزة بنجمة وأوصافها وملاحظاتها."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Namen, Beschreibungen und Notizen mit Stern markierter Repositorys in Spotlight suchen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Search starred repository names, descriptions, and notes in Spotlight."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Busca nombres, descripciones y notas de repositorios con estrella en Spotlight."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recherchez les noms, descriptions et notes des dépôts favoris dans Spotlight."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cari nama, deskripsi, dan catatan repositori berbintang di Spotlight."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cerca in Spotlight nomi, descrizioni e note dei repository contrassegnati con una stella."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight でスター付きリポジトリの名前、説明、メモを検索します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight에서 별표 표시한 저장소의 이름, 설명, 메모를 검색합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zoek namen, beschrijvingen en notities van repository’s met een ster in Spotlight."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Szukaj w Spotlight nazw, opisów i notatek repozytoriów oznaczonych gwiazdką."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Busque nomes, descrições e notas de repositórios com estrela no Spotlight."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поиск названий, описаний и заметок репозиториев, отмеченных звездой, в Spotlight."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spotlight’ta yıldız eklenen depoların adlarını, açıklamalarını ve notlarını arayın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Шукайте в Spotlight назви, описи та нотатки репозиторіїв, позначених зіркою."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tìm tên, mô tả và ghi chú của các kho đã gắn sao trong Spotlight."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Spotlight 中搜索已 Star 仓库的名称、描述和笔记。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Spotlight 中搜尋已加星號儲存庫的名稱、描述和筆記。"
+          }
+        }
+      }
+    },
     "settings.general.spotlightSearch.title" : {
       "extractionState" : "manual",
       "localizations" : {
