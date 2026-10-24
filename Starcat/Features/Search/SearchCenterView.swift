@@ -2621,7 +2621,6 @@ private struct SearchRemoteRepoDetailView: View {
     /// 触发流程仍保留"先关 popover → DispatchQueue.main.async 后再赋值 item"
     /// 的时序，避免 popover 与 sheet 同帧 presentation 竞争。
     @State private var codeFlowSheetItem: CodeFlowSheetItem?
-    @State private var paywallContext: ProPaywallContext?
 
     /// 卡片宽度。480pt 足以容纳 owner / repo 双行 + 头像 + 顶栏徽章；再窄
     /// 顶栏会挤压 license / score 徽章；再宽就显得空旷不像「快速决策卡」。
@@ -3211,9 +3210,6 @@ private struct SearchRemoteRepoDetailView: View {
             overflowPopoverContent(repo: repo)
                 .appLocaleEnvironment()
         }
-        .sheet(item: $paywallContext) { context in
-            ProPaywallSheet.hosted(context: context, dependencies: dependencies)
-        }
         .sheet(item: $codeFlowSheetItem) { item in
             CodeFlowPanel(repo: item.repo)
                 .id(item.id)
@@ -3331,13 +3327,8 @@ private struct SearchRemoteRepoDetailView: View {
     }
 
     private func openCodeFlow(for repo: Repo) {
-        do {
-            try dependencies.entitlementGate.requirePro(.codeFlow)
-            AppLog.ui.info("Search CodeFlow sheet repo=\(repo.fullName, privacy: .public) id=\(repo.id, privacy: .public)")
-            codeFlowSheetItem = CodeFlowSheetItem(repo: repo)
-        } catch {
-            paywallContext = ProPaywallContext(feature: .codeFlow, message: error.localizedDescription)
-        }
+        AppLog.ui.info("Search CodeFlow sheet repo=\(repo.fullName, privacy: .public) id=\(repo.id, privacy: .public)")
+        codeFlowSheetItem = CodeFlowSheetItem(repo: repo)
     }
 }
 

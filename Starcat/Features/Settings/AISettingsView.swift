@@ -125,8 +125,8 @@ struct AISettingsTab: View {
         self.page = page
     }
 
-    /// Intel 免费用户仍可配置原本位于“集成”的联网搜索；仅模型、自动化、语义
-    /// 索引和仓库上下文继续遵守既有 Pro / Apple Silicon Local AI 门控。
+    /// 模型、自动化与语义索引继续遵守既有 Pro / Apple Silicon Local AI 门控；
+    /// 免费的联网搜索和仓库上下文不使用此配置权限。
     private var hasAIConfigurationAccess: Bool {
         dependencies.entitlementGate.isProUser || LocalAIHardwareSupport.isLocalAIAvailable
     }
@@ -137,8 +137,8 @@ struct AISettingsTab: View {
         // 直接读取 SubscriptionManager 会把 Direct License 用户误判为未开通。
         // 本地 AI 免费（dong4j 2026-09-12）：Apple Silicon 上免费用户也必须能进入
         // 本页配置并下载本地模型；远程 provider 的消费仍由 EntitlementGate 在调用点拦截，
-        // 设置页只是配置面。Intel Mac 维持整页锁定。
-        if page == .externalSearch || hasAIConfigurationAccess {
+        // 设置页只是配置面。仓库上下文已免费，因此 Intel 免费用户也能进入其所在页。
+        if page == .externalSearch || page == .indexAndContext || hasAIConfigurationAccess {
             aiConfigurationForm
         } else {
             lockedAISettings
@@ -171,8 +171,11 @@ struct AISettingsTab: View {
                 autoTidySection
                 githubListGroupingSection
             case .indexAndContext:
-                aiIndexSection
-                    .id(Self.aiIndexSettingsAnchor)
+                // 仅开放上下文配置；语义索引仍沿用原 Pro / 本地 AI 条件。
+                if hasAIConfigurationAccess {
+                    aiIndexSection
+                        .id(Self.aiIndexSettingsAnchor)
+                }
                 aiRepoContextSection
                     .id(Self.repoContextSettingsAnchor)
             case .externalSearch:
