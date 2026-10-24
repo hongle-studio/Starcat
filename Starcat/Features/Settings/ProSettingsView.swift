@@ -60,6 +60,7 @@ struct ProSettingsTab: View {
     @Environment(SubscriptionManager.self) private var subscriptionManager
     @Environment(DirectLicenseManager.self) private var directLicenseManager
     @Environment(\.openURL) private var openURL
+    @Environment(\.locale) private var locale
 
     @State private var confettiTrigger: Int = 0
     @State private var showDirectDeactivationSuccess = false
@@ -218,10 +219,12 @@ struct ProSettingsTab: View {
                             }
                         }
 
-                        Text(settings.isProUser ? "settings.pro.subtitle.active" : "settings.pro.subtitle.preview")
+                        Text(settings.isProUser ? "settings.pro.subtitle.features" : "settings.pro.subtitle.preview")
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
+                            .help(Text(settings.isProUser ? "settings.pro.subtitle.features" : "settings.pro.subtitle.preview"))
 
                         Label(LocalizedStringKey(settings.isProUser ? "settings.pro.status.active" : "settings.pro.status.free"),
                               systemImage: settings.isProUser ? "checkmark.seal.fill" : "lock.open")
@@ -280,32 +283,20 @@ struct ProSettingsTab: View {
         Section {
             if let credential = directLicenseManager.storedCredential {
                 // 已激活：只展示状态 + 校验/解绑；换码走折叠入口。
-                DirectLicenseKeyRow(
-                    maskedKey: maskedLicenseKey(credential.licenseKey),
-                    suffix: currentLicenseSuffix,
-                    licenseKey: credential.licenseKey
-                )
-
                 HStack(spacing: 10) {
-                    directValidationFailureLabel
-                    Spacer(minLength: 8)
+                    DirectLicenseKeyRow(
+                        maskedKey: maskedLicenseKey(credential.licenseKey),
+                        suffix: currentLicenseSuffix,
+                        licenseKey: credential.licenseKey
+                    )
                     directValidateButton
                     directDeactivateButton
                 }
+                directValidationFailureLabel
 
                 DisclosureGroup(isExpanded: $isReplacingLicense) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        SecureField("settings.pro.direct.license.placeholder", text: $directLicenseKey)
-                            .textFieldStyle(.roundedBorder)
-                            .padding(.vertical, 8)
-                        Divider()
-                        HStack {
-                            Spacer()
-                            directActivateButton
-                        }
-                        .padding(.vertical, 8)
-                    }
-                    .padding(.top, 4)
+                    directLicenseInputRow
+                        .padding(.top, 4)
                 } label: {
                     // Form(.grouped) 里 DisclosureGroup 的 label 会吞掉 onTapGesture，
                     // 只有 chevron 默认可点；用 plain Button 才能整行展开/折叠。
@@ -326,14 +317,8 @@ struct ProSettingsTab: View {
                 }
             } else {
                 // 未激活：只保留首次激活工作流。
-                SecureField("settings.pro.direct.license.placeholder", text: $directLicenseKey)
-                    .textFieldStyle(.roundedBorder)
-
-                HStack {
-                    directValidationFailureLabel
-                    Spacer(minLength: 8)
-                    directActivateButton
-                }
+                directLicenseInputRow
+                directValidationFailureLabel
             }
         } header: {
             SettingsSectionHeader(
@@ -343,17 +328,51 @@ struct ProSettingsTab: View {
         }
     }
 
+    /// 首次激活与换码复用同一行，输入值、提交条件和激活动作仍由原流程负责。
+    private var directLicenseInputRow: some View {
+        HStack(spacing: 10) {
+            Text("settings.pro.direct.license.placeholder")
+                .lineLimit(1)
+                .help(Text("settings.pro.direct.license.placeholder"))
+
+            SecureField("settings.pro.direct.license.placeholder", text: $directLicenseKey)
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: .infinity)
+
+            directActivateButton
+        }
+    }
+
+    /// 三个操作以当前语言中最长的标题占位，统一宽度且无需按语言手工测量文本。
+    private func directLicenseActionTitle(_ key: LocalizedStringKey) -> some View {
+        ZStack {
+            ZStack {
+                Text("settings.pro.direct.button.activate")
+                Text("settings.pro.direct.button.validate")
+                Text("settings.pro.direct.button.deactivate")
+            }
+            .hidden()
+            .accessibilityHidden(true)
+
+            Text(key)
+        }
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
     /// 激活按钮：绿色 seal 图标表示正向动作。
     private var directActivateButton: some View {
         Button {
             Task { await activateDirectLicense() }
         } label: {
             Label {
-                Text("settings.pro.direct.button.activate")
+                directLicenseActionTitle("settings.pro.direct.button.activate")
             } icon: {
                 Image(systemName: "checkmark.seal")
                     .font(SettingsIconMetrics.standardGlyph)
                     .foregroundStyle(.green)
+                    .frame(width: SettingsIconMetrics.standardGlyphSize, height: SettingsIconMetrics.standardGlyphSize)
             }
         }
         .buttonStyle(.bordered)
@@ -366,12 +385,13 @@ struct ProSettingsTab: View {
             Task { await validateDirectLicense() }
         } label: {
             Label {
-                Text("settings.pro.direct.button.validate")
+                directLicenseActionTitle("settings.pro.direct.button.validate")
             } icon: {
                 Image(systemName: didValidateSucceed ? "checkmark.circle.fill" : "checkmark.shield")
                     .font(SettingsIconMetrics.standardGlyph)
                     .foregroundStyle(didValidateSucceed ? Color.green : Color.primary)
                     .contentTransition(.symbolEffect(.replace))
+                    .frame(width: SettingsIconMetrics.standardGlyphSize, height: SettingsIconMetrics.standardGlyphSize)
             }
         }
         .buttonStyle(.bordered)
@@ -395,10 +415,11 @@ struct ProSettingsTab: View {
             isDirectDeactivationConfirmationPresented = true
         } label: {
             Label {
-                Text("settings.pro.direct.button.deactivate")
+                directLicenseActionTitle("settings.pro.direct.button.deactivate")
             } icon: {
                 Image(systemName: "checkmark.circle.badge.xmark")
                     .font(SettingsIconMetrics.standardGlyph)
+                    .frame(width: SettingsIconMetrics.standardGlyphSize, height: SettingsIconMetrics.standardGlyphSize)
             }
             .foregroundStyle(Color.red)
         }
@@ -570,37 +591,67 @@ struct ProSettingsTab: View {
 
     private var benefitsSection: some View {
         Section {
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 8),
-                GridItem(.flexible(), spacing: 8)
-            ], alignment: .leading, spacing: 8) {
-                ProBenefitTile(
-                    systemImage: "sparkles",
-                    titleKey: "settings.pro.benefit.ai.title",
-                    detailKey: "settings.pro.benefit.ai.detail"
+            // 合并为一个原生 Form 行，避免系统为每项重复添加行内留白。
+            VStack(alignment: .leading, spacing: 0) {
+                ProBenefitRow(
+                    titleKey: "settings.pro.entitlements.aiUnderstanding.title",
+                    detailKey: "settings.pro.entitlements.aiUnderstanding.summary",
+                    destination: benefitDocumentationURL("ai-features/overview")
                 )
-                ProBenefitTile(
-                    systemImage: "magnifyingglass.circle.fill",
-                    titleKey: "settings.pro.benefit.search.title",
-                    detailKey: "settings.pro.benefit.search.detail"
+                Divider()
+                ProBenefitRow(
+                    titleKey: "settings.pro.entitlements.batchOrganize.title",
+                    detailKey: "settings.pro.entitlements.batchOrganize.summary",
+                    destination: benefitDocumentationURL("ai-features/auto-tidy")
                 )
-                ProBenefitTile(
-                    systemImage: "bell.badge.fill",
-                    titleKey: "settings.pro.benefit.release.title",
-                    detailKey: "settings.pro.benefit.release.detail"
+                Divider()
+                ProBenefitRow(
+                    titleKey: "settings.pro.entitlements.knowledgeQA.title",
+                    detailKey: "settings.pro.entitlements.knowledgeQA.summary",
+                    destination: benefitDocumentationURL("knowledge-base/rag-workspace")
                 )
-                ProBenefitTile(
-                    systemImage: "shippingbox.fill",
-                    titleKey: "settings.pro.benefit.repoContext.title",
-                    detailKey: "settings.pro.benefit.repoContext.detail"
+                Divider()
+                ProBenefitRow(
+                    titleKey: "settings.pro.entitlements.semanticSearch.title",
+                    detailKey: "settings.pro.entitlements.semanticSearch.summary",
+                    destination: benefitDocumentationURL("search/semantic-search")
+                )
+                Divider()
+                ProBenefitRow(
+                    titleKey: "settings.pro.entitlements.readmeTranslation.title",
+                    detailKey: "settings.pro.entitlements.readmeTranslation.summary",
+                    destination: benefitDocumentationURL("ai-features/readme-translation")
                 )
             }
         } header: {
-            SettingsSectionHeader(
-                "settings.pro.benefits.section",
-                systemImage: "star.fill"
-            )
+            HStack {
+                SettingsSectionHeader("settings.pro.benefits.section", systemImage: "star.fill")
+
+                Spacer(minLength: 8)
+
+                Link(destination: AppWebsiteLinks.current.home) {
+                    HStack(spacing: 4) {
+                        Text("settings.pro.benefits.learnMore")
+                            .lineLimit(1)
+                        Image(systemName: "chevron.forward")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .help(Text("settings.pro.benefits.learnMore"))
+            }
+        } footer: {
+            Text("settings.pro.entitlements.note")
         }
+    }
+
+    /// 官方文档目前提供中、英两套路径，沿用其他指南入口的语言选择方式。
+    private func benefitDocumentationURL(_ path: String) -> URL {
+        let prefix = locale.identifier.hasPrefix("zh") ? "zh-Hans/" : ""
+        // 路由是本文件中的固定常量，统一交给 URL 处理路径，不拼接未核实的页面锚点。
+        return URL(string: "https://starcat.mintlify.site")!.appendingPathComponent(prefix + path)
     }
 
     private var actionSection: some View {
@@ -1976,39 +2027,35 @@ private struct DirectLicenseKeyRow: View {
     let licenseKey: String
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "key.fill")
-                .foregroundStyle(.orange)
-                .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(maskedKey)
-                    .font(.system(.body, design: .monospaced).weight(.semibold))
-                    .textSelection(.enabled)
-                if let suffix {
-                    Text(String(format: String.l10n("settings.pro.direct.currentFormat"), suffix))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            // 仅图标 bordered 方钮默认比下方 Label 按钮更高、图标更满。
-            // 用显式字号 + 固定 glyph 框压住视觉重量，光学对齐「校验 / 解绑」。
-            CopyFeedbackButton(
-                providesContent: { licenseKey },
-                tooltip: "settings.pro.direct.button.copyLicense",
-                style: .bordered
-            ) { didCopy in
-                // `.bordered` 外壳自带命中区与 padding，glyph 只对齐设置页 15pt 标准，
-                // 不再额外加固定框，避免撑高与旁边「校验 / 解绑」按钮不一致。
-                Image(systemName: didCopy ? "checkmark.circle.fill" : "doc.on.doc")
+        // 页面只显示掩码；点击文本时才将真实完整授权码交给既有复制组件。
+        CopyFeedbackButton(
+            providesContent: { licenseKey },
+            tooltip: "settings.pro.direct.button.copyLicense"
+        ) { didCopy in
+            HStack(spacing: 10) {
+                Image(systemName: didCopy ? "checkmark.circle.fill" : "key.fill")
                     .font(SettingsIconMetrics.standardGlyph)
-                    .foregroundStyle(didCopy ? Color.green : .primary)
+                    .foregroundStyle(didCopy ? Color.green : Color.orange)
+                    .frame(width: 20, height: 20)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: maskedKey)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let suffix {
+                        Text(String(format: String.l10n("settings.pro.direct.currentFormat"), suffix))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .controlSize(.regular)
+            .contentShape(Rectangle())
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
     }
 }
@@ -2212,38 +2259,6 @@ private struct ProProductRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(isCurrent ? Color.green.opacity(0.45) : Color.secondary.opacity(0.16), lineWidth: 1)
         }
-    }
-}
-
-private struct ProBenefitTile: View {
-
-    let systemImage: String
-    let titleKey: LocalizedStringKey
-    let detailKey: LocalizedStringKey
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: systemImage)
-                .font(SettingsIconMetrics.standardGlyph)
-                .foregroundStyle(.orange)
-                .frame(width: 20, height: 20, alignment: .leading)
-
-            Text(titleKey)
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.primary)
-
-            Text(detailKey)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        // 高度跟文案走，避免固定 minHeight 把短说明撑出大块留白。
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.secondary.opacity(0.05))
-        )
     }
 }
 
