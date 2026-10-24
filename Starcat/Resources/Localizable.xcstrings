@@ -471216,6 +471216,902 @@
         }
       }
     },
+    "settings.general.screensaver.guide.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "إعداد شاشة التوقف"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bildschirmschoner einrichten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Set Up Screensaver"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Configurar el salvapantallas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Configurer l’économiseur d’écran"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atur Penghemat Layar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Configurare il salvaschermo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スクリーンセーバを設定"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "화면 보호기 설정"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schermbeveiliging instellen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konfiguracja wygaszacza ekranu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Configurar o protetor de tela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Настройка заставки"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekran Koruyucuyu Ayarla"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Налаштування екранної заставки"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thiết lập trình bảo vệ màn hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "设置屏保"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "設定螢幕保護程式"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.guide.install.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "التثبيت للمستخدم الحالي"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Für deinen Benutzer installieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Install for Your User"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instalar para tu usuario"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installer pour votre compte"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instal untuk Pengguna Saat Ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installare per il proprio utente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "現在のユーザ用にインストール"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "현재 사용자용으로 설치"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voor je gebruikersaccount installeren"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instalacja dla bieżącego użytkownika"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instalar para seu usuário"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установка для текущего пользователя"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçerli Kullanıcı İçin Yükle"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Інсталяція для поточного користувача"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cài đặt cho người dùng hiện tại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "安装到当前用户"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "為目前使用者安裝"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.guide.install.body" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "انقر على أيقونة التثبيت، ثم اختر «التثبيت لهذا المستخدم فقط» في برنامج تثبيت النظام."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klicke auf das Installationssymbol und wähle im Systeminstallationsprogramm „Nur für diesen Benutzer installieren“."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Click the install icon, then choose “Install for this user only” in the system installer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Haz clic en el icono de instalación y elige «Instalar solo para este usuario» en el instalador del sistema."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cliquez sur l’icône d’installation, puis choisissez « Installer uniquement pour cet utilisateur » dans le programme d’installation du système."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klik ikon instalasi, lalu pilih “Instal hanya untuk pengguna ini” di penginstal sistem."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fai clic sull’icona di installazione, poi scegli «Installa solo per questo utente» nel programma di installazione di sistema."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "インストールアイコンをクリックし、システムのインストーラで「このユーザ専用にインストール」を選択します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "설치 아이콘을 클릭한 다음 시스템 설치 프로그램에서 ‘이 사용자만을 위해 설치’를 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klik op het installatiepictogram en kies ‘Alleen voor deze gebruiker installeren’ in het installatieprogramma van het systeem."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kliknij ikonę instalacji, a następnie wybierz „Zainstaluj tylko dla tego użytkownika” w instalatorze systemowym."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clique no ícone de instalação e escolha “Instalar apenas para este usuário” no instalador do sistema."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нажмите значок установки и выберите «Установить только для этого пользователя» в системном установщике."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yükleme simgesine tıklayın, ardından sistem yükleyicisinde “Yalnızca bu kullanıcı için yükle” seçeneğini seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Натисніть значок інсталяції, а потім виберіть «Інсталювати лише для цього користувача» в системному інсталяторі."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhấp vào biểu tượng cài đặt, rồi chọn “Chỉ cài đặt cho người dùng này” trong trình cài đặt hệ thống."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "点击安装图标后，在系统安装对话框中选择“仅为当前用户安装”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "點按安裝圖示後，在系統安裝對話框中選擇「僅為目前使用者安裝」。"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.guide.select.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "التفعيل في إعدادات النظام"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In den Systemeinstellungen aktivieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable in System Settings"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activar en Ajustes del Sistema"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activer dans les Réglages Système"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktifkan di Pengaturan Sistem"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Attivare nelle Impostazioni di Sistema"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "システム設定で有効にする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "시스템 설정에서 활성화"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inschakelen in Systeeminstellingen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Włączenie w Ustawieniach systemowych"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ativar nos Ajustes do Sistema"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Включение в Системных настройках"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sistem Ayarları’nda Etkinleştir"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увімкнення в Системних параметрах"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bật trong Cài đặt hệ thống"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在系统设置中启用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在系統設定中啟用"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.guide.select.body" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "افتح إعدادات النظام → خلفية الشاشة → شاشة التوقف → مخصص → أخرى، ثم اختر Starcat."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Öffne Systemeinstellungen → Hintergrundbild → Bildschirmschoner → Eigene → Andere und wähle Starcat."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Open System Settings → Wallpaper → Screen Saver → Custom → Other, then select Starcat."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abre Ajustes del Sistema → Fondo de pantalla → Salvapantallas → Personalizado → Otros y selecciona Starcat."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrez Réglages Système → Fond d’écran → Économiseur d’écran → Personnalisé → Autres, puis sélectionnez Starcat."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buka Pengaturan Sistem → Wallpaper → Penghemat Layar → Khusus → Lainnya, lalu pilih Starcat."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apri Impostazioni di Sistema → Sfondo → Salvaschermo → Personalizzato → Altro, poi seleziona Starcat."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "システム設定 → 壁紙 → スクリーンセーバ → カスタム → その他を開き、Starcat を選択します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "시스템 설정 → 배경화면 → 화면 보호기 → 사용자화 → 기타를 열고 Starcat을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Open Systeeminstellingen → Achtergrond → Schermbeveiliging → Aangepast → Andere en selecteer Starcat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otwórz Ustawienia systemowe → Tapeta → Wygaszacz ekranu → Własne → Inne, a następnie wybierz Starcat."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abra Ajustes do Sistema → Imagem de Fundo → Protetor de Tela → Personalizado → Outros e selecione Starcat."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Откройте Системные настройки → Обои → Заставка → Настраиваемые → Другие и выберите Starcat."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sistem Ayarları → Duvar Kâğıdı → Ekran Koruyucu → Özel → Diğer yolunu açın ve Starcat’i seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відкрийте Системні параметри → Шпалери → Екранна заставка → Власні → Інші та виберіть Starcat."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mở Cài đặt hệ thống → Hình nền → Trình bảo vệ màn hình → Tùy chỉnh → Khác, rồi chọn Starcat."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打开系统设置 → 墙纸 → 屏幕保护程序 → 自定 → 其他，选择 Starcat。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開啟系統設定 → 背景圖片 → 螢幕保護程式 → 自訂 → 其他，選擇 Starcat。"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.guide.missing.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "لا تجد Starcat؟"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat nicht gefunden?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Can’t Find Starcat?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿No encuentras Starcat?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vous ne trouvez pas Starcat ?"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak Menemukan Starcat?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non trovi Starcat?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat が見つからない場合"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat이 보이지 않나요?"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kun je Starcat niet vinden?"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie widzisz Starcat?"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não encontrou o Starcat?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удаётся найти Starcat?"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat’i Bulamıyor musunuz?"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не можете знайти Starcat?"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không tìm thấy Starcat?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "找不到 Starcat？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "找不到 Starcat？"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.guide.missing.body" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "انقر على أيقونة التثبيت مرة أخرى لفتح ملف Starcat.saver المنسوخ في برنامج تثبيت النظام، ثم تحقق من إعدادات النظام مجددًا."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klicke erneut auf das Installationssymbol, um die kopierte Starcat.saver im Systeminstallationsprogramm zu öffnen. Prüfe anschließend noch einmal die Systemeinstellungen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Click the install icon again to open the copied Starcat.saver in the system installer, then check System Settings again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vuelve a hacer clic en el icono de instalación para abrir el archivo Starcat.saver copiado en el instalador del sistema y comprueba de nuevo Ajustes del Sistema."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cliquez à nouveau sur l’icône d’installation pour ouvrir le fichier Starcat.saver copié dans le programme d’installation du système, puis vérifiez à nouveau les Réglages Système."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klik ikon instalasi lagi untuk membuka Starcat.saver yang telah disalin di penginstal sistem, lalu periksa kembali Pengaturan Sistem."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fai di nuovo clic sull’icona di installazione per aprire il file Starcat.saver copiato nel programma di installazione di sistema, poi controlla nuovamente nelle Impostazioni di Sistema."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "インストールアイコンをもう一度クリックして、コピー済みの Starcat.saver をシステムのインストーラで開き、システム設定を再度確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "설치 아이콘을 다시 클릭하여 복사된 Starcat.saver를 시스템 설치 프로그램으로 연 다음 시스템 설정에서 다시 확인하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klik opnieuw op het installatiepictogram om het gekopieerde Starcat.saver in het installatieprogramma van het systeem te openen en controleer daarna de Systeeminstellingen opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kliknij ponownie ikonę instalacji, aby otworzyć skopiowany plik Starcat.saver w instalatorze systemowym, a następnie sprawdź ponownie Ustawienia systemowe."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clique novamente no ícone de instalação para abrir o arquivo Starcat.saver copiado no instalador do sistema e verifique os Ajustes do Sistema de novo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нажмите значок установки ещё раз, чтобы открыть скопированный файл Starcat.saver в системном установщике, затем снова проверьте Системные настройки."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopyalanan Starcat.saver dosyasını sistem yükleyicisinde açmak için yükleme simgesine tekrar tıklayın, ardından Sistem Ayarları’nı yeniden kontrol edin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Натисніть значок інсталяції ще раз, щоб відкрити скопійований файл Starcat.saver у системному інсталяторі, а потім знову перевірте Системні параметри."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhấp lại vào biểu tượng cài đặt để mở tệp Starcat.saver đã sao chép bằng trình cài đặt hệ thống, rồi kiểm tra lại Cài đặt hệ thống."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次点击安装图标，用系统安装器打开已拷贝的 Starcat.saver，然后返回系统设置查找。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次點按安裝圖示，用系統安裝程式開啟已拷貝的 Starcat.saver，然後返回系統設定尋找。"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.guide.download.body" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "يستمر تنزيل الصور الرمزية في الخلفية. يمكنك إعداد شاشة التوقف قبل اكتمال التنزيلات."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avatare werden im Hintergrund weitergeladen. Du kannst den Bildschirmschoner schon vor Abschluss der Downloads einrichten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avatars keep downloading in the background. You can set up the screensaver before downloads finish."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los avatares siguen descargándose en segundo plano. Puedes configurar el salvapantallas antes de que terminen las descargas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les avatars continuent de se télécharger en arrière-plan. Vous pouvez configurer l’économiseur d’écran sans attendre la fin des téléchargements."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avatar terus diunduh di latar belakang. Anda dapat mengatur penghemat layar sebelum unduhan selesai."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli avatar continuano a essere scaricati in background. Puoi configurare il salvaschermo prima che i download siano completati."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アバターはバックグラウンドで引き続きダウンロードされます。完了を待たずにスクリーンセーバを設定できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "아바타는 백그라운드에서 계속 다운로드됩니다. 다운로드가 끝나기 전에 화면 보호기를 설정할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avatars worden op de achtergrond verder gedownload. Je kunt de schermbeveiliging instellen voordat de downloads klaar zijn."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Awatary są nadal pobierane w tle. Możesz skonfigurować wygaszacz ekranu przed zakończeniem pobierania."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os avatares continuam sendo baixados em segundo plano. Você pode configurar o protetor de tela antes que os downloads terminem."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Аватары продолжат загружаться в фоновом режиме. Заставку можно настроить, не дожидаясь завершения загрузок."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avatarlar arka planda indirilmeye devam eder. İndirmelerin bitmesini beklemeden ekran koruyucuyu ayarlayabilirsiniz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Аватари й далі завантажуватимуться у фоновому режимі. Екранну заставку можна налаштувати, не чекаючи завершення завантажень."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ảnh đại diện tiếp tục được tải xuống trong nền. Bạn có thể thiết lập trình bảo vệ màn hình mà không cần chờ tải xong."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "头像会在后台继续下载，无需等待下载完成再设置屏保。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "頭像會在背景繼續下載，無需等待下載完成再設定螢幕保護程式。"
+          }
+        }
+      }
+    },
     "settings.general.screensaver.help" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -472116,6 +473012,118 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "尚未安装。"
+          }
+        }
+      }
+    },
+    "settings.general.screensaver.summary" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ثبّت Starcat.saver واختر من يمكنه استخدامه."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installiere Starcat.saver und wähle, wer ihn nutzen kann."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Install Starcat.saver and choose who can use it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala Starcat.saver y elige quién puede usarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installez Starcat.saver et choisissez qui peut l’utiliser."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instal Starcat.saver dan pilih siapa yang dapat menggunakannya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installa Starcat.saver e scegli chi può usarlo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat.saver をインストールし、利用するユーザを選びます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat.saver를 설치하고 사용할 사용자를 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installeer Starcat.saver en kies wie het kan gebruiken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zainstaluj Starcat.saver i wybierz, kto może go używać."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instale Starcat.saver e escolha quem pode usá-lo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установите Starcat.saver и выберите, кому он доступен."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Starcat.saver dosyasını yükleyin ve kimlerin kullanabileceğini seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установіть Starcat.saver і виберіть, хто може ним користуватися."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cài Starcat.saver và chọn người có thể sử dụng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "安装 Starcat.saver，并选择安装范围。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "安裝 Starcat.saver，並選擇安裝範圍。"
           }
         }
       }

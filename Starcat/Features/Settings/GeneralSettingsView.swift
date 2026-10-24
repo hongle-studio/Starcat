@@ -204,14 +204,7 @@ struct GeneralSettingsView: View {
             )
 
             if DistributionChannel.current.isDirect {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("settings.general.screensaver.title")
-                    Text("settings.general.screensaver.help")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ScreensaverSettingsSection()
-                }
+                ScreensaverSettingsSection()
             }
         } header: {
             SettingsSectionHeader("settings.general.macOSIntegration", systemImage: "macwindow.on.rectangle")
