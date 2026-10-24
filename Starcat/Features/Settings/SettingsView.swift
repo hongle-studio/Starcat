@@ -66,6 +66,8 @@ struct SettingsView: View {
     @State private var settingsSearchText = ""
     @State private var isRedispatchingSettingsJump = false
     @State private var hasMarkedFirstFrame = false
+    /// 权限弹框仅解释现有授权请求，不触发登录或重新授权。
+    @State private var isShowingGitHubPermissions = false
     /// 快捷键录制失败时只在 General 页就地提示，不修改已保存配置。
     @State private var shortcutValidationError: KeyboardShortcutConfiguration.ValidationError?
 
@@ -480,13 +482,13 @@ struct SettingsView: View {
                                keywords: ["订阅", "授权", "激活", "license", "subscription", "purchase"]),
             SettingsSearchItem("privacy", titleKey: "settings.navigation.item.privacyPermissions", tab: .privacy,
                                keywords: ["隐私", "权限", "OAuth", "数据贡献", "推荐", "privacy"]),
-            SettingsSearchItem("privacy.oauthScopes", titleKey: "settings.general.oauthScopes.section", tab: .privacy,
+            SettingsSearchItem("privacy.oauthScopes", titleKey: "settings.privacy.github.title", tab: .privacy,
                                keywords: ["OAuth", "scope", "权限", "组织"]),
-            SettingsSearchItem("privacy.dataContribution", titleKey: "settings.general.dataContribution.section", tab: .privacy,
+            SettingsSearchItem("privacy.dataContribution", titleKey: "settings.privacy.data.contribution.title", tab: .privacy,
                                keywords: ["数据贡献", "匿名", "推荐", "隐私"]),
-            SettingsSearchItem("privacy.telemetry", titleKey: "settings.diagnostics.telemetry.section", tab: .privacy,
+            SettingsSearchItem("privacy.telemetry", titleKey: "settings.privacy.data.telemetry.title", tab: .privacy,
                                keywords: ["遥测", "诊断数据", "telemetry", "privacy"]),
-            SettingsSearchItem("privacy.ai", titleKey: "settings.ai.privacy.section", tab: .privacy,
+            SettingsSearchItem("privacy.ai", titleKey: "settings.privacy.ai.title", tab: .privacy,
                                keywords: ["AI 隐私", "模型数据", "api key", "privacy"]),
             SettingsSearchItem("ai", titleKey: "settings.navigation.item.aiModels", tab: .aiModels,
                                keywords: ["人工智能", "模型", "provider", "model", "api key"]),
@@ -916,35 +918,79 @@ struct SettingsView: View {
         @Bindable var settings = settings
 
         return Form {
+            // 沿用通用页的说明卡片，避免在 grouped Form 中额外叠加卡片表面。
             Section {
-                Text("settings.general.oauthScopes.summary")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 16) {
+                    Image(systemName: "checkmark.shield")
+                        .font(.title)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 48, height: 48)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityHidden(true)
 
-                ForEach(AppConstants.githubOAuthScopes, id: \.self) { scope in
-                    HStack(alignment: .firstTextBaseline, spacing: 16) {
-                        Text(scope)
-                            .font(.body.monospaced())
+                    Divider()
+                        .frame(height: 48)
+                        .accessibilityHidden(true)
 
-                        Spacer(minLength: 16)
-
-                        Text(githubOAuthScopeDescriptionKey(for: scope))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("settings.navigation.item.privacyPermissions")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text("settings.privacy.introduction.description")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .help(Text("settings.privacy.introduction.description"))
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+            }
+
+            Section {
+                LabeledContent {
+                    if let login = dependencies.authSession.state.user?.login {
+                        Text(verbatim: login)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(login)
+                    } else {
+                        Text("settings.privacy.github.account.signedOut")
+                            .foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Text("settings.privacy.github.account.title")
                 }
 
-                Text("settings.general.oauthScopes.organizationHelp")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.privacy.github.scopes.title")
+                            .lineLimit(1)
+                            .help(Text("settings.privacy.github.scopes.title"))
+                        Text("settings.privacy.github.scopes.description")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .help(Text("settings.privacy.github.scopes.description"))
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        isShowingGitHubPermissions = true
+                    } label: {
+                        Label("settings.privacy.github.scopes.show", systemImage: "checkmark.shield")
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                }
             } header: {
-                SettingsSectionHeader(
-                    "settings.general.oauthScopes.section",
-                    systemImage: "lock.shield.fill"
-                )
+                SettingsSectionHeader("settings.privacy.github.title", systemImage: "lock.shield.fill")
             }
 
             // 数据贡献严格默认关闭且按 GitHub 账号隔离。这里只展示一个授权开关；
@@ -963,70 +1009,48 @@ struct SettingsView: View {
                     }
                 )) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.general.dataContribution.title")
-                        Text("settings.general.dataContribution.help")
+                        Text("settings.privacy.data.contribution.title")
+                        Text("settings.privacy.data.contribution.description")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(2)
                     }
                 }
                 .disabled(dependencies.database.currentUserId == nil)
-            } header: {
-                SettingsSectionHeader(
-                    "settings.general.dataContribution.section",
-                    systemImage: "hand.raised.fill"
-                )
-            }
+                .help(Text("settings.general.dataContribution.help"))
+                .accessibilityHint(Text("settings.general.dataContribution.help"))
 
-            Section {
                 Toggle(isOn: $settings.telemetryEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.diagnostics.telemetry.enabled.title")
-                        Text("settings.diagnostics.telemetry.enabled.help")
+                        Text("settings.privacy.data.telemetry.title")
+                        Text("settings.privacy.data.telemetry.description")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(2)
                     }
                 }
-
-                Text("settings.diagnostics.telemetry.privacy")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // 短说明用于扫读，完整的数据白名单与 MetricKit 本地保存边界保留在提示中。
+                .help(Text("settings.privacy.data.telemetry.details"))
+                .accessibilityHint(Text("settings.privacy.data.telemetry.details"))
             } header: {
-                SettingsSectionHeader(
-                    "settings.diagnostics.telemetry.section",
-                    systemImage: "chart.bar"
-                )
+                SettingsSectionHeader("settings.privacy.data.title", systemImage: "hand.raised.fill")
             }
 
             Section {
-                Text("settings.ai.privacy.notice")
-                    .font(.callout)
+                Text("settings.privacy.ai.description")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(Text("settings.privacy.ai.description"))
             } header: {
-                SettingsSectionHeader(
-                    "settings.ai.privacy.section",
-                    systemImage: "lock.shield"
-                )
+                SettingsSectionHeader("settings.privacy.ai.title", systemImage: "lock.shield")
             }
         }
         .formStyle(.grouped)
-    }
-
-    /// 权限说明直接映射登录流程使用的 scope 常量，避免设置页与真实授权请求漂移。
-    private func githubOAuthScopeDescriptionKey(for scope: String) -> LocalizedStringKey {
-        switch scope {
-        case "read:user":
-            "settings.general.oauthScopes.readUser"
-        case "public_repo":
-            "settings.general.oauthScopes.publicRepo"
-        case "user":
-            "settings.general.oauthScopes.user"
-        case "notifications":
-            "settings.general.oauthScopes.notifications"
-        default:
-            "settings.general.oauthScopes.unknown"
+        .sheet(isPresented: $isShowingGitHubPermissions) {
+            GitHubPermissionsSheet(accountLogin: dependencies.authSession.state.user?.login)
+                .appLocaleEnvironment()
         }
     }
 

@@ -504746,6 +504746,1686 @@
         }
       }
     },
+    "settings.privacy.introduction.description" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "إدارة أذونات GitHub والمساهمة بالبيانات وتفضيلات بيانات التشخيص."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub-Berechtigungen, Datenbeiträge und Diagnosedaten verwalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manage GitHub permissions, data contributions, and diagnostic data preferences."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gestiona los permisos de GitHub, la contribución de datos y las preferencias de diagnóstico."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gérez les autorisations GitHub, la contribution de données et les préférences de diagnostic."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kelola izin GitHub, kontribusi data, dan preferensi data diagnostik."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gestisci le autorizzazioni GitHub, i contributi di dati e le preferenze di diagnostica."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub の権限、データ提供、診断データの設定を管理します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 권한, 데이터 제공 및 진단 데이터 설정을 관리합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beheer GitHub-machtigingen, gegevensbijdragen en diagnostische voorkeuren."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zarządzaj uprawnieniami GitHub, przekazywaniem danych i ustawieniami diagnostyki."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gerencie permissões do GitHub, contribuições de dados e preferências de diagnóstico."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управляйте разрешениями GitHub, передачей данных и настройками диагностики."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub izinlerini, veri katkısını ve tanılama verisi tercihlerini yönetin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керуйте дозволами GitHub, наданням даних і налаштуваннями діагностики."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quản lý quyền GitHub, việc đóng góp dữ liệu và tùy chọn dữ liệu chẩn đoán."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "管理 GitHub 权限、数据贡献和诊断数据偏好。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "管理 GitHub 權限、資料貢獻與診斷資料偏好設定。"
+          }
+        }
+      }
+    },
+    "settings.privacy.github.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "أذونات GitHub"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub-Berechtigungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub permissions"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permisos de GitHub"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorisations GitHub"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izin GitHub"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorizzazioni GitHub"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub の権限"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 권한"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub-machtigingen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uprawnienia GitHub"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permissões do GitHub"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешения GitHub"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub izinleri"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволи GitHub"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quyền GitHub"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 權限"
+          }
+        }
+      }
+    },
+    "settings.privacy.github.account.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "الحساب الحالي"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktueller Account"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Current account"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuenta actual"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compte actuel"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Akun saat ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Account attuale"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "現在のアカウント"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "현재 계정"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Huidig account"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bieżące konto"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conta atual"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Текущий аккаунт"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçerli hesap"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поточний обліковий запис"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tài khoản hiện tại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "当前账户"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "目前帳號"
+          }
+        }
+      }
+    },
+    "settings.privacy.github.account.signedOut" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "لم يتم تسجيل الدخول"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht angemeldet"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Not signed in"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sin iniciar sesión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non connecté"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Belum masuk"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accesso non effettuato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未ログイン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인하지 않음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niet ingelogd"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie zalogowano"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não conectado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вход не выполнен"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturum açılmadı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вхід не виконано"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chưa đăng nhập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "尚未登入"
+          }
+        }
+      }
+    },
+    "settings.privacy.github.scopes.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "نطاقات OAuth"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth-Berechtigungsumfang"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth scopes"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ámbitos de OAuth"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Portées OAuth"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cakupan OAuth"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambiti OAuth"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth スコープ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth 범위"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth-bereiken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zakresy OAuth"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escopos OAuth"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Области доступа OAuth"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth kapsamları"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Області доступу OAuth"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Phạm vi OAuth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth 授权范围"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth 授權範圍"
+          }
+        }
+      }
+    },
+    "settings.privacy.github.scopes.description" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "اعرض الأذونات التي يطلبها التطبيق وسياسات وصول المؤسسة."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Von der App angeforderte Berechtigungen und Zugriffsregeln von Organisationen ansehen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "View the permissions requested by the app and organization access policies."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consulta los permisos solicitados por la app y las políticas de acceso de las organizaciones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consultez les autorisations demandées par l’app et les règles d’accès des organisations."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lihat izin yang diminta aplikasi dan kebijakan akses organisasi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consulta le autorizzazioni richieste dall’app e le regole di accesso delle organizzazioni."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アプリが要求する権限と組織のアクセス方針を確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "앱이 요청하는 권한과 조직의 접근 정책을 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bekijk de door de app gevraagde machtigingen en het toegangsbeleid van organisaties."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zobacz uprawnienia wymagane przez aplikację i zasady dostępu organizacji."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Veja as permissões solicitadas pelo app e as políticas de acesso das organizações."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Просмотрите разрешения, запрашиваемые приложением, и правила доступа организаций."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uygulamanın istediği izinleri ve kuruluşun erişim ilkelerini görüntüleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перегляньте дозволи, які запитує застосунок, і правила доступу організації."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Xem các quyền ứng dụng yêu cầu và chính sách truy cập của tổ chức."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查看应用请求的权限与组织授权说明。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查看應用程式請求的權限與組織授權說明。"
+          }
+        }
+      }
+    },
+    "settings.privacy.github.scopes.show" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "عرض الأذونات"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berechtigungen ansehen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "View permissions"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ver permisos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voir les autorisations"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lihat izin"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vedi autorizzazioni"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "権限を表示"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "권한 보기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Machtigingen bekijken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż uprawnienia"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ver permissões"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Посмотреть разрешения"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İzinleri gör"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показати дозволи"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Xem quyền"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查看权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查看權限"
+          }
+        }
+      }
+    },
+    "settings.privacy.data.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "البيانات والخصوصية"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Daten und Datenschutz"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Data and privacy"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datos y privacidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Données et confidentialité"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Data dan privasi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dati e privacy"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "データとプライバシー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "데이터 및 개인정보 보호"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gegevens en privacy"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dane i prywatność"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dados e privacidade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Данные и конфиденциальность"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Veri ve gizlilik"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дані та приватність"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dữ liệu và quyền riêng tư"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "数据与隐私"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "資料與隱私"
+          }
+        }
+      }
+    },
+    "settings.privacy.data.contribution.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "المساهمة ببيانات Star العامة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Öffentliche Star-Daten beitragen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contribute public Star data"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aportar datos de Stars públicos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Partager les données de favoris publics"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontribusikan data Star publik"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Condividi dati Star pubblici"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "公開 Star データを提供"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "공개 Star 데이터 제공"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Openbare stergegevens bijdragen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przekazuj publiczne dane gwiazdek"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contribuir com dados públicos de Star"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Передавать данные о публичных звёздах"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Herkese açık Star verisi paylaş"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надавати публічні дані Star"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đóng góp dữ liệu Star công khai"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "贡献公开 Star 数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "貢獻公開 Star 資料"
+          }
+        }
+      }
+    },
+    "settings.privacy.data.contribution.description" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ساهم فقط بالبيانات العامة المسموح بها لتحسين توصيات المشاريع."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur zulässige öffentliche Daten beitragen, um Projektempfehlungen zu verbessern."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contribute only permitted public data to improve project recommendations."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comparte solo datos públicos permitidos para mejorar las recomendaciones de proyectos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Partagez uniquement les données publiques autorisées pour améliorer les recommandations de projets."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontribusikan hanya data publik yang diizinkan untuk menyempurnakan rekomendasi proyek."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Condividi solo dati pubblici consentiti per migliorare i suggerimenti di progetti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "許可された範囲の公開データのみを提供し、プロジェクトのおすすめを改善します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "허용된 범위의 공개 데이터만 제공하여 프로젝트 추천을 개선합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Draag alleen toegestane openbare gegevens bij om projectaanbevelingen te verbeteren."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przekazuj tylko dozwolone dane publiczne, aby ulepszać rekomendacje projektów."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contribua apenas com dados públicos permitidos para melhorar as recomendações de projetos."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Передавайте только разрешённые публичные данные для улучшения рекомендаций проектов."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Proje önerilerini iyileştirmek için yalnızca izin verilen herkese açık verileri paylaşın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надавайте лише дозволені публічні дані для поліпшення рекомендацій проєктів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chỉ đóng góp dữ liệu công khai được phép để cải thiện đề xuất dự án."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "仅贡献允许范围内的公开数据，用于改进项目推荐。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "僅貢獻允許範圍內的公開資料，用於改善專案推薦。"
+          }
+        }
+      }
+    },
+    "settings.privacy.data.telemetry.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "إرسال بيانات التشخيص"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diagnosedaten senden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send diagnostic data"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviar datos de diagnóstico"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Envoyer des données de diagnostic"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kirim data diagnostik"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Invia dati diagnostici"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "診断データを送信"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "진단 데이터 보내기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diagnostische gegevens verzenden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wysyłaj dane diagnostyczne"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviar dados de diagnóstico"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отправлять диагностические данные"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tanılama verisi gönder"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надсилати діагностичні дані"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gửi dữ liệu chẩn đoán"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "发送诊断数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "傳送診斷資料"
+          }
+        }
+      }
+    },
+    "settings.privacy.data.telemetry.description" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "تساعد في تشخيص مشكلات التشغيل. يمكنك إيقافها في أي وقت."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hilft bei der Fehlersuche und lässt sich jederzeit ausschalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Help diagnose issues. You can turn this off at any time."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ayuda a diagnosticar problemas. Puedes desactivarlo cuando quieras."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aide à diagnostiquer les problèmes. Désactivable à tout moment."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Membantu mendiagnosis masalah. Dapat dinonaktifkan kapan saja."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aiuta a diagnosticare i problemi. Puoi disattivarlo in qualsiasi momento."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "動作上の問題の特定に役立ちます。いつでも無効にできます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "실행 중 발생한 문제를 파악하는 데 도움이 됩니다. 언제든 끌 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Helpt problemen te onderzoeken. Je kunt dit altijd uitschakelen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pomaga diagnozować problemy. Możesz wyłączyć w każdej chwili."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajuda a diagnosticar problemas. Você pode desativar a qualquer momento."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помогает выявлять проблемы. Можно отключить в любой момент."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çalışma sorunlarını belirlemeye yardımcı olur. İstediğiniz zaman kapatabilirsiniz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Допомагає виявляти проблеми в роботі. Можна вимкнути будь-коли."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giúp xác định sự cố khi hoạt động. Bạn có thể tắt bất cứ lúc nào."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "用于定位运行问题，可随时关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "協助找出執行問題，可隨時關閉。"
+          }
+        }
+      }
+    },
+    "settings.privacy.ai.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "خصوصية الذكاء الاصطناعي"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "KI-Datenschutz"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AI privacy"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacidad de la IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confidentialité de l’IA"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privasi AI"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacy IA"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AI のプライバシー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AI 개인정보 보호"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AI-privacy"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prywatność AI"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacidade da IA"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Конфиденциальность ИИ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yapay zekâ gizliliği"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Приватність ШІ"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quyền riêng tư AI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AI 隐私"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AI 隱私"
+          }
+        }
+      }
+    },
+    "settings.privacy.ai.description" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "تُرسل طلبات النماذج البعيدة إلى مزوّد الخدمة الذي تختاره. تُشفّر بيانات الاعتماد على جهاز Mac هذا وتُخزّن منفصلة عن الفهارس المحلية."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anfragen an entfernte Modelle gehen an den gewählten Anbieter. Zugangsdaten werden auf diesem Mac verschlüsselt und getrennt von lokalen Indizes gespeichert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remote model requests go to your chosen provider. Credentials are encrypted on this Mac and stored separately from local indexes."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las solicitudes a modelos remotos se envían al proveedor elegido. Las credenciales se cifran en este Mac y se guardan separadas de los índices locales."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les requêtes aux modèles distants sont envoyées au fournisseur choisi. Les identifiants sont chiffrés sur ce Mac et stockés séparément des index locaux."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan model jarak jauh dikirim ke penyedia pilihan Anda. Kredensial dienkripsi di Mac ini dan disimpan terpisah dari indeks lokal."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le richieste ai modelli remoti vanno al fornitore scelto. Le credenziali sono crittografate su questo Mac e archiviate separatamente dagli indici locali."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "リモートモデルへのリクエストは、選択したプロバイダーに送信されます。認証情報はこの Mac に暗号化して保存され、ローカルインデックスとは別に管理されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "원격 모델 요청은 선택한 제공업체로 전송됩니다. 인증 정보는 이 Mac에 암호화되어 저장되며 로컬 색인과 분리됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanvragen voor externe modellen gaan naar je gekozen aanbieder. Inloggegevens worden op deze Mac versleuteld en apart van lokale indexen opgeslagen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Żądania do modeli zdalnych trafiają do wybranego dostawcy. Dane uwierzytelniające są szyfrowane na tym Macu i przechowywane oddzielnie od lokalnych indeksów."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As solicitações a modelos remotos vão para o provedor escolhido. As credenciais são criptografadas neste Mac e armazenadas separadamente dos índices locais."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запросы к удалённым моделям отправляются выбранному провайдеру. Учётные данные шифруются на этом Mac и хранятся отдельно от локальных индексов."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uzak model istekleri seçtiğiniz sağlayıcıya gönderilir. Kimlik bilgileri bu Mac’te şifrelenir ve yerel dizinlerden ayrı saklanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запити до віддалених моделей надсилаються вибраному постачальнику. Облікові дані шифруються на цьому Mac і зберігаються окремо від локальних індексів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến mô hình từ xa được gửi tới nhà cung cấp bạn chọn. Thông tin xác thực được mã hóa trên máy Mac này và lưu riêng với chỉ mục cục bộ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "远程模型调用发送到你选择的服务商。凭据加密保存在本机，与本地索引分开存储。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "遠端模型呼叫會傳送至你選擇的服務供應商。憑證會加密儲存在本機，與本機索引分開儲存。"
+          }
+        }
+      }
+    },
+    "settings.privacy.data.telemetry.details" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "إرسال أحداث منتج مجهولة المصدر ومدرجة في القائمة المسموح بها، ومجموعات تقريبية للأداء. لا يرسل Starcat أبدًا أسماء المستودعات، أو نصوص البحث، أو الملاحظات، أو نصوص README، أو المطالبات، أو الردود، أو مفاتيح API، أو الرموز المميزة، أو المسارات المحلية.\n\nيتم تخزين حمولات MetricKit محليًا كملخصات تشخيصية في هذا الإصدار؛ ولا يتم تحميلها."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Senden Sie zugelassene, anonyme Produktereignisse und grobe Leistungsdaten. Starcat sendet niemals Repository-Namen, Suchtext, Notizen, README-Inhalte, Eingabeaufforderungen, Antworten, API-Schlüssel, Tokens oder lokale Pfade.\n\nMetricKit-Nutzlasten werden in dieser Version lokal als Diagnosezusammenfassungen gespeichert; sie werden nicht hochgeladen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Send allowlisted, anonymous product events and coarse performance buckets. Starcat never sends repository names, search text, notes, README bodies, prompts, responses, API keys, tokens, or local paths.\n\nMetricKit payloads are stored locally as diagnostic summaries in this version; they are not uploaded."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviar eventos de producto anónimos permitidos y métricas de rendimiento generales. Starcat nunca envía nombres de repositorio, texto de búsqueda, notas, cuerpos de README, indicaciones, respuestas, claves API, tokens ni rutas locales.\n\nLas cargas de MetricKit se almacenan localmente como resúmenes de diagnóstico en esta versión; no se cargan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Envoyer des événements produits anonymes autorisés et des catégories de performances générales. Starcat n'envoie jamais de noms de dépôts, de texte de recherche, de notes, de contenus README, d'invites, de réponses, de clés API, de jetons ou de chemins locaux.\n\nLes données MetricKit sont stockées localement sous forme de résumés de diagnostic dans cette version ; elles ne sont pas téléchargées."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kirim peristiwa produk anonim yang diizinkan dan bucket kinerja kasar. Starcat tidak pernah mengirim nama repositori, teks pencarian, catatan, isi README, prompt, respons, kunci API, token, atau jalur lokal.\n\nPayload MetricKit disimpan secara lokal sebagai ringkasan diagnostik di versi ini; tidak diunggah."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Invia eventi di prodotto anonimi consentiti e fasce di prestazioni approssimative. Starcat non invia mai nomi di repository, testo di ricerca, note, corpi README, prompt, risposte, chiavi API, token o percorsi locali.\n\nI payload MetricKit vengono archiviati localmente come riepiloghi diagnostici in questa versione; non vengono caricati."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "許可リストに登録された匿名の製品イベントと大まかなパフォーマンスバケットを送信します。Starcatはリポジトリ名、検索テキスト、メモ、README本文、プロンプト、応答、APIキー、トークン、ローカルパスを送信しません。\n\nMetricKitペイロードはこのバージョンでは診断サマリーとしてローカルに保存され、アップロードされません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "허용 목록에 포함된 익명 제품 이벤트와 대략적인 성능 버킷을 전송합니다. Starcat는 저장소 이름, 검색 텍스트, 메모, README 본문, 프롬프트, 응답, API 키, 토큰, 로컬 경로를 절대 전송하지 않습니다.\n\nMetricKit 페이로드는 이 버전에서 진단 요약으로 로컬에 저장되며 업로드되지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stuur goedgekeurde, anonieme productgebeurtenissen en grove prestatiecategorieën. Starcat verzendt nooit repositorynamen, zoektekst, notities, README-teksten, prompts, antwoorden, API-sleutels, tokens of lokale paden.\n\nMetricKit-payloads worden lokaal opgeslagen als diagnostische samenvattingen in deze versie; ze worden niet geüpload."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wysyłaj dozwolone, anonimowe zdarzenia produktowe i ogólne dane o wydajności. Starcat nigdy nie wysyła nazw repozytoriów, tekstu wyszukiwania, notatek, treści README, podpowiedzi, odpowiedzi, kluczy API, tokenów ani lokalnych ścieżek.\n\nŁadunki MetricKit są przechowywane lokalnie jako podsumowania diagnostyczne w tej wersji; nie są przesyłane."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Envia eventos de produto anônimos e permitidos, além de faixas de desempenho gerais. O Starcat nunca envia nomes de repositórios, texto de pesquisa, notas, corpos de README, prompts, respostas, chaves de API, tokens ou caminhos locais.\n\nOs payloads do MetricKit são armazenados localmente como resumos de diagnóstico nesta versão; eles não são enviados."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отправлять разрешённые анонимные события продукта и общие показатели производительности. Starcat никогда не отправляет имена репозиториев, текст поиска, заметки, содержимое README, подсказки, ответы, ключи API, токены или локальные пути.\n\nПолезные данные MetricKit хранятся локально в виде диагностических сводок в этой версии; они не загружаются."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İzin verilen, anonim ürün olaylarını ve kaba performans kovalarını gönderin. Starcat asla depo adları, arama metni, notlar, README içerikleri, istemler, yanıtlar, API anahtarları, token'lar veya yerel yollar göndermez.\n\nMetricKit yükleri bu sürümde tanılama özetleri olarak yerel olarak saklanır; yüklenmezler."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надсилайте дозволені анонімні події продукту та загальні показники продуктивності. Starcat ніколи не надсилає назви репозиторіїв, текст пошуку, нотатки, тіла README, підказки, відповіді, ключі API, токени або локальні шляхи.\n\nУ цій версії корисні навантаження MetricKit зберігаються локально як діагностичні підсумки; вони не завантажуються."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gửi các sự kiện sản phẩm ẩn danh được cho phép và các nhóm hiệu suất thô. Starcat không bao giờ gửi tên kho lưu trữ, văn bản tìm kiếm, ghi chú, nội dung README, lời nhắc, phản hồi, khóa API, token hoặc đường dẫn cục bộ.\n\nTải trọng MetricKit được lưu trữ cục bộ dưới dạng tóm tắt chẩn đoán trong phiên bản này; chúng không được tải lên."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "发送白名单内的匿名产品事件与粗粒度性能分桶。Starcat 不会发送仓库名、搜索词、笔记、README 正文、prompt、回复、API Key、token 或本地路径。\n\n当前版本只把 MetricKit payload 记录为本地诊断摘要，不上传原始数据。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "发送白名单内的匿名产品事件与粗粒度性能分桶。Starcat 不会发送仓库名、搜索词、笔记、README 正文、prompt、回复、API Key、token 或本地路径。\n\n当前版本只把 MetricKit payload 记录为本地诊断摘要，不上传原始数据。"
+          }
+        }
+      }
+    },
     "settings.privacy.title" : {
       "localizations" : {
         "ar" : {
