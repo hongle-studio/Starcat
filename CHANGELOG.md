@@ -6,12 +6,20 @@ Release notes for the Mac App Store edition of Starcat.
 
 ### New
 
+- Free source tools: Repository context packing, CodeFlow, and CodebaseMemory code graphs no longer require Pro, with existing repository and runtime limits retained.
 - Linux.do discovery: Browse verified open-source projects promoted on Linux.do, see provenance badges across repository lists, and open original discussions from repository details.
 - Quick search across lists: Expand the middle-column search field to quickly find repositories and activity items across Manage, Explore, Trending, Weekly, Awesome, Linux.do, notifications, and Undo Star.
 - Repository license filters: Select multiple licenses in the main window and combine them with other filters, with consistent pagination, project counts, and cached results.
 
 ### Improvements
 
+- General settings: Separates common settings from advanced preferences, moves disclosure arrows to the trailing edge, shortens Spotlight text, and clarifies subsection headings.
+- Notification settings: Groups the system notification switch separately from five notification types, preserving individual choices when the master switch is off.
+- Keyboard shortcuts: Groups shortcuts by purpose and sizes recorder buttons to their key combinations, retaining existing bindings and customization.
+- Account and privacy: Brings Pro and privacy settings into Account, shows GitHub permission details on demand, and separates data privacy from AI privacy.
+- Pro benefits: Presents five key benefits in a compact list with direct links to their official guides and a link to all features.
+- Pro card background: Active Pro users get a warm animated header that adapts to light and dark themes and pauses with Reduce Motion, when leaving the page, or when the window is inactive.
+- Insights header layout: Reduces empty space above both columns and keeps card heights aligned with their content.
 - Business icons: Insights icons now match the main window, while similar-repository recommendations, embedding models, and CodeFlow are easier to distinguish.
 - Background task overview: Expand the status panel's task list to see each task's state and available workspace links or stop controls; idle cards are disabled and no longer open tag organization.
 - Background organization entry: After closing repository grouping or tag organization, the middle column keeps showing the current phase and processed counts, with direct access to the task or results.
