@@ -1036,6 +1036,9 @@ struct SettingsView: View {
 struct InterestedLanguagesSettingsSection: View {
 
     @Binding var languages: [String]
+    @Environment(\.starcatReduceMotion) private var reduceMotion
+    @Environment(\.locale) private var locale
+    @State private var isExpanded = false
     @State private var draftLanguage = ""
     @State private var showingLanguagePicker = false
     @State private var isHoveringAddLanguage = false
@@ -1050,53 +1053,135 @@ struct InterestedLanguagesSettingsSection: View {
 
     var body: some View {
         Section {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("settings.filters.interestedLanguages.description")
+            DisclosureGroup(isExpanded: $isExpanded) {
+                languageEditor
+            } label: {
+                // 收起仅影响编辑器可见性；已选数量和标签摘要始终读取同一份长期偏好。
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                                .font(SettingsIconMetrics.smallGlyph)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20, height: 20)
+                                .accessibilityHidden(true)
+                            Text("settings.filters.interestedLanguages.title")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .help(Text("settings.filters.interestedLanguages.title"))
+                        }
+
+                        selectedLanguageSummary
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .accessibilityLabel(Text("settings.filters.interestedLanguages.title"))
+                .accessibilityValue(Text(LocalizedStringKey(isExpanded
+                                                            ? "settings.general.disclosure.expanded"
+                                                            : "settings.general.disclosure.collapsed")))
+                .accessibilityHint(Text(verbatim: selectedLanguageCountText))
+            }
+        }
+    }
+
+    /// 最多保留三个标签，不让低频语言配置在收起时仍占用多行候选池空间。
+    private var selectedLanguageSummary: some View {
+        HStack(spacing: 6) {
+            if languages.isEmpty {
+                Text("settings.filters.interestedLanguages.noneSelected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+            } else {
+                Text(verbatim: selectedLanguageCountText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .layoutPriority(1)
 
-                FlowLayout(spacing: 8) {
-                    ForEach(presets, id: \.self) { language in
-                        languagePresetChip(language)
+                ForEach(Array(languages.prefix(3)), id: \.self) { language in
+                    HStack(spacing: 4) {
+                        LanguageIconView(language: language, size: 13)
+                        Text(LanguageDisplayName.shortened(for: language))
+                            .font(.caption)
+                            .lineLimit(1)
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.1), in: Capsule())
+                    .foregroundStyle(.primary)
+                    .help(language)
                 }
 
-                HStack {
-                    Spacer()
-                    Button {
-                        draftLanguage = ""
-                        showingLanguagePicker = true
-                    } label: {
-                        addLanguageIcon
-                    }
-                    .buttonStyle(.plain)
-                    .focusEffectDisabled()
-                    .help(Text("settings.filters.interestedLanguages.add"))
-                    .accessibilityLabel(Text("settings.filters.interestedLanguages.add"))
-                    .onHover { isHoveringAddLanguage = $0 }
-                    .popover(isPresented: $showingLanguagePicker, arrowEdge: .trailing) {
-                        languagePickerPopover
-                            .frame(width: 280, height: 300)
-                            .padding(14)
-                    }
-                }
-
-                Divider()
-
-                if customLanguages.isEmpty {
-                    Text("settings.filters.interestedLanguages.empty")
+                if languages.count > 3 {
+                    Text(verbatim: "+\((languages.count - 3).formatted(.number.locale(locale)))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    FlowTagList(tags: customLanguages, removeAction: removeLanguage)
+                        .lineLimit(1)
                 }
             }
-        } header: {
-            SettingsSectionHeader(
-                "settings.filters.interestedLanguages.section",
-                systemImage: "chevron.left.forwardslash.chevron.right"
-            )
+        }
+    }
+
+    /// 格式化显式使用应用语言，避免数量摘要与当前界面语言各走一套 locale。
+    private var selectedLanguageCountText: String {
+        languages.isEmpty
+            ? String.l10n("settings.filters.interestedLanguages.noneSelected")
+            : String(format: String.l10n("settings.filters.interestedLanguages.selectedCountFmt"),
+                     locale: locale, languages.count)
+    }
+
+    /// 复用原有候选池编辑内容；折叠不改变点选、搜索添加、移除与持久化行为。
+    private var languageEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("settings.filters.interestedLanguages.description")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            FlowLayout(spacing: 8) {
+                ForEach(presets, id: \.self) { language in
+                    languagePresetChip(language)
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    draftLanguage = ""
+                    showingLanguagePicker = true
+                } label: {
+                    addLanguageChip
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .help(Text("settings.filters.interestedLanguages.addLanguage"))
+                .onHover { isHoveringAddLanguage = $0 }
+                .popover(isPresented: $showingLanguagePicker, arrowEdge: .trailing) {
+                    languagePickerPopover
+                        .frame(width: 280, height: 300)
+                        .padding(14)
+                        .appLocaleEnvironment()
+                }
+            }
+
+            Divider()
+
+            if customLanguages.isEmpty {
+                Text("settings.filters.interestedLanguages.empty")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                FlowTagList(tags: customLanguages, removeAction: removeLanguage)
+            }
         }
     }
 
@@ -1154,18 +1239,29 @@ struct InterestedLanguagesSettingsSection: View {
         contains(language) ? .accentColor : Color(nsColor: .controlBackgroundColor)
     }
 
-    private var addLanguageIcon: some View {
-        // chip 内联添加钮：glyph 引用 `SettingsIconMetrics.smallGlyph`（13pt，与分组
-        // 图标同源），命中框保持 24×22 / 圆角 6 —— 28×28 会撑破 chip 行（规范 §9 例外）。
-        Image(systemName: "plus")
-            .font(SettingsIconMetrics.smallGlyph)
-            .foregroundStyle(Color.secondary)
-            .frame(width: 24, height: 22)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.secondary.opacity(isHoveringAddLanguage ? 0.14 : 0.10))
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    /// 与常用语言 chip 同族的「添加语言」入口：胶囊 + plus 图标 + 文案，
+    /// 让添加动作读作候选池的一部分而不是孤零零的 + 图标；
+    /// glyph 沿用 `SettingsIconMetrics.smallGlyph`（13pt）与分组图标同源。
+    private var addLanguageChip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "plus")
+                .font(SettingsIconMetrics.smallGlyph)
+            Text("settings.filters.interestedLanguages.addLanguage")
+                .font(.callout)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(addLanguageChipBackground, in: Capsule())
+        .foregroundStyle(.primary)
+        .contentShape(Capsule())
+    }
+
+    /// 静止态与未选中语言 chip 一致；hover 抬一档提示可点，深色下避免与表单卡混同。
+    private var addLanguageChipBackground: Color {
+        isHoveringAddLanguage
+            ? Color.secondary.opacity(0.14)
+            : Color(nsColor: .controlBackgroundColor)
     }
 
     private var languagePickerPopover: some View {
