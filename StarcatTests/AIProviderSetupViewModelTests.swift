@@ -2,7 +2,7 @@
 //  AIProviderSetupViewModelTests.swift
 //  StarcatTests
 //
-//  新增服务商的提交边界：失败、取消及输入变化均不能保存迟到结果。
+//  新增与编辑服务商的提交边界：失败、取消及输入变化均不能保存迟到结果。
 //  测试只注入内存验证与提交闭包，不访问网络、Keychain 或 AppSettings。
 //
 
@@ -154,6 +154,87 @@ struct AIProviderSetupViewModelTests {
         #expect(viewModel.profile.displayName == AIServiceProvider.ollama.defaultProfileName)
         #expect(viewModel.profile.baseURL == AIServiceProvider.ollama.defaultBaseURL)
         #expect(!AIServiceProvider.userSelectableCases.contains(.localAI))
+    }
+
+    @Test("编辑预填原配置、固定服务商，密钥不回显")
+    func editingKeepsProfileIdentityAndProvider() {
+        let original = Self.verified(AIProviderProfile(
+            provider: .deepSeek, displayName: "My provider", baseURL: "https://example.invalid/v1"
+        ))
+        let viewModel = AIProviderSetupViewModel(editingProfile: original, existingAPIKey: "saved-key")
+
+        #expect(viewModel.isEditing)
+        #expect(viewModel.profile == original)
+        #expect(viewModel.apiKey.isEmpty)
+        #expect(viewModel.hasExistingAPIKey)
+        #expect(viewModel.canTest)
+        viewModel.selectProvider(.ollama)
+        #expect(viewModel.profile == original)
+    }
+
+    @Test("编辑空密钥沿用原凭据，非空输入替换凭据", arguments: ["", "   ", "  new-key  "])
+    func editingVerifiesEffectiveCredential(_ input: String) async {
+        let original = Self.verified(AIProviderProfile(provider: .deepSeek))
+        let recorder = AdditionRecorder()
+        let expectedKey = input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "saved-key" : "new-key"
+        let viewModel = AIProviderSetupViewModel(
+            editingProfile: original, existingAPIKey: "saved-key"
+        ) { profile, key in
+            #expect(profile.id == original.id)
+            #expect(key == expectedKey)
+            return Self.verified(profile)
+        }
+        viewModel.displayName = "Renamed"
+        viewModel.apiKey = input
+
+        let saved = await viewModel.testAndAdd(onAdd: recorder.add)
+
+        #expect(saved)
+        #expect(recorder.profiles.first?.id == original.id)
+        #expect(recorder.profiles.first?.displayName == "Renamed")
+        #expect(recorder.apiKey == expectedKey)
+    }
+
+    @Test("编辑已有配置验证失败时不覆盖原配置")
+    func editingFailureDoesNotCommit() async {
+        let original = Self.verified(AIProviderProfile(provider: .deepSeek))
+        let recorder = AdditionRecorder()
+        let viewModel = AIProviderSetupViewModel(
+            editingProfile: original, existingAPIKey: "saved-key"
+        ) { _, _ in
+            throw SetupTestError.failed
+        }
+        viewModel.baseURL = "https://changed.invalid/v1"
+
+        let saved = await viewModel.testAndAdd(onAdd: recorder.add)
+
+        #expect(!saved)
+        #expect(recorder.profiles.isEmpty)
+        #expect(viewModel.baseURL == "https://changed.invalid/v1")
+        #expect(viewModel.profile.lastTestStatus == original.lastTestStatus)
+        #expect(viewModel.errorMessage != nil)
+        #expect(viewModel.canTest)
+    }
+
+    @Test("关闭编辑窗口后忽略迟到的验证成功")
+    func cancelledEditDoesNotCommit() async {
+        let probe = DeferredVerification()
+        let recorder = AdditionRecorder()
+        let viewModel = AIProviderSetupViewModel(
+            editingProfile: Self.verified(AIProviderProfile(provider: .deepSeek)),
+            existingAPIKey: "saved-key"
+        ) { profile, _ in
+            try await probe.verify(profile)
+        }
+        let task = Task { await viewModel.testAndAdd(onAdd: recorder.add) }
+        await probe.waitUntilStarted()
+        viewModel.cancel()
+        probe.succeed()
+
+        let saved = await task.value
+        #expect(!saved)
+        #expect(recorder.profiles.isEmpty)
     }
 
     /// 用于覆盖各种会话失效入口，而非依赖真实 URLSession 能否及时响应取消。

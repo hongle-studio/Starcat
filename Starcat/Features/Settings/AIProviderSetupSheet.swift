@@ -2,13 +2,13 @@
 //  AIProviderSetupSheet.swift
 //  Starcat
 //
-//  新增服务商的独立表单：左侧解释字段，右侧输入连接信息；未验证草稿不影响后方页面。
+//  新增与编辑服务商共用的原生表单：编辑固定服务商类型，未验证草稿不影响后方页面。
 //  本视图只组织输入和反馈，验证、保存及取消生命周期仍由原会话对象与宿主负责。
 //
 
 import SwiftUI
 
-/// 服务商新增表单。宿主提交闭包同步完成 Keychain 与配置写入，失败时保留弹窗和输入。
+/// 服务商配置表单。宿主同步提交 Keychain 与配置，失败时保留弹窗和输入。
 @MainActor
 struct AIProviderSetupSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -37,10 +37,20 @@ struct AIProviderSetupSheet: View {
                         "settings.ai.provider.setup.provider.title",
                         description: "settings.ai.provider.setup.provider.description"
                     ) {
-                        providerPicker
-                            // 菜单保持内容宽度，仅这一行的选择控件靠右排列。
-                            .fixedSize(horizontal: true, vertical: false)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Group {
+                            if viewModel.isEditing {
+                                // 编辑固定原服务商类型，不允许套用另一协议覆盖原配置。
+                                Label {
+                                    Text(viewModel.profile.provider.displayName)
+                                } icon: {
+                                    AIProviderIconView(provider: viewModel.profile.provider, size: 14)
+                                }
+                            } else {
+                                providerPicker
+                            }
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                     fieldRow(
                         "settings.ai.provider.displayName",
@@ -60,17 +70,14 @@ struct AIProviderSetupSheet: View {
                             .focused($focusedField, equals: .baseURL)
                             .accessibilityLabel("Base URL")
                     }
-                    fieldRow(
-                        "API Key",
-                        description: viewModel.profile.provider.allowsEmptyAPIKey
-                            ? "settings.ai.provider.setup.optionalAPIKey"
-                            : "settings.ai.provider.setup.apiKey.description"
-                    ) {
-                        apiKeyInput
+                    if viewModel.profile.provider != .ollama {
+                        fieldRow("API Key", description: apiKeyDescription) {
+                            apiKeyInput
+                        }
                     }
                 }
             }
-            // 此独立 sheet 只有四项固定输入，使用系统不滚动的 columns 表单例外；
+            // 此独立 sheet 最多四项固定输入，使用系统不滚动的 columns 表单例外；
             // grouped 适合可滚动的设置页，固定其高度会在此造成裁切或大片留白。
             .formStyle(.columns)
             .controlSize(.regular)
@@ -120,20 +127,38 @@ struct AIProviderSetupSheet: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("settings.ai.provider.setup.title")
+                Text(titleKey)
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                    .help(Text("settings.ai.provider.setup.title"))
+                    .help(Text(titleKey))
                 Spacer(minLength: 8)
                 SheetCloseButton(action: close)
             }
-            Text("settings.ai.provider.setup.subtitle")
+            Text(subtitleKey)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
-                .help(Text("settings.ai.provider.setup.subtitle"))
+                .help(Text(subtitleKey))
         }
+    }
+
+    private var titleKey: LocalizedStringKey {
+        viewModel.isEditing ? "settings.ai.provider.edit.title" : "settings.ai.provider.setup.title"
+    }
+
+    private var subtitleKey: LocalizedStringKey {
+        viewModel.isEditing ? "settings.ai.provider.edit.subtitle" : "settings.ai.provider.setup.subtitle"
+    }
+
+    private var submitKey: LocalizedStringKey {
+        viewModel.isEditing ? "settings.ai.provider.edit.testAndSave" : "settings.ai.provider.setup.testAndAdd"
+    }
+
+    private var apiKeyDescription: LocalizedStringKey {
+        if viewModel.hasExistingAPIKey { return "settings.ai.provider.edit.keepAPIKey" }
+        return viewModel.profile.provider.allowsEmptyAPIKey
+            ? "settings.ai.provider.setup.optionalAPIKey" : "settings.ai.provider.setup.apiKey.description"
     }
 
     /// 系统菜单负责控件尺寸与唯一的下拉指示器，类型切换仍交给原草稿会话处理。
@@ -162,9 +187,9 @@ struct AIProviderSetupSheet: View {
         HStack(spacing: 8) {
             Group {
                 if isAPIKeyVisible {
-                    TextField("API Key", text: $viewModel.apiKey)
+                    TextField(apiKeyPlaceholder, text: $viewModel.apiKey)
                 } else {
-                    SecureField("API Key", text: $viewModel.apiKey)
+                    SecureField(apiKeyPlaceholder, text: $viewModel.apiKey)
                 }
             }
             .textFieldStyle(.roundedBorder)
@@ -180,6 +205,10 @@ struct AIProviderSetupSheet: View {
                 focusedField = .apiKey
             }
         }
+    }
+
+    private var apiKeyPlaceholder: LocalizedStringKey {
+        viewModel.hasExistingAPIKey ? "settings.ai.provider.edit.keepAPIKey" : "API Key"
     }
 
     /// 示例收为原生图标菜单，为长译文保留空间；取消与提交右对齐且测试时宽度不变。
@@ -216,7 +245,7 @@ struct AIProviderSetupSheet: View {
                 }
             } label: {
                 ZStack {
-                    Label("settings.ai.provider.setup.testAndAdd", systemImage: "network")
+                    Label(submitKey, systemImage: "network")
                         .hidden()
                         .accessibilityHidden(true)
                     HStack(spacing: 6) {
@@ -231,7 +260,7 @@ struct AIProviderSetupSheet: View {
                             ProgressView().controlSize(.small)
                             Text("settings.ai.provider.setup.testing")
                         } else {
-                            Label("settings.ai.provider.setup.testAndAdd", systemImage: "network")
+                            Label(submitKey, systemImage: "network")
                         }
                     }
                 }
@@ -245,7 +274,7 @@ struct AIProviderSetupSheet: View {
         }
     }
 
-    /// 系统双列表单统一对齐标签和值，并按四行的实际高度撑开；说明只通过提示展示。
+    /// 系统双列表单统一对齐标签和值，并按可见输入的实际高度撑开；说明通过提示展示。
     private func fieldRow<Field: View>(
         _ label: LocalizedStringKey,
         description: LocalizedStringKey,

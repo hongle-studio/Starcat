@@ -90,11 +90,11 @@ struct TranslationSettingsTab: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("settings.translation.title")
+                    Text("settings.navigation.item.translation")
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                        .help(Text("settings.translation.title"))
+                        .help(Text("settings.navigation.item.translation"))
                     Text("settings.translation.introduction.description")
                         .font(.caption)
                         .foregroundStyle(.secondary)

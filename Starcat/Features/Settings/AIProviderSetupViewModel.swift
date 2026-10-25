@@ -2,14 +2,14 @@
 //  AIProviderSetupViewModel.swift
 //  Starcat
 //
-//  新增服务商弹窗的独立草稿与验证生命周期。敏感输入只留在内存；验证完成不代表
+//  新增与编辑服务商共用的独立草稿和验证生命周期。敏感输入只留在内存；验证完成不代表
 //  允许保存，还必须确认弹窗、输入快照与任务均未失效，防止取消后迟到结果写入配置。
 //
 
 import Foundation
 import Observation
 
-/// 管理一次新增会话；持久化由同步提交回调完成，模型本身不接触 Keychain 或全局设置。
+/// 管理一次配置会话；持久化由同步提交回调完成，模型本身不接触 Keychain 或全局设置。
 @MainActor
 @Observable
 final class AIProviderSetupViewModel: Identifiable {
@@ -17,10 +17,13 @@ final class AIProviderSetupViewModel: Identifiable {
     typealias Addition = @MainActor (AIProviderProfile, String) throws -> Void
 
     let id = UUID()
+    let isEditing: Bool
     private(set) var profile: AIProviderProfile
     private(set) var isTesting = false
     private(set) var errorMessage: String?
     private var apiKeyValue = ""
+    /// 编辑时密钥只用于验证，不回填到输入框；空输入沿用原凭据。
+    @ObservationIgnored private let existingAPIKey: String
 
     @ObservationIgnored private let verify: Verification
     @ObservationIgnored private var testingTask: Task<Bool, Never>?
@@ -30,13 +33,17 @@ final class AIProviderSetupViewModel: Identifiable {
     /// 验证闭包可注入，使取消和失败路径的测试不需要网络或真实凭据。
     init(
         provider: AIServiceProvider = .openAICompatible,
+        editingProfile: AIProviderProfile? = nil,
+        existingAPIKey: String = "",
         verify: @escaping Verification = { profile, apiKey in
             try await AIProviderConnectionVerifier.verify(profile: profile, apiKey: apiKey)
         }
     ) {
         let selectableProvider = AIServiceProvider.userSelectableCases.contains(provider)
             ? provider : .openAICompatible
-        profile = AIProviderProfile(provider: selectableProvider, isEnabled: false)
+        profile = editingProfile ?? AIProviderProfile(provider: selectableProvider, isEnabled: false)
+        isEditing = editingProfile != nil
+        self.existingAPIKey = editingProfile == nil ? "" : existingAPIKey
         self.verify = verify
     }
 
@@ -71,12 +78,22 @@ final class AIProviderSetupViewModel: Identifiable {
         isActive && !isTesting
             && !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (profile.provider.allowsEmptyAPIKey
-                || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                || !effectiveAPIKey.isEmpty)
+    }
+
+    var hasExistingAPIKey: Bool {
+        !existingAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var effectiveAPIKey: String {
+        let entered = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        return entered.isEmpty && isEditing
+            ? existingAPIKey.trimmingCharacters(in: .whitespacesAndNewlines) : entered
     }
 
     /// 切换类型会恢复该服务商的默认配置；内置 Local AI 不能在此重复创建。
     func selectProvider(_ provider: AIServiceProvider) {
-        guard provider != profile.provider,
+        guard !isEditing, provider != profile.provider,
               AIServiceProvider.userSelectableCases.contains(provider) else { return }
         invalidateAttempt()
         profile = AIProviderProfile(provider: provider, isEnabled: false)
@@ -88,7 +105,7 @@ final class AIProviderSetupViewModel: Identifiable {
         guard canTest, !Task.isCancelled else { return false }
         let id = UUID()
         let snapshot = profile
-        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = effectiveAPIKey
         attemptID = id
         isTesting = true
         errorMessage = nil

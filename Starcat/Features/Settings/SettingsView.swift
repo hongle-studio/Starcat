@@ -142,10 +142,10 @@ struct SettingsView: View {
             case .pro:          return "settings.navigation.item.proLicense"
             case .privacy:      return "settings.navigation.item.privacyPermissions"
             case .aiModels:     return "settings.models.title"
-            case .translation:  return "settings.translation.title"
-            case .aiAutomation: return "settings.navigation.item.aiAutomation"
-            case .aiIndexContext: return "settings.navigation.item.aiIndexContext"
-            case .externalSearch: return "settings.navigation.item.externalSearch"
+            case .translation:  return "settings.navigation.item.translation"
+            case .aiAutomation: return "settings.automation.title"
+            case .aiIndexContext: return "settings.navigation.item.searchIndex"
+            case .externalSearch: return "settings.navigation.item.webSearch"
             case .mcp:          return "settings.mcp.title"
             case .services:     return "settings.navigation.item.customServices"
             case .browserExtensions: return "settings.navigation.item.browserExtensions"
@@ -342,6 +342,10 @@ struct SettingsView: View {
                 settingsSidebarRow(.aiModels)
                 settingsSidebarRow(.translation)
                 settingsSidebarRow(.aiAutomation)
+            }
+
+            // 仅按职责拆分侧栏分组，保留 tab 身份，确保深链、搜索和导航历史仍定位原页面。
+            Section("settings.navigation.group.retrieval") {
                 settingsSidebarRow(.aiIndexContext)
                 settingsSidebarRow(.externalSearch)
             }
@@ -410,6 +414,8 @@ struct SettingsView: View {
     private func settingsSidebarRow(_ tab: SettingsTab) -> some View {
         Label {
             Text(tab.titleKey)
+                .lineLimit(1)
+                .help(Text(tab.titleKey))
         } icon: {
             // SF 与资产共用原生 Label 图标列；换图不能改变导航行的宽高。
             BusinessIcon(tab.businessIcon, pointSize: tab.businessIcon.isAsset ? 16 : 13)
@@ -500,15 +506,15 @@ struct SettingsView: View {
                                keywords: ["提示词", "prompt", "system", "user"]),
             SettingsSearchItem("ai.embedding", titleKey: "settings.ai.taskModels.title", tab: .aiModels, target: "ai.embedding",
                                keywords: ["向量模型", "向量化模型", "embedding", "model"]),
-            SettingsSearchItem("ai.automation", titleKey: "settings.navigation.item.aiAutomation", tab: .aiAutomation,
+            SettingsSearchItem("ai.automation", titleKey: "settings.automation.title", tab: .aiAutomation,
                                keywords: ["自动整理", "仓库分组", "github lists", "automation"]),
-            SettingsSearchItem("ai.indexContext", titleKey: "settings.navigation.item.aiIndexContext", tab: .aiIndexContext,
+            SettingsSearchItem("ai.indexContext", titleKey: "settings.navigation.item.searchIndex", tab: .aiIndexContext,
                                keywords: ["全文索引", "代码上下文", "索引", "上下文", "index", "context"]),
             SettingsSearchItem("ai.index", titleKey: "settings.aiIndex.section", tab: .aiIndexContext, target: "ai.index",
                                keywords: ["向量", "向量化", "索引", "embedding", "vector"]),
             SettingsSearchItem("ai.repoContext", titleKey: "ai.context.settings.title", tab: .aiIndexContext, target: "ai.repoContext",
                                keywords: ["代码上下文", "仓库上下文", "context", "token"]),
-            SettingsSearchItem("ai.externalSearch", titleKey: "settings.navigation.item.externalSearch",
+            SettingsSearchItem("ai.externalSearch", titleKey: "settings.navigation.item.webSearch",
                                tab: .externalSearch, target: "ai.externalSearch",
                                keywords: ["外部搜索", "anysearch", "search api"]),
             SettingsSearchItem("mcp", titleKey: "settings.mcp.title", tab: .mcp,

@@ -2,7 +2,7 @@
 //  ExternalSearchSettingsSection.swift
 //  Starcat
 //
-//  设置 → AI → 搜索与上下文：联网搜索配置。
+//  设置 → 检索 → 联网搜索：搜索服务配置。
 //
 //  模块级说明：
 //  - 本视图从原“集成”页拆出联网搜索开关、Provider 与凭据测试。
@@ -83,7 +83,7 @@ struct ExternalSearchSettingsSection: View {
                 externalSearchProviderList
             } header: {
                 SettingsSectionHeader(
-                    "settings.navigation.item.externalSearch",
+                    "settings.navigation.item.webSearch",
                     systemImage: "globe"
                 )
             }
