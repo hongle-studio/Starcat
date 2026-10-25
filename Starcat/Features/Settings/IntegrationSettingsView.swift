@@ -2,20 +2,21 @@
 //  IntegrationSettingsView.swift
 //  Starcat
 //
-//  设置页 → 扩展与开发：分别承载浏览器扩展与本地开发工具。
+//  设置页 → 扩展与连接：分别承载浏览器扩展与代码、本地工具。
 //  自建后端 URL/API Key 仍归「自定义服务」，避免不同配置目的混在同一页面。
 //
 
 import AppKit
 import SwiftUI
 
-/// 扩展与开发组的二级页面。拆页只调整信息架构，不改变任何配置的持久化位置。
+/// 扩展与连接组的二级页面。拆页只调整信息架构，不改变任何配置的持久化位置。
 enum IntegrationSettingsPage: Hashable {
     case browserExtensions
     case localTools
 }
 
 struct IntegrationSettingsTab: View {
+    private static let repoContextAnchor = "settings.ai.repoContext"
     private static let agentRuntimeAnchor = "settings.integrations.agentRuntime"
     private static let localAPIKeyAnchor = "settings.integrations.localAPIKey"
     private static let browserPluginAnchor = "settings.integrations.browserPlugin"
@@ -36,16 +37,15 @@ struct IntegrationSettingsTab: View {
     @State private var pluginPortDraft = ""
     @State private var localAPIKeyStore = StarcatLocalAPIKeyStore.shared
     @State private var isLocalAPIKeyRevealed = false
-    @State private var isHoveringCopyLocalAPIKey = false
     @State private var isHoveringCopyPluginEndpoint = false
-    @State private var isHoveringRotateLocalAPIKey = false
-    @State private var isHoveringChromePlugin = false
-    @State private var isHoveringSafariPlugin = false
+    @State private var isPluginPortExpanded = false
+    @State private var isConfirmingLocalAPIKeyRotation = false
+    @State private var browserSetupGuide: BrowserExtensionSetupGuide.Browser?
     // HOM-68 v3 (2026-06-15)：CodeFlow"一键清除"按钮搬到 存储 Tab → 缓存用量。
     // 本 Tab 仅保留"精细化操作"（输出目录配置、单项目预览/打开/删除）。
-    // → 与 AISettingsView.repoContextManageStorageRow 同款职责划分。
+    // → 与 RepoContextSettingsSection 的产物管理同款职责划分。
     //
-    // HOM-203（2026-06-16）：与 AISettingsView 同款改造，移除项目明细列表 +
+    // HOM-203（2026-06-16）：与代码上下文同款改造，移除项目明细列表 +
     // per-project 预览/打开/删除按钮——大数据量下 ForEach 渲染会卡顿，且"全部
     // 清除"在存储 Tab 已有入口。汇总 4 项数据切到 `summary` 缓存。
 
@@ -56,6 +56,27 @@ struct IntegrationSettingsTab: View {
     var body: some View {
         ScrollViewReader { proxy in
             Form {
+                if page == .browserExtensions {
+                    SettingsPageIntroduction(
+                        title: "settings.navigation.item.browserExtensions",
+                        systemImage: BusinessIcon.Symbol.browserExtensions.rawValue,
+                        description: "settings.integration.browser.introduction.description",
+                        context: "settings.integration.browser.introduction.context"
+                    )
+                } else {
+                    SettingsPageIntroduction(
+                        title: "settings.navigation.item.codeAndLocalTools",
+                        systemImage: BusinessIcon.Symbol.codeContext.rawValue,
+                        description: "settings.integration.tools.introduction.description",
+                        context: "settings.integration.tools.introduction.context"
+                    )
+                }
+
+                if page == .localTools {
+                    RepoContextSettingsSection()
+                        .id(Self.repoContextAnchor)
+                }
+
                 if page == .localTools,
                    DistributionGate().isAvailable(.externalAgentRuntime) {
                     Section {
@@ -70,10 +91,11 @@ struct IntegrationSettingsTab: View {
                 }
 
                 if page == .browserExtensions {
-                    localAPIKeySection
-                        .id(Self.localAPIKeyAnchor)
                     browserPluginSection
                         .id(Self.browserPluginAnchor)
+                    localAPIKeySection
+                        .id(Self.localAPIKeyAnchor)
+                    browserInstallationSection
                 }
 
                 if page == .localTools {
@@ -231,6 +253,13 @@ struct IntegrationSettingsTab: View {
                     CompanionServiceBootstrapper.apply(configuration: pluginConfiguration)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIRepoContextSection)) { _ in
+                guard page == .localTools else { return }
+                // 页面切换后等待 Form 完成布局，再定位迁入的配置分组。
+                DispatchQueue.main.async {
+                    proxy.scrollTo(Self.repoContextAnchor, anchor: .top)
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToSettingsTab)) { note in
                 let anchor: String
                 switch note.object as? String {
@@ -260,39 +289,43 @@ struct IntegrationSettingsTab: View {
         } message: {
             Text(actionError ?? String.l10n("common.unknownError"))
         }
+        .confirmationDialog(
+            "settings.integration.browser.key.confirmTitle",
+            isPresented: $isConfirmingLocalAPIKeyRotation,
+            titleVisibility: .visible
+        ) {
+            Button("settings.integration.browser.key.confirmAction", role: .destructive) {
+                rotateLocalAPIKey()
+            }
+            Button("common.cancel", role: .cancel) {}
+        } message: {
+            Text("settings.integration.browser.key.confirmMessage")
+        }
+        .sheet(item: $browserSetupGuide) { browser in
+            BrowserExtensionSetupGuide(browser: browser)
+                .appLocaleEnvironment()
+        }
     }
 
     private var localAPIKeySection: some View {
         Section {
-            Text("settings.integration.localAPIKey.subtitle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             HStack(alignment: .center, spacing: 10) {
-                Text("settings.integration.localAPIKey.value")
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .frame(width: 88, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.integration.browser.key.shared")
+                        .foregroundStyle(.primary)
+                    Text("settings.integration.browser.key.help")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
                 Text(verbatim: displayedLocalAPIKey)
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer()
-                CopyFeedbackButton(
-                    providesContent: { localAPIKeyStore.apiKey },
-                    tooltip: "settings.integration.localAPIKey.copy"
-                ) { didCopy in
-                    tokenActionIcon(
-                        systemImage: didCopy ? "checkmark.circle.fill" : "doc.on.doc",
-                        foregroundStyle: didCopy ? Color.green : Color.secondary,
-                        isHovering: isHoveringCopyLocalAPIKey
-                    )
-                    .contentTransition(.symbolEffect(.replace))
-                }
-                .onHover { isHoveringCopyLocalAPIKey = $0 }
+                    .layoutPriority(-1)
 
                 tokenActionButton(
                     systemImage: isLocalAPIKeyRevealed ? "eye.slash" : "eye",
@@ -303,22 +336,36 @@ struct IntegrationSettingsTab: View {
                 ) {
                     isLocalAPIKeyRevealed.toggle()
                 }
-
-                tokenActionButton(
-                    systemImage: "arrow.clockwise",
-                    titleKey: "settings.integration.localAPIKey.rotate",
-                    isHovering: isHoveringRotateLocalAPIKey
-                ) {
-                    rotateLocalAPIKey()
-                }
-                .onHover { isHoveringRotateLocalAPIKey = $0 }
             }
 
-            Text("settings.integration.localAPIKey.authorization")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .center, spacing: 12) {
+                Text("settings.integration.localAPIKey.authorization")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                CopyFeedbackButton(
+                    providesContent: { localAPIKeyStore.apiKey },
+                    tooltip: "settings.integration.localAPIKey.copy",
+                    style: .bordered
+                ) { didCopy in
+                    Label(
+                        LocalizedStringKey(
+                            didCopy ? "settings.integration.browserPlugin.tokenCopied" : "settings.integration.browser.copy"
+                        ),
+                        systemImage: didCopy ? "checkmark.circle.fill" : "doc.on.doc"
+                    )
+                    .foregroundStyle(didCopy ? Color.green : Color.primary)
+                }
+                .fixedSize()
+                Button("settings.integration.browser.key.regenerate") {
+                    isConfirmingLocalAPIKeyRotation = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .fixedSize()
+            }
         } header: {
             SettingsSectionHeader(
                 "settings.integration.localAPIKey.title",
@@ -329,12 +376,8 @@ struct IntegrationSettingsTab: View {
 
     private var browserPluginSection: some View {
         Section {
-            Text("settings.integration.browserPlugin.subtitle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             Toggle(
-                "settings.integration.browserPlugin.enabled",
+                "settings.integration.browser.connection.enabled",
                 isOn: Binding(
                     get: { pluginConfiguration.isEnabled },
                     set: { isEnabled in
@@ -343,6 +386,7 @@ struct IntegrationSettingsTab: View {
                     }
                 )
             )
+            .toggleStyle(.switch)
 
             // 拆成 Section 直接子视图，让 Form 自动画行分隔线（别捆在一个 VStack 里）。
             pluginInfoRow(
@@ -350,77 +394,79 @@ struct IntegrationSettingsTab: View {
                 value: pluginStatusText,
                 valueColor: pluginStatusColor
             )
-            BrowserPluginPortEditorRow(portDraft: $pluginPortDraft) {
-                savePluginPortAndStart()
-            }
             pluginEndpointRow
-            localAPIKeyReferenceRow
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    browserPluginRepositoryLink(
-                        assetName: "chrome",
-                        titleKey: "settings.integration.browserPlugin.chromeRepository",
-                        isHovering: isHoveringChromePlugin,
-                        destination: BrowserPluginRepositoryLinks.chrome
-                    )
-                    .onHover { isHoveringChromePlugin = $0 }
-                    browserPluginRepositoryLink(
-                        assetName: "safari",
-                        titleKey: "settings.integration.browserPlugin.safariRepository",
-                        isHovering: isHoveringSafariPlugin,
-                        destination: BrowserPluginRepositoryLinks.safari
-                    )
-                    .onHover { isHoveringSafariPlugin = $0 }
+            DisclosureGroup(isExpanded: $isPluginPortExpanded) {
+                BrowserPluginPortEditorRow(portDraft: $pluginPortDraft) {
+                    savePluginPortAndStart()
                 }
             } label: {
-                Text("settings.integration.browserPlugin.header")
+                HStack {
+                    Text("settings.integration.browser.connection.port")
+                    Spacer(minLength: 12)
+                    Text(verbatim: String(pluginConfiguration.port))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
-
-            Text("settings.integration.browserPlugin.description")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .disclosureGroupStyle(SettingsDisclosureGroupStyle(
+                accessibilityLabel: Text("settings.integration.browser.connection.port")
+            ))
         } header: {
             SettingsSectionHeader(
-                "settings.integration.browserPlugin.title",
-                systemImage: "puzzlepiece.extension"
+                "settings.integration.browser.connection.title",
+                systemImage: "macwindow"
             )
         }
     }
 
-    private enum BrowserPluginRepositoryLinks {
-        // 两个插件源码独立开源，设置页跳公开仓库；不指向本机 supports 目录。
-        static let chrome = URL(string: "https://github.com/starcat-app/starcat-chrome-plugin")!
-        static let safari = URL(string: "https://github.com/starcat-app/starcat-safari-plugin")!
-    }
+    /// 安装指引只展示步骤并跳转公开仓库，不下载、安装或更改浏览器权限。
+    private var browserInstallationSection: some View {
+        Section {
+            ForEach(BrowserExtensionSetupGuide.Browser.allCases) { browser in
+                LabeledContent {
+                    Button("settings.integration.browser.install.guide") {
+                        browserSetupGuide = browser
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .fixedSize()
+                } label: {
+                    Label {
+                        Text(browser.titleKey)
+                    } icon: {
+                        Image(browser.rawValue)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 20, height: 20)
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
 
-    private func browserPluginRepositoryLink(
-        assetName: String,
-        titleKey: LocalizedStringKey,
-        isHovering: Bool,
-        destination: URL
-    ) -> some View {
-        Link(destination: destination) {
-            browserPluginRepositoryIcon(assetName: assetName, isHovering: isHovering)
-        }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .help(Text(titleKey))
-        .accessibilityLabel(Text(titleKey))
-    }
-
-    private func browserPluginRepositoryIcon(assetName: String, isHovering: Bool) -> some View {
-        Image(assetName)
-            .resizable()
-            .interpolation(.high)
-            .scaledToFit()
-            .frame(width: 18, height: 18)
-            .frame(width: 36, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.secondary.opacity(isHovering ? 0.14 : 0.10))
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.integration.browser.install.mcp")
+                        .foregroundStyle(.primary)
+                    Text("settings.integration.browser.install.mcpHelp")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Button("settings.integration.browser.install.openMCP") {
+                    NotificationCenter.default.post(name: .starcatJumpToSettingsTab, object: "mcp")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .fixedSize()
+            }
+        } header: {
+            SettingsSectionHeader(
+                "settings.integration.browser.install.title",
+                systemImage: "powerplug"
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
     }
 
     private var maskedPluginToken: String {
@@ -464,17 +510,18 @@ struct IntegrationSettingsTab: View {
 
     private var pluginEndpointRow: some View {
         HStack(alignment: .center, spacing: 10) {
-            Text("settings.integration.browserPlugin.endpoint")
+            Text("settings.integration.browser.connection.endpoint")
                 .font(.body)
                 .foregroundStyle(.primary)
-                .frame(width: 88, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
             Text(verbatim: pluginEndpoint)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer()
+                .help(Text(verbatim: pluginEndpoint))
             CopyFeedbackButton(
                 providesContent: { pluginEndpoint },
                 tooltip: "settings.integration.browserPlugin.copyEndpoint"
@@ -495,41 +542,18 @@ struct IntegrationSettingsTab: View {
         isMonospacedValue: Bool = false,
         valueColor: Color = .primary
     ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             Text(titleKey)
                 .font(.body)
                 .foregroundStyle(.primary)
-                .frame(width: 88, alignment: .leading)
+            Spacer(minLength: 12)
             Text(verbatim: value)
                 .font(isMonospacedValue ? .system(.body, design: .monospaced) : .body)
                 .foregroundStyle(valueColor)
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer()
-        }
-    }
-
-    private var localAPIKeyReferenceRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("settings.integration.browserPlugin.apiKey")
-                .font(.body)
-                .foregroundStyle(.primary)
-                .frame(width: 88, alignment: .leading)
-            Text("settings.integration.browserPlugin.apiKey.description")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button("settings.integration.localAPIKey.open") {
-                NotificationCenter.default.post(
-                    name: .starcatJumpToSettingsTab,
-                    object: "integrations.localAPIKey"
-                )
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .focusEffectDisabled()
+                .help(Text(verbatim: value))
         }
     }
 
@@ -785,12 +809,6 @@ private struct BrowserPluginPortEditorRow: View {
                     .onSubmit {
                         if validation.isCommittable { onSaveAndStart() }
                     }
-
-                Button("settings.integration.browserPlugin.port.saveAndStart", action: onSaveAndStart)
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .focusEffectDisabled()
-                    .disabled(!validation.isCommittable)
             }
 
             if let errorKey = validation.errorHintKey {
@@ -803,6 +821,18 @@ private struct BrowserPluginPortEditorRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(alignment: .center, spacing: 12) {
+                Text("settings.integration.browser.connection.portDraftHelp")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("settings.integration.browserPlugin.port.saveAndStart", action: onSaveAndStart)
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(!validation.isCommittable)
             }
         }
         .onAppear {

@@ -21,7 +21,7 @@ struct ScreensaverSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // 固定三个图标入口，翻译长度只影响说明区，不再把整个操作组挤到下一行。
+            // 固定三个图标入口，翻译长度只影响标题区，不再把整个操作组挤到下一行。
             HStack(spacing: 16) {
                 overview
                 actionButtons
@@ -71,18 +71,10 @@ struct ScreensaverSettingsSection: View {
                 .frame(width: 64, height: 64)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("settings.general.screensaver.title")
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text("settings.general.screensaver.summary")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .help(Text("settings.general.screensaver.summary"))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("settings.general.screensaver.title")
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityElement(children: .combine)
         .accessibilityValue(Text(statusText))

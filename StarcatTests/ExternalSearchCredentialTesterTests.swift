@@ -12,8 +12,10 @@ import Testing
 @Suite("ExternalSearchCredentialTester")
 @MainActor
 struct ExternalSearchCredentialTesterTests {
-    @Test("成功时使用固定 credentialTest 请求并保存启用 Provider")
-    func successSavesVerifiedKeyAndEnablesProvider() async throws {
+    // 五家服务商共用启用引导，认证模式必须全部遵守“先验证、后保存并启用”。
+    @Test("成功时使用固定 credentialTest 请求并保存启用 Provider",
+          arguments: ExternalSearchProviderID.allCases)
+    func successSavesVerifiedKeyAndEnablesProvider(providerID: ExternalSearchProviderID) async throws {
         let settings = makeSettings()
         let recorder = CredentialTestRecorder()
         let tester = ExternalSearchCredentialTester(
@@ -23,7 +25,7 @@ struct ExternalSearchCredentialTesterTests {
             }
         )
 
-        let outcome = await tester.test(provider: .exa, candidateKey: " exa-key ")
+        let outcome = await tester.test(provider: providerID, candidateKey: " test-key ")
 
         #expect(outcome == .succeeded)
         #expect(recorder.requests == [ExternalSearchRequest(
@@ -31,16 +33,20 @@ struct ExternalSearchCredentialTesterTests {
             purpose: .credentialTest,
             maxResults: ExternalSearchCredentialTester.testMaxResults
         )])
-        #expect(settings.externalSearchAPIKey(for: .exa) == "exa-key")
-        #expect(settings.externalSearchSettings(for: .exa).hasVerifiedCredential)
-        #expect(settings.externalSearchSettings(for: .exa).isEnabled)
+        #expect(settings.externalSearchAPIKey(for: providerID) == "test-key")
+        #expect(settings.externalSearchSettings(for: providerID).hasVerifiedCredential)
+        #expect(settings.externalSearchSettings(for: providerID).isEnabled)
     }
 
-    @Test("失败时不保存候选 Key 且错误详情脱敏")
-    func failureDoesNotSaveCandidateKeyAndRedactsDetails() async throws {
+    @Test("失败时不保存候选 Key 且错误详情脱敏",
+          arguments: ExternalSearchProviderID.allCases)
+    func failureDoesNotSaveCandidateKeyAndRedactsDetails(providerID: ExternalSearchProviderID) async throws {
         let settings = makeSettings()
-        settings.setExternalSearchAPIKey("old-key", for: .tavily)
-        settings.markExternalSearchCredentialVerified(for: .tavily)
+        settings.setExternalSearchAPIKey("old-key", for: providerID)
+        settings.markExternalSearchCredentialVerified(for: providerID)
+        var providerSettings = settings.externalSearchSettings(for: providerID)
+        providerSettings.isEnabled = false
+        settings.setExternalSearchSettings(providerSettings, for: providerID)
         let tester = ExternalSearchCredentialTester(
             settings: settings,
             providerFactory: { providerID, _, _ in
@@ -55,15 +61,16 @@ struct ExternalSearchCredentialTesterTests {
             }
         )
 
-        let outcome = await tester.test(provider: .tavily, candidateKey: "new-secret-key")
+        let outcome = await tester.test(provider: providerID, candidateKey: "new-secret-key")
 
         guard case .failed(let failure) = outcome else {
             Issue.record("Expected failed outcome")
             return
         }
-        #expect(settings.externalSearchAPIKey(for: .tavily) == "old-key")
-        #expect(!settings.externalSearchSettings(for: .tavily).hasVerifiedCredential)
-        #expect(failure.friendlyMessage == ExternalSearchError.invalidCredential(provider: .tavily, statusCode: 401, message: nil).friendlyMessage)
+        #expect(settings.externalSearchAPIKey(for: providerID) == "old-key")
+        #expect(!settings.externalSearchSettings(for: providerID).hasVerifiedCredential)
+        #expect(!settings.externalSearchSettings(for: providerID).isEnabled)
+        #expect(failure.friendlyMessage == ExternalSearchError.invalidCredential(provider: providerID, statusCode: 401, message: nil).friendlyMessage)
         #expect(failure.technicalDetails?.contains("httpStatus=401") == true)
         #expect(failure.technicalDetails?.contains("who is dong4j") == false)
         #expect(failure.technicalDetails?.contains("new-secret-key") == false)

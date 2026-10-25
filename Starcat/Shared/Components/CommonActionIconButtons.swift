@@ -261,20 +261,23 @@ struct CancelIconButton: View {
 /// icon-only「从外部配置导入」入口。
 ///
 /// 与 `AddIconButton` 同用设置页 15pt glyph + 28pt 命中区；导入不是草稿新增，
-/// 语义用 `square.and.arrow.down`，避免和 `plus` 抢「唯一新增入口」的注释约定。
+/// 默认用 `square.and.arrow.down`；指定来源时保留官方图标原色，便于识别导入对象。
 struct ImportIconButton: View {
     let help: Text
+    let image: Image?
     let action: () -> Void
     var font: Font = SettingsIconMetrics.standardGlyph
     var frameSize: CGFloat = SettingsIconMetrics.actionFrameSize
 
     init(
         help: Text,
+        image: Image? = nil,
         font: Font = SettingsIconMetrics.standardGlyph,
         frameSize: CGFloat = SettingsIconMetrics.actionFrameSize,
         action: @escaping () -> Void
     ) {
         self.help = help
+        self.image = image
         self.action = action
         self.font = font
         self.frameSize = frameSize
@@ -282,11 +285,21 @@ struct ImportIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "square.and.arrow.down")
-                .font(font)
-                .foregroundStyle(.secondary)
-                .frame(width: frameSize, height: frameSize)
-                .contentShape(Rectangle())
+            Group {
+                if let image {
+                    image
+                        .resizable()
+                        .renderingMode(.original)
+                        .scaledToFit()
+                        .frame(width: SettingsIconMetrics.standardGlyphSize, height: SettingsIconMetrics.standardGlyphSize)
+                } else {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(font)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: frameSize, height: frameSize)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()

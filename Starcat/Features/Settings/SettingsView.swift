@@ -37,7 +37,7 @@ extension Notification.Name {
     /// 跨 Settings 分类跳转。字符串保留旧入口兼容；新页面由 `settingsLocation(for:)`
     /// 统一映射，发起方不需要依赖私有的 `SettingsTab`。
     static let starcatJumpToSettingsTab: Notification.Name = .init("starcat.settings.jumpToTab")
-    /// SettingsView 切到 AI Tab 并完成一轮布局后，再通知 AISettingsView 展开并定位。
+    /// SettingsView 切到代码与本地工具后，通知对应页面定位代码上下文。
     static let starcatJumpToAIRepoContextSection: Notification.Name = .init(
         "starcat.settings.jumpToAIRepoContextSection"
     )
@@ -48,6 +48,10 @@ extension Notification.Name {
     /// 搜索入口直达「搜索与上下文 → AI 索引」，避免先落到联网搜索再让用户查找。
     static let starcatJumpToAIIndexSection: Notification.Name = .init(
         "starcat.settings.jumpToAIIndexSection"
+    )
+    /// 检索页与向量模型页共用的知识库索引管理定位事件。
+    static let starcatJumpToKnowledgeIndexSection: Notification.Name = .init(
+        "starcat.settings.jumpToKnowledgeIndexSection"
     )
     /// 工作台入口缺少有效模型时，直达「模型配置 → 对话」。
     static let starcatJumpToAIChatModelSection: Notification.Name = .init(
@@ -65,6 +69,8 @@ struct SettingsView: View {
     @State private var forwardHistory: [SettingsLocation] = []
     @State private var settingsSearchText = ""
     @State private var isRedispatchingSettingsJump = false
+    /// 提示词归入推理页；由导航层持有展示状态，首次深链不依赖子视图接收通知的时机。
+    @State private var isRAGPromptEditorPresented = false
     @State private var hasMarkedFirstFrame = false
     /// 权限弹框仅解释现有授权请求，不触发登录或重新授权。
     @State private var isShowingGitHubPermissions = false
@@ -111,7 +117,7 @@ struct SettingsView: View {
         case translation
         /// 消费模型配置的后台能力：自动整理与 GitHub Lists 自动分组。
         case aiAutomation
-        /// 全文索引与代码上下文共享同一条本地 AI 数据准备链路。
+        /// 本地语义索引与知识库索引统一在搜索与索引配置。
         case aiIndexContext
         /// 外部搜索独立配置，不与本地索引和代码上下文混在同一页。
         case externalSearch
@@ -122,9 +128,8 @@ struct SettingsView: View {
         case browserExtensions
         /// Direct Agent Runtime、CodeFlow 与 CodebaseMemory 等开发者工具。
         case localTools
-        /// 原 RAG 独立窗口的三个分类直接提升为主设置一级侧栏条目。
+        /// RAG 按推理与检索分组，提示词在推理页的编辑弹窗内配置。
         case ragInference
-        case ragPrompts
         case ragRetrieval
         case storage
         case diagnostics
@@ -149,9 +154,8 @@ struct SettingsView: View {
             case .mcp:          return "settings.mcp.title"
             case .services:     return "settings.navigation.item.customServices"
             case .browserExtensions: return "settings.navigation.item.browserExtensions"
-            case .localTools:   return "settings.navigation.item.localTools"
+            case .localTools:   return "settings.navigation.item.codeAndLocalTools"
             case .ragInference: return "rag.workspace.settings.section.inference"
-            case .ragPrompts:   return "rag.workspace.settings.section.prompts"
             case .ragRetrieval: return "rag.workspace.settings.section.retrieval"
             case .storage:      return "settings.navigation.item.dataStorage"
             case .diagnostics:  return "settings.navigation.item.diagnosticsSupport"
@@ -180,7 +184,6 @@ struct SettingsView: View {
             case .browserExtensions: return .browserExtensions
             case .localTools:   return .localTools
             case .ragInference: return RAGSettingsSection.inference.businessIcon
-            case .ragPrompts:   return RAGSettingsSection.prompts.businessIcon
             case .ragRetrieval: return RAGSettingsSection.retrieval.businessIcon
             case .storage:      return .storage
             case .diagnostics:  return .diagnostics
@@ -188,11 +191,10 @@ struct SettingsView: View {
             }
         }
 
-        /// 仅供三个 RAG 主侧栏条目把 selection 传给共用的设置内容。
+        /// RAG 主侧栏条目把 selection 传给共用的设置内容。
         var ragSettingsSection: RAGSettingsSection {
             switch self {
             case .ragInference: return .inference
-            case .ragPrompts:   return .prompts
             case .ragRetrieval: return .retrieval
             default:
                 preconditionFailure("Only RAG settings tabs have a RAG section")
@@ -296,6 +298,11 @@ struct SettingsView: View {
                 navigate(to: location)
             }
         }
+        .onChange(of: selectedTab) { _, newValue in
+            if newValue != .ragInference {
+                isRAGPromptEditorPresented = false
+            }
+        }
         .onAppear {
             if !hasMarkedFirstFrame {
                 hasMarkedFirstFrame = true
@@ -350,15 +357,13 @@ struct SettingsView: View {
                 settingsSidebarRow(.externalSearch)
             }
 
-            // RAG 保留已经确认的三个直接入口；先保证推理可用，再调检索，默认
-            // Prompt 最后，避免把无需修改的高级配置放在依赖项前面。
+            // 提示词属于推理配置，通过页内编辑弹窗进入，不再占用独立侧栏分类。
             Section("RAG") {
                 settingsSidebarRow(.ragInference)
                 settingsSidebarRow(.ragRetrieval)
-                settingsSidebarRow(.ragPrompts)
             }
 
-            Section("settings.navigation.group.extensions") {
+            Section("settings.navigation.group.extensionsConnections") {
                 settingsSidebarRow(.browserExtensions)
                 settingsSidebarRow(.mcp)
                 settingsSidebarRow(.localTools)
@@ -456,10 +461,11 @@ struct SettingsView: View {
             IntegrationSettingsTab(page: .browserExtensions)
         case .localTools:
             IntegrationSettingsTab(page: .localTools)
-        case .ragInference, .ragPrompts, .ragRetrieval:
+        case .ragInference, .ragRetrieval:
             RAGWorkspaceSettingsView(
                 settings: settings,
-                presentation: .embeddedInMainSettings(section: tab.ragSettingsSection)
+                presentation: .embeddedInMainSettings(section: tab.ragSettingsSection),
+                isPromptEditorPresented: $isRAGPromptEditorPresented
             )
         case .storage:
             StorageSettingsTab(readmeRepository: dependencies.readmeRepository)
@@ -509,10 +515,12 @@ struct SettingsView: View {
             SettingsSearchItem("ai.automation", titleKey: "settings.automation.title", tab: .aiAutomation,
                                keywords: ["自动整理", "仓库分组", "github lists", "automation"]),
             SettingsSearchItem("ai.indexContext", titleKey: "settings.navigation.item.searchIndex", tab: .aiIndexContext,
-                               keywords: ["全文索引", "代码上下文", "索引", "上下文", "index", "context"]),
+                               keywords: ["全文索引", "语义搜索", "索引", "index", "search"]),
             SettingsSearchItem("ai.index", titleKey: "settings.aiIndex.section", tab: .aiIndexContext, target: "ai.index",
                                keywords: ["向量", "向量化", "索引", "embedding", "vector"]),
-            SettingsSearchItem("ai.repoContext", titleKey: "ai.context.settings.title", tab: .aiIndexContext, target: "ai.repoContext",
+            SettingsSearchItem("ai.knowledgeIndex", titleKey: "settings.ai.models.embedding.index.knowledge", tab: .aiIndexContext, target: "ai.knowledgeIndex",
+                               keywords: ["知识库索引", "重建", "knowledge", "rag", "index"]),
+            SettingsSearchItem("ai.repoContext", titleKey: "ai.context.settings.title", tab: .localTools, target: "ai.repoContext",
                                keywords: ["代码上下文", "仓库上下文", "context", "token"]),
             SettingsSearchItem("ai.externalSearch", titleKey: "settings.navigation.item.webSearch",
                                tab: .externalSearch, target: "ai.externalSearch",
@@ -532,18 +540,19 @@ struct SettingsView: View {
             SettingsSearchItem("integrations.browserPlugin", titleKey: "settings.integration.browserPlugin.title",
                                tab: .browserExtensions, target: "integrations.browserPlugin",
                                keywords: ["浏览器", "chrome", "safari", "extension", "plugin"]),
-            SettingsSearchItem("localTools", titleKey: "settings.navigation.item.localTools", tab: .localTools,
-                               keywords: ["本地工具", "agent runtime", "codeflow", "codebase memory"]),
+            SettingsSearchItem("localTools", titleKey: "settings.navigation.item.codeAndLocalTools", tab: .localTools,
+                               keywords: ["本地工具", "代码上下文", "仓库上下文", "context", "agent runtime", "codeflow", "codebase memory"]),
             SettingsSearchItem("labs", titleKey: "settings.navigation.item.labs", tab: .labs,
                                keywords: ["实验性", "实验室", "labs", "typesafe", "jev", "决策"]),
-            SettingsSearchItem("integrations.codebaseMemory", titleKey: "settings.navigation.item.localTools",
+            SettingsSearchItem("integrations.codebaseMemory", titleKey: "settings.navigation.item.codeAndLocalTools",
                                tab: .localTools, target: "integrations.codebaseMemory",
                                keywords: ["codebase memory", "codebasememory", "代码索引"]),
             SettingsSearchItem("rag.inference", titleKey: "rag.workspace.settings.section.inference", tab: .ragInference,
                                keywords: ["推理", "后端", "inference", "backend", "codex", "claude"]),
             SettingsSearchItem("rag.retrieval", titleKey: "rag.workspace.settings.section.retrieval", tab: .ragRetrieval,
                                keywords: ["检索", "重排", "向量", "自托管", "retrieval", "rerank", "vector", "meilisearch", "qdrant"]),
-            SettingsSearchItem("rag.prompts", titleKey: "rag.workspace.settings.section.prompts", tab: .ragPrompts,
+            SettingsSearchItem("rag.prompts", titleKey: "rag.workspace.settings.section.prompts",
+                               tab: .ragInference, target: "rag.prompts",
                                keywords: ["提示词", "模板", "prompt", "system", "user"]),
             SettingsSearchItem("storage", titleKey: "settings.navigation.item.dataStorage", tab: .storage,
                                keywords: ["存储", "缓存", "数据库", "清理", "导出", "storage", "cache", "database"]),
@@ -593,8 +602,10 @@ struct SettingsView: View {
             return SettingsLocation(tab: .aiAutomation)
         case "ai.searchContext", "ai.indexContext":
             return SettingsLocation(tab: .aiIndexContext)
-        case "ai.index", "ai.repoContext":
+        case "ai.index", "ai.knowledgeIndex":
             return SettingsLocation(tab: .aiIndexContext, target: target)
+        case "ai.repoContext":
+            return SettingsLocation(tab: .localTools, target: target)
         case "ai.externalSearch", "integrations.externalSearch":
             return SettingsLocation(tab: .externalSearch, target: target)
         case "translation":
@@ -610,7 +621,7 @@ struct SettingsView: View {
         case "rag", "rag.inference":
             return SettingsLocation(tab: .ragInference)
         case "rag.prompts":
-            return SettingsLocation(tab: .ragPrompts)
+            return SettingsLocation(tab: .ragInference, target: target)
         case "rag.retrieval":
             return SettingsLocation(tab: .ragRetrieval)
         case "storage":
@@ -643,12 +654,16 @@ struct SettingsView: View {
         // 新页面要先进入视图树并安装 onReceive，再发送区块定位事件。
         DispatchQueue.main.async {
             switch target {
+            case "rag.prompts":
+                isRAGPromptEditorPresented = true
             case "ai.chat":
                 NotificationCenter.default.post(name: .starcatJumpToAIChatModelSection, object: nil)
             case "ai.embedding":
                 NotificationCenter.default.post(name: .starcatJumpToAIEmbeddingSection, object: nil)
             case "ai.index":
                 NotificationCenter.default.post(name: .starcatJumpToAIIndexSection, object: nil)
+            case "ai.knowledgeIndex":
+                NotificationCenter.default.post(name: .starcatJumpToKnowledgeIndexSection, object: nil)
             case "ai.repoContext":
                 NotificationCenter.default.post(name: .starcatJumpToAIRepoContextSection, object: nil)
             case "integrations.agentRuntime", "integrations.localAPIKey", "integrations.browserPlugin",
@@ -718,43 +733,76 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle(isOn: $settings.notificationsEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("settings.notifications.enabled.title")
-                        Text("settings.notifications.enabled.help")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+                Toggle("settings.notifications.enabled.title", isOn: $settings.notificationsEnabled)
             } header: {
                 SettingsSectionHeader("settings.notifications.system.title", systemImage: "bell")
             }
 
             // 总开关只影响可操作性，不覆盖各类型偏好；重新开启时保留原选择。
             Section {
-                Toggle("settings.notifications.release.title", isOn: $settings.releaseNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.githubInbox.title", isOn: $settings.githubInboxNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.batchAI.title", isOn: $settings.batchAINotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.syncIssues.title", isOn: $settings.syncIssueNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
-                Toggle("settings.notifications.mcpIssues.title", isOn: $settings.mcpIssueNotificationsEnabled)
-                    .disabled(!settings.notificationsEnabled)
+                notificationTypeToggle(
+                    "settings.notifications.release.title",
+                    description: "settings.notifications.release.description",
+                    isOn: $settings.releaseNotificationsEnabled
+                )
+                .disabled(!settings.notificationsEnabled)
+                notificationTypeToggle(
+                    "settings.notifications.githubInbox.title",
+                    description: "settings.notifications.githubInbox.description",
+                    isOn: $settings.githubInboxNotificationsEnabled
+                )
+                .disabled(!settings.notificationsEnabled)
+                notificationTypeToggle(
+                    "settings.notifications.batchAI.title",
+                    description: "settings.notifications.batchAI.description",
+                    isOn: $settings.batchAINotificationsEnabled
+                )
+                .disabled(!settings.notificationsEnabled)
+                notificationTypeToggle(
+                    "settings.notifications.syncIssues.title",
+                    description: "settings.notifications.syncIssues.description",
+                    isOn: $settings.syncIssueNotificationsEnabled
+                )
+                .disabled(!settings.notificationsEnabled)
+                notificationTypeToggle(
+                    "settings.notifications.mcpIssues.title",
+                    description: "settings.notifications.mcpIssues.description",
+                    isOn: $settings.mcpIssueNotificationsEnabled
+                )
+                .disabled(!settings.notificationsEnabled)
             } header: {
                 SettingsSectionHeader(
                     "settings.notifications.types.title",
                     systemImage: "line.3.horizontal.decrease.circle"
                 )
-            } footer: {
-                Text("settings.notifications.types.footer")
-                    .lineLimit(2)
-                    .help(Text("settings.notifications.types.footer"))
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// 显式按标题与备注的整体高度居中，避免 grouped Form 将开关仅对齐第一行。
+    private func notificationTypeToggle(
+        _ title: LocalizedStringKey,
+        description: LocalizedStringKey,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityHidden(true)
+
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityLabel(Text(title))
+                .accessibilityHint(Text(description))
+        }
     }
 
     /// 键盘交互独立页（2026-09-13 从通用页拆出）：AI 发送方式 + 五个可配置应用命令键位。

@@ -344,6 +344,112 @@ struct AppSettingsTests {
         #expect(settings.interestedLanguages == ["Swift", "Go"])
     }
 
+    @Test("列表完整重置: 无主窗口时仍持久化全部默认值，并保留账号外设置")
+    func resetListViewPreferencesPersistsWithoutHomeView() {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.setListPreferenceValue("weekly", for: "explore.mode", login: "dong4j")
+        settings.setListPreferenceValue("Python", for: "explore.weekly.language", login: "octocat")
+        settings.repoSortOption = .starsDesc
+        settings.hideArchived = true
+        settings.hideForks = true
+        settings.statusFilter = .using
+        settings.starFilter = .unstarred
+        settings.libraryFilter = .inLibrary
+        settings.repoLanguageFilter = .language("Swift")
+        settings.globalFilterLanguages = ["Swift"]
+        settings.globalFilterLicenses = ["MIT"]
+        settings.wikiAvailabilityFilter = .available
+        settings.healthAvailabilityFilter = .missing
+        settings.openSSFAvailabilityFilter = .available
+        settings.lastManageSelectionRaw = "language:Swift"
+        settings.lastActivityCategoryRaw = "release"
+        settings.interestedLanguages = ["Swift", "Go"]
+        settings.externalSearchIncludeInAll = true
+        settings.mcpServicePort = 3939
+
+        #expect(settings.resetListViewPreferences(login: " Dong4J\n"))
+
+        // 重新创建配置实例验证落盘结果，避免只验证旧实例的内存值。
+        let restored = AppSettings(defaults: defaults)
+        #expect(restored.listPreferenceValue(for: "explore.mode", login: "dong4j") == nil)
+        #expect(restored.listPreferenceValue(for: "explore.weekly.language", login: "octocat") == "Python")
+        #expect(restored.repoSortOption == .starredAtDesc)
+        #expect(!restored.hideArchived)
+        #expect(!restored.hideForks)
+        #expect(restored.statusFilter == nil)
+        #expect(restored.starFilter == .all)
+        #expect(restored.libraryFilter == .all)
+        #expect(restored.repoLanguageFilter == .all)
+        #expect(restored.globalFilterLanguages.isEmpty)
+        #expect(restored.globalFilterLicenses.isEmpty)
+        #expect(restored.wikiAvailabilityFilter == .unknown)
+        #expect(restored.healthAvailabilityFilter == .unknown)
+        #expect(restored.openSSFAvailabilityFilter == .unknown)
+        #expect(restored.lastManageSelectionRaw.isEmpty)
+        #expect(restored.lastActivityCategoryRaw.isEmpty)
+        // 配置重新加载会规范化语言顺序，重置不能丢失长期语言偏好。
+        #expect(restored.interestedLanguages == ["Go", "Swift"])
+        #expect(restored.externalSearchIncludeInAll)
+        #expect(restored.mcpServicePort == 3939)
+    }
+
+    @Test("列表完整重置: 无效账号不修改持久化数据", arguments: [nil, "", " \n\t "] as [String?])
+    func resetListViewPreferencesRejectsMissingAccount(login: String?) {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.setListPreferenceValue("weekly", for: "explore.mode", login: "dong4j")
+        settings.repoSortOption = .starsDesc
+        settings.globalFilterLanguages = ["Swift"]
+        settings.lastManageSelectionRaw = "language:Swift"
+        let before = defaults.dictionaryRepresentation() as NSDictionary
+
+        #expect(!settings.resetListViewPreferences(login: login))
+
+        #expect(before.isEqual(to: defaults.dictionaryRepresentation()))
+        #expect(settings.repoSortOption == .starsDesc)
+        #expect(settings.globalFilterLanguages == ["Swift"])
+        #expect(settings.lastManageSelectionRaw == "language:Swift")
+    }
+
+    @Test("列表完整重置: 持久化完成后只发送一次刷新通知，不再次请求确认")
+    func resetListViewPreferencesNotifiesAfterPersistence() async {
+        let suiteName = "test.starcat.listreset.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let settings = AppSettings(defaults: defaults)
+        settings.repoSortOption = .starsDesc
+        settings.setListPreferenceValue("weekly", for: "explore.mode", login: "dong4j")
+
+        await confirmation("列表刷新", expectedCount: 1) { didReset in
+            await confirmation("不再请求确认", expectedCount: 0) { requested in
+                let center = NotificationCenter.default
+                let resetObserver = center.addObserver(
+                    forName: .starcatListPreferencesDidReset, object: nil, queue: nil
+                ) { notification in
+                    // Notification / UserDefaults 不可跨隔离域传递，只传账号值和配置身份。
+                    let source = notification.object as? AppSettings
+                    let login = notification.userInfo?["login"] as? String
+                    MainActor.assumeIsolated {
+                        guard source === settings else { return }
+                        #expect(login == "dong4j")
+                        let restored = AppSettings(defaults: UserDefaults(suiteName: suiteName)!)
+                        #expect(restored.repoSortOption == .starredAtDesc)
+                        #expect(restored.listPreferenceValue(for: "explore.mode", login: "dong4j") == nil)
+                        didReset()
+                    }
+                }
+                let requestObserver = center.addObserver(
+                    forName: .starcatResetListPreferencesRequested, object: nil, queue: nil
+                ) { _ in requested() }
+                defer {
+                    center.removeObserver(resetObserver)
+                    center.removeObserver(requestObserver)
+                }
+                #expect(settings.resetListViewPreferences(login: " Dong4J "))
+            }
+        }
+    }
+
     // MARK: - 快捷键偏好
 
     @Test("快捷键: AI 发送独立，五项应用命令默认启用并使用预设键位")

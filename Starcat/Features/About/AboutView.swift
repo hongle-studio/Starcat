@@ -998,6 +998,12 @@ private struct AboutDependency: Identifiable {
 
     private static let embeddedResources: [AboutDependency] = [
         AboutDependency(
+            name: "CC Switch",
+            license: "MIT",
+            copyright: "Copyright (c) 2025 Jason Young",
+            url: URL(string: "https://github.com/farion1231/cc-switch")
+        ),
+        AboutDependency(
             name: "Lucide Icons",
             license: "ISC",
             copyright: "Copyright (c) 2026 Lucide Icons and Contributors",

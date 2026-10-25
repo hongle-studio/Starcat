@@ -1000,54 +1000,6 @@ struct SearchCenterView: View {
         }
     }
 
-    private struct ExternalSearchProviderIcon: View {
-        let provider: ExternalSearchProviderID
-        let size: CGFloat
-
-        var body: some View {
-            icon
-                .foregroundStyle(Self.tint(for: provider))
-                .frame(width: size, height: size)
-                .accessibilityHidden(true)
-        }
-
-        @ViewBuilder
-        private var icon: some View {
-            switch provider {
-            case .anySearch:
-                Image(systemName: "asterisk")
-                    .font(.system(size: size, weight: .bold))
-            case .tavily:
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: size, weight: .semibold))
-            case .exa:
-                Image(systemName: "magnifyingglass.circle.fill")
-                    .font(.system(size: size, weight: .semibold))
-            case .braveLLMContext:
-                Image(systemName: "shield.fill")
-                    .font(.system(size: size, weight: .semibold))
-            case .firecrawl:
-                Image(systemName: "flame.fill")
-                    .font(.system(size: size, weight: .semibold))
-            }
-        }
-
-        static func tint(for provider: ExternalSearchProviderID) -> Color {
-            switch provider {
-            case .anySearch:
-                return .orange
-            case .tavily:
-                return .pink
-            case .exa:
-                return .purple
-            case .braveLLMContext:
-                return .orange
-            case .firecrawl:
-                return .red
-            }
-        }
-    }
-
     // MARK: - 搜索底部 footer（GitHub pagination + web metadata）
 
     /// GitHub scope 的分页入口必须作为列表最后一行，而不是固定在面板底部。

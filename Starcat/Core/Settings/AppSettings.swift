@@ -2582,6 +2582,37 @@ final class AppSettings {
         listPreferenceValues = listPreferenceValues.filter { !$0.key.hasPrefix(prefix) }
     }
 
+    /// 用户确认后的完整列表重置；不依赖 HomeView 存活，设置窗口可独立完成持久化。
+    ///
+    /// 账号无效时整次 no-op，避免登出期间误清共享筛选。感兴趣语言是长期候选池，
+    /// 与当前列表语言筛选不同，必须保留；完成持久化后才通知已挂载列表刷新临时状态。
+    @discardableResult
+    func resetListViewPreferences(login: String?) -> Bool {
+        guard let login = normalizedListPreferenceLogin(login) else { return false }
+        resetListPreferences(login: login)
+        repoSortOption = .starredAtDesc
+        hideArchived = false
+        hideForks = false
+        statusFilter = nil
+        starFilter = .all
+        libraryFilter = .all
+        repoLanguageFilter = .all
+        globalFilterLanguages = []
+        globalFilterLicenses = []
+        wikiAvailabilityFilter = .unknown
+        healthAvailabilityFilter = .unknown
+        openSSFAvailabilityFilter = .unknown
+        lastManageSelectionRaw = ""
+        lastActivityCategoryRaw = ""
+
+        NotificationCenter.default.post(
+            name: .starcatListPreferencesDidReset,
+            object: self,
+            userInfo: ["login": login]
+        )
+        return true
+    }
+
     private func scopedListPreferenceKey(_ key: String, login: String?) -> String? {
         guard let login = normalizedListPreferenceLogin(login) else { return nil }
         return "\(login):\(key)"

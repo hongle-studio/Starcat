@@ -53,6 +53,13 @@ struct ServicesSettingsTab: View {
 
     var body: some View {
         Form {
+            SettingsPageIntroduction(
+                title: "settings.navigation.item.customServices",
+                systemImage: BusinessIcon.Symbol.services.rawValue,
+                description: "settings.services.introduction.description",
+                context: "settings.services.introduction.context"
+            )
+
             Section {
                 HStack(alignment: .center) {
                     Text("settings.services.intro")

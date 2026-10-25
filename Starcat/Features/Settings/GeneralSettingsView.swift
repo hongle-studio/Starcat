@@ -16,6 +16,10 @@ struct GeneralSettingsView: View {
     @Environment(\.starcatReduceMotion) private var reduceMotion
     @State private var localeStore = LocaleStore.shared
     @State private var isAdvancedExpanded = false
+    /// 捕获打开确认时的账号；切换账号后不允许将旧确认应用到新账号。
+    @State private var listPreferencesResetLogin: String?
+    @State private var showsListPreferencesReset = false
+    @State private var listPreferencesResetToast: String?
 
     var body: some View {
         @Bindable var settings = settings
@@ -35,6 +39,15 @@ struct GeneralSettingsView: View {
             advancedSection
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showsListPreferencesReset) {
+            ListPreferencesResetSheet(onConfirm: confirmListPreferencesReset)
+                .appLocaleEnvironment()
+        }
+        .onChange(of: dependencies.authSession.state.user?.login) { _, _ in
+            showsListPreferencesReset = false
+            listPreferencesResetLogin = nil
+        }
+        .toast(message: $listPreferencesResetToast, icon: "arrow.counterclockwise", bottomPadding: 24)
     }
 
     /// 原生 grouped Section 本身提供卡片表面；这里不再嵌套自绘背景或固定高度。
@@ -72,14 +85,15 @@ struct GeneralSettingsView: View {
         }
     }
 
-    /// 控件与说明合为同一表单行，减少原先每段说明独占一行造成的留白。
+    /// 外观与语言仅显示标题和控件，避免备注挤占分段选择器的布局空间。
     private var appearanceSection: some View {
         @Bindable var settings = settings
 
         return Section {
             centeredPreferenceRow(
                 "settings.general.appearanceMode",
-                description: "settings.general.appearanceMode.description"
+                description: "settings.general.appearanceMode.description",
+                showsDescription: false
             ) {
                 Picker("settings.general.appearanceMode", selection: appearanceSelection) {
                     ForEach(AppearanceMode.allCases) { mode in
@@ -92,7 +106,8 @@ struct GeneralSettingsView: View {
 
             centeredPreferenceRow(
                 "settings.general.interfaceScale",
-                description: "settings.general.interfaceScale.description"
+                description: "settings.general.interfaceScale.description",
+                showsDescription: false
             ) {
                 Picker("settings.general.interfaceScale", selection: $settings.interfaceScale) {
                     ForEach(InterfaceScale.allCases) { scale in
@@ -108,6 +123,7 @@ struct GeneralSettingsView: View {
             preferenceToggle(
                 "settings.general.disableAnimations.title",
                 description: "settings.general.disableAnimations.help",
+                showsDescription: false,
                 isOn: $settings.disableAnimations
             )
         } header: {
@@ -137,7 +153,8 @@ struct GeneralSettingsView: View {
 
         return centeredPreferenceRow(
             "settings.general.language.label",
-            description: "settings.general.language.description"
+            description: "settings.general.language.description",
+            showsDescription: false
         ) {
             Picker(selection: $localeStore.selection) {
                 ForEach(AppLocale.allCases) { option in
@@ -157,16 +174,23 @@ struct GeneralSettingsView: View {
             preferenceToggle(
                 "settings.general.openFirstDetailOnCategoryChange.title",
                 description: "settings.general.openFirstDetailOnCategoryChange.help",
+                showsDescription: false,
                 isOn: $settings.openFirstDetailOnCategoryChange
             )
+            Divider()
+
             preferenceToggle(
                 "settings.general.openRepositoryMarkdownInApp.title",
                 description: "settings.general.openRepositoryMarkdownInApp.help",
+                showsDescription: false,
                 isOn: $settings.openRepositoryMarkdownInApp
             )
+            Divider()
+
             preferenceToggle(
                 "settings.activity.issueEvents.title",
                 description: "settings.activity.issueEvents.help",
+                showsDescription: false,
                 isOn: $settings.githubIssueEventTimelineEnabled
             )
         }
@@ -179,14 +203,15 @@ struct GeneralSettingsView: View {
             preferenceToggle(
                 "settings.general.hideDockIcon.title",
                 description: "settings.general.hideDockIcon.help",
+                showsDescription: false,
                 isOn: $settings.hideDockIcon
             )
             preferenceToggle(
                 "settings.general.spotlightSearch.label",
                 description: "settings.general.spotlightSearch.summary",
+                showsDescription: false,
                 isOn: $settings.spotlightSearchEnabled
             )
-            .help(Text("settings.general.spotlightSearch.tooltip"))
 
             if DistributionChannel.current.isDirect {
                 ScreensaverSettingsSection()
@@ -200,6 +225,9 @@ struct GeneralSettingsView: View {
     private var advancedSection: some View {
         Section {
             DisclosureGroup(isExpanded: $isAdvancedExpanded) {
+                // 展开内容位于自定义折叠容器内，需显式补齐标题及设置项之间的分割线。
+                Divider()
+
                 Text("settings.general.detailBehavior")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
@@ -255,7 +283,8 @@ struct GeneralSettingsView: View {
 
         return centeredPreferenceRow(
             "settings.snakeStyle.title",
-            description: "settings.snakeStyle.description"
+            description: "settings.snakeStyle.description",
+            showsDescription: false
         ) {
             Picker(selection: $settings.snakeStyle) {
                 ForEach(SnakeStyle.allCases) { style in
@@ -273,9 +302,10 @@ struct GeneralSettingsView: View {
     private func preferenceToggle(
         _ title: LocalizedStringKey,
         description: LocalizedStringKey,
+        showsDescription: Bool = true,
         isOn: Binding<Bool>
     ) -> some View {
-        centeredPreferenceRow(title, description: description, onLabelActivate: {
+        centeredPreferenceRow(title, description: description, showsDescription: showsDescription, onLabelActivate: {
             isOn.wrappedValue.toggle()
         }) {
             Toggle(title, isOn: isOn)
@@ -289,6 +319,7 @@ struct GeneralSettingsView: View {
     private func centeredPreferenceRow<Control: View>(
         _ title: LocalizedStringKey,
         description: LocalizedStringKey,
+        showsDescription: Bool = true,
         onLabelActivate: (() -> Void)? = nil,
         @ViewBuilder control: () -> Control
     ) -> some View {
@@ -297,10 +328,13 @@ struct GeneralSettingsView: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .help(Text(title))
-            Text(description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // 隐藏可见备注时仍保留读屏提示，其余设置行继续显示原有说明。
+            if showsDescription {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -404,6 +438,8 @@ struct GeneralSettingsView: View {
                     .help(Text("settings.listPreferences.reset.title"))
             }
 
+            Divider()
+
             LabeledContent {
                 ResetIconButton(
                     help: Text("settings.general.resetOnboarding.label"),
@@ -419,10 +455,22 @@ struct GeneralSettingsView: View {
         }
     }
 
-    /// 保留原通知路由；列表侧负责确认与重置范围，通用页不直接清空偏好。
+    /// 确认由发起操作的设置窗口承载，不能把请求转发给主窗口弹窗。
     private func resetListPreferences() {
-        NSApp.activate(ignoringOtherApps: true)
-        NotificationCenter.default.post(name: .starcatResetListPreferencesRequested, object: nil)
+        guard let login = dependencies.authSession.state.user?.login else { return }
+        listPreferencesResetLogin = login
+        showsListPreferencesReset = true
+    }
+
+    /// 主窗口关闭时也可重置；主窗口在收到完成通知后只同步列表内存状态。
+    private func confirmListPreferencesReset() {
+        showsListPreferencesReset = false
+        guard let login = listPreferencesResetLogin,
+              login == dependencies.authSession.state.user?.login,
+              settings.resetListViewPreferences(login: login) else { return }
+        listPreferencesResetLogin = nil
+        listPreferencesResetToast = String.l10n("settings.listPreferences.reset.toast")
+        dependencies.telemetryManager.track(.listPreferencesReset)
     }
 
     /// 关闭设置后复用原引导流程，不在通用页重新创建一套引导状态。

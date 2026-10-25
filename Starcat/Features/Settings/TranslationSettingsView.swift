@@ -214,8 +214,11 @@ struct TranslationSettingsTab: View {
 
     private var googleSection: some View {
         Section {
-            LabeledContent {
-                HStack(spacing: 8) {
+            // 按整行垂直居中，标签只占自然宽度，避免 Form 标签列压缩 Key 输入框。
+            HStack(alignment: .center, spacing: 12) {
+                Text("settings.translation.google.apiKey.field")
+                    .fixedSize(horizontal: true, vertical: false)
+                HStack(alignment: .center, spacing: 8) {
                     Group {
                         if isGoogleAPIKeyVisible {
                             TextField("settings.translation.google.apiKey.field", text: googleAPIKeyBinding)
@@ -227,6 +230,7 @@ struct TranslationSettingsTab: View {
                     .textFieldStyle(.roundedBorder)
                     .multilineTextAlignment(.leading)
                     .accessibilityLabel("settings.translation.google.apiKey.field")
+                    .frame(maxWidth: .infinity)
                     SettingsActionIconButton(
                         title: isGoogleAPIKeyVisible
                             ? "settings.translation.google.apiKey.hide" : "settings.translation.google.apiKey.show",
@@ -235,13 +239,7 @@ struct TranslationSettingsTab: View {
                         isGoogleAPIKeyVisible.toggle()
                     }
                 }
-            } label: {
-                Text("settings.translation.google.apiKey.field")
             }
-            Text("settings.translation.layout.google.hint")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
                 if let googleKeyError {

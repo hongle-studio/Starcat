@@ -129,6 +129,8 @@ struct HomeView: View {
     @State private var preparedDetailCoachMarkRepoID: Repo.ID?
     /// 系统入口发来的重置动作必须先二次确认，避免用户误清语言 / 排序 / 筛选偏好。
     @State private var showsResetListPreferencesConfirmation: Bool = false
+    /// 系统入口确认期间若账号切换，必须废弃旧确认，不能重置另一个账号。
+    @State private var listPreferencesResetLogin: String?
     /// 重置成功只给轻量 toast，不写诊断日志，也不影响用户业务数据。
     @State private var listPreferenceResetToast: String?
     /// Universal Link 定位失败时保留可读错误。它只描述本次打开动作，不写入仓库数据。
@@ -511,8 +513,29 @@ struct HomeView: View {
         }
     }
 
+    /// 单独承载重置确认，避免继续增加主窗口超长 modifier 链的类型推导负担。
+    private var navigationWithListPreferencesReset: some View {
+        navigationWithOverlays
+            .onReceive(NotificationCenter.default.publisher(for: .starcatResetListPreferencesRequested)) { _ in
+                guard let login = currentListPreferenceLogin else { return }
+                listPreferencesResetLogin = login
+                showsResetListPreferencesConfirmation = true
+            }
+            .onChange(of: currentListPreferenceLogin) { _, _ in
+                showsResetListPreferencesConfirmation = false
+                listPreferencesResetLogin = nil
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .starcatListPreferencesDidReset)) { notification in
+                handleListPreferencesDidReset(notification)
+            }
+            .sheet(isPresented: $showsResetListPreferencesConfirmation) {
+                ListPreferencesResetSheet(onConfirm: resetListPreferencesForCurrentAccount)
+                    .appLocaleEnvironment()
+            }
+    }
+
     private var navigationWithSheets: AnyView {
-        AnyView(navigationWithOverlays
+        AnyView(navigationWithListPreferencesReset
         .sheet(isPresented: $showTagManagement, onDismiss: handleTagManagementDismissed) {
             TagManagementView(
                 viewModel: tagMgmtVM,
@@ -766,10 +789,6 @@ struct HomeView: View {
             gettingStartedStore.reset()
             syncGettingStartedProgressFromCurrentState()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .starcatResetListPreferencesRequested)) { _ in
-            guard authSession.state.isAuthenticated else { return }
-            showsResetListPreferencesConfirmation = true
-        }
         .onReceive(NotificationCenter.default.publisher(for: .gettingStartedDidOrganizeRepo)) { _ in
             gettingStartedStore.markCompleted(.organizeRepo)
         }
@@ -854,14 +873,6 @@ struct HomeView: View {
             Button("general.cancel", role: .cancel) {}
         } message: {
             Text(String.l10n(chatModelRequiredWorkspace.chatModelRequiredMessageKey))
-        }
-        .alert("settings.listPreferences.reset.title", isPresented: $showsResetListPreferencesConfirmation) {
-            Button("general.cancel", role: .cancel) {}
-            Button("settings.listPreferences.reset.confirm", role: .destructive) {
-                resetListPreferencesForCurrentAccount()
-            }
-        } message: {
-            Text("settings.listPreferences.reset.message")
         }
         .alert(
             "repo.share.open.error.title",
@@ -2649,17 +2660,26 @@ struct HomeView: View {
         }
     }
 
-    private func resetListPreferencesForCurrentAccount() {
-        guard let login = currentListPreferenceLogin else { return }
-
-        settings.resetListPreferences(login: login)
+    /// 设置窗口已完成持久化，这里只刷新当前账号列表，不能再次弹窗或执行重置。
+    private func handleListPreferencesDidReset(_ notification: Notification) {
+        guard let source = notification.object as? AppSettings, source === settings,
+              let login = notification.userInfo?["login"] as? String else { return }
+        let currentLogin = currentListPreferenceLogin?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard login == currentLogin else { return }
         resetVisibleListPreferencesToDefault()
-        listPreferenceResetToast = String.l10n("settings.listPreferences.reset.toast")
-        dependencies.telemetryManager.track(.listPreferencesReset)
-
         Task { @MainActor in
             await viewModel.reloadItems(forceRefresh: true)
         }
+    }
+
+    private func resetListPreferencesForCurrentAccount() {
+        showsResetListPreferencesConfirmation = false
+        guard let login = listPreferencesResetLogin, login == currentListPreferenceLogin,
+              settings.resetListViewPreferences(login: login) else { return }
+        listPreferencesResetLogin = nil
+        listPreferenceResetToast = String.l10n("settings.listPreferences.reset.toast")
+        dependencies.telemetryManager.track(.listPreferencesReset)
     }
 
     private func resetVisibleListPreferencesToDefault() {
@@ -2672,21 +2692,6 @@ struct HomeView: View {
 
         selectedActivityCategory = .notification
         savedActivityCategory = .notification
-
-        settings.repoSortOption = .starredAtDesc
-        settings.hideArchived = false
-        settings.hideForks = false
-        settings.statusFilter = nil
-        settings.starFilter = .all
-        settings.libraryFilter = .all
-        settings.repoLanguageFilter = .all
-        settings.globalFilterLanguages = []
-        settings.globalFilterLicenses = []
-        settings.wikiAvailabilityFilter = .unknown
-        settings.healthAvailabilityFilter = .unknown
-        settings.openSSFAvailabilityFilter = .unknown
-        settings.lastManageSelectionRaw = ""
-        settings.lastActivityCategoryRaw = ""
 
         savedManageSelection = .allStars
         if selectedSidebarPage == .manage {
