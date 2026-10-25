@@ -74,9 +74,15 @@ struct AISettingsTab: View {
     @State private var apiKeys: [String: String] = [:]
     @State private var isTestingProfileID: String?
     @State private var keyError: String?
-    @State private var promptTask: AIModelTask = .summary
-    /// Prompt 区「可用占位符」popover；切换任务时关闭，避免旧任务说明残留。
-    @State private var isPromptPlaceholderPopoverPresented = false
+    /// 新增弹框独占草稿；父窗口关闭时可同步取消，不能等待 sheet 消失动画再失效请求。
+    @State private var providerSetupSession: AIProviderSetupViewModel?
+    /// 编辑入口捕获当前任务，弹窗始终写回该任务，不与另一个分段选择器争用状态。
+    @State private var promptEditingTask: AIModelTask?
+    @State private var isTaskModelAdvancedExpanded = false
+    @State private var isEmbeddingAdvancedExpanded = false
+    @State private var isModelManagementAdvancedExpanded = false
+    /// 捕获打开时的服务商身份；弹窗按 ID 读取实时模型，不使用这份快照编辑数据。
+    @State private var modelManagementProfile: AIProviderProfile?
 
     /// HOM-AIPROVIDERS-DELETE-CONFIRM-2026-06-12 (dong4j 反馈)：
     /// 删除服务商需要二次确认。删除会同步删 profile + Keychain key + 修复
@@ -86,16 +92,16 @@ struct AISettingsTab: View {
     /// 数组变化导致引用悬空（异步刷新 / @AppStorage 写回都可能触发刷新）。
     @State private var pendingDeleteProfileID: String?
 
-    /// HOM-68 follow-up v7 (dong4j 反馈 2026-06-05 23:20)：
-    /// "默认设置"（原"模型设置"）也改成 tab 样式，4 个任务（summary/tags/
-    /// embedding/translation）共用一行 Provider+模型 picker。和 parameterTask /
-    /// promptTask 分开，让用户在不同区切换任务时互不干扰（设默认时看的是
-    /// summary，但调参数时可能在调 tags，强同步会反直觉）。
+    /// 这里只切换生成任务；共享向量模型独立展示，仍写入原 aiEmbeddingTask。
     @State private var taskModelTask: AIModelTask = .summary
+
+    /// 跨服务商同名模型必须保留复合身份，自定义项只呈现现有配置，不触发额外写入。
+    private typealias TaskModelChoice = AITaskModelPicker.Selection
 
     // HOM-68 follow-up v9：原"模型参数"区已迁到"已发现模型"每行的齿轮 popover
     // （模型粒度，不再按任务），不再需要 isParametersExpanded SceneStorage。
     private static let taskModelsSettingsAnchor = "settings.ai.taskModels"
+    private static let embeddingSettingsAnchor = "settings.ai.sharedEmbedding"
     private static let aiIndexSettingsAnchor = "settings.ai.index"
 
     /// "AI 索引"折叠区显示 / 隐藏具体阈值数字；预设 == `.custom` 时强制展开（写 didSet 上不易，
@@ -155,17 +161,18 @@ struct AISettingsTab: View {
         Form {
             switch page {
             case .models:
+                modelsIntroductionSection
                 providerSection
                 // 本地模型只在选中 Starcat Local AI 时出现，避免远程供应商页面
                 // 同时展示无关下载项；模型与任务绑定按依赖顺序从上到下排列。
                 if LocalAIHardwareSupport.isLocalAIAvailable, activeProfile?.provider == .localAI {
                     LocalAIModelsSection(settings: dependencies.settings)
                 }
-                enabledModelsSection
                 taskModelsSection
                     .id(Self.taskModelsSettingsAnchor)
-                // Prompt 有完整默认值，不属于首次配置必填项，继续放在模型页末尾。
-                promptSection
+                sharedEmbeddingSection
+                    .id(Self.embeddingSettingsAnchor)
+                modelManagementAdvancedSection
             case .automation:
                 // 两项都消费上游模型配置，但彼此不是父子能力，保留独立顶级 Section。
                 autoTidySection
@@ -217,12 +224,30 @@ struct AISettingsTab: View {
                 }
             )
         }
-        .formStyle(.grouped)
-        // Placeholders popover 锚在 Prompt 区按钮上：Form 一滚就关，避免锚点滚走后浮层悬空。
-        .onScrollPhaseChange { _, newPhase in
-            guard newPhase != .idle else { return }
-            isPromptPlaceholderPopoverPresented = false
+        .sheet(item: providerSetupPresentation) { session in
+            AIProviderSetupSheet(viewModel: session, onAdd: addVerifiedProvider)
+                .id(session.id)
+                .appLocaleEnvironment()
         }
+        .sheet(item: $promptEditingTask) { task in
+            AITaskPromptSheet(
+                task: task,
+                systemPrompt: promptSystemBinding(task),
+                userPromptTemplate: promptUserBinding(task),
+                onRestoreDefault: { restoreDefaultPrompt(task) }
+            )
+            .appLocaleEnvironment()
+        }
+        .sheet(item: $modelManagementProfile) { profile in
+            AIModelManagementSheet(
+                providerID: profile.id,
+                enabledBinding: { model in modelEnabledBinding(profile.id, model.id) },
+                capabilityBinding: { model in modelCapabilityBinding(profile.id, model.id) },
+                parametersBinding: { model in modelParametersBinding(profile.id, model.id) }
+            )
+            .appLocaleEnvironment()
+        }
+        .formStyle(.grouped)
         .task(id: page) {
             guard page == .models else { return }
             ensureSelection()
@@ -243,10 +268,9 @@ struct AISettingsTab: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIEmbeddingSection)) { _ in
             guard page == .models else { return }
-            // 入口语义是“配置向量模型”：直接切换到向量化任务并定位常驻分组。
-            taskModelTask = .embedding
+            // 向量模型已独立分组；深链直接定位，不改变生成任务的当前选择。
             DispatchQueue.main.async {
-                proxy.scrollTo(Self.taskModelsSettingsAnchor, anchor: .top)
+                proxy.scrollTo(Self.embeddingSettingsAnchor, anchor: .top)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIChatModelSection)) { _ in
@@ -282,6 +306,8 @@ struct AISettingsTab: View {
             // 成功路径里已被晋升为 verified profile 并把 draftProfile 置 nil,
             // 这里看到的 draftProfile != nil 全是"未完成"草稿。
             AppLog.ai.debug("[AISettings] SettingsWindowCloseListener.onClose fired draftID=\(self.draftProfile?.id ?? "nil", privacy: .public)")
+            providerSetupSession?.cancel()
+            providerSetupSession = nil
             discardDraft()
         })
         // HOM-AIPROVIDERS-DELETE-CONFIRM-2026-06-12 (dong4j 反馈)：
@@ -416,6 +442,64 @@ struct AISettingsTab: View {
 
     // MARK: - Provider
 
+    /// 系统主动结束 sheet 时也立即失效会话，不能只依赖退场动画后的 onDisappear。
+    private var providerSetupPresentation: Binding<AIProviderSetupViewModel?> {
+        Binding(
+            get: { providerSetupSession },
+            set: { session in
+                if session == nil { providerSetupSession?.cancel() }
+                providerSetupSession = session
+            }
+        )
+    }
+
+    /// 与通用和隐私页保持同一说明卡片结构，使用 Form 自带表面，不再套第二层背景。
+    private var modelsIntroductionSection: some View {
+        Section {
+            HStack(spacing: 16) {
+                Image(systemName: "cpu")
+                    .font(.title)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 48, height: 48)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityHidden(true)
+
+                Divider()
+                    .frame(height: 48)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("settings.models.title")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .help(Text("settings.models.title"))
+                    Text("settings.models.introduction")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(Text("settings.models.introduction"))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 8)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// 新增验证器没有写入副作用；确认成功且会话仍有效后，才同步保存凭据与配置。
+    /// Keychain 先写，失败则抛回弹框，避免未保存密钥的服务商进入任务选择。
+    @MainActor
+    private func addVerifiedProvider(_ profile: AIProviderProfile, apiKey: String) throws {
+        guard providerSetupSession?.profile.id == profile.id else { throw CancellationError() }
+        try persistAPIKey(apiKey, forProvider: profile.id, allowsEmpty: profile.provider.allowsEmptyAPIKey)
+        settings.aiProviderProfiles.append(profile)
+        apiKeys[profile.id] = apiKey
+        setSelectedProfileID(profile.id)
+        repairTasksAfterProfileChange()
+    }
+
     private var providerSection: some View {
         Section {
             // 与下方「显示名称」同一套：左 label 列 + 垂直居中。
@@ -455,11 +539,9 @@ struct AISettingsTab: View {
                 .disabled(draftProfile != nil || isTestingProfileID != nil)
 
                 AddIconButton(help: Text("settings.ai.provider.addHelp")) {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
-                        beginDraft(provider: .openAICompatible)
-                    }
+                    providerSetupSession = AIProviderSetupViewModel()
                 }
-                .disabled(draftProfile != nil)
+                .disabled(draftProfile != nil || isTestingProfileID != nil || providerSetupSession != nil)
 
                 if draftProfile != nil {
                     CancelIconButton(
@@ -488,34 +570,7 @@ struct AISettingsTab: View {
                 }
             }
 
-            // HOM-AIPROVIDERS-HIDE-PROVIDER-2026-06-12 (dong4j 反馈)：
-            // Provider 下拉只在「点 + 进入新增草稿」时显示。背景：之前两个下拉常驻
-            //   1) 「服务商配置」= 已验证 profile 切换
-            //   2) 「Provider」    = 选 provider 类型 / 隐式重建草稿
-            // 两个下拉语义不同但视觉同形（都是 menu picker），新用户进设置页一眼看
-            // 不出谁是「我现在在看哪个 profile」、谁是「我要新建」。更糟的是 Provider
-            // 下拉直接切类型就会重建草稿（`supportedProviderBinding.set` 调
-            // `beginDraft`），与右上角 `+` 按钮形成两个新增入口，违反「+ 是新增唯一
-            // 入口」的产品意图。
-            //
-            // 修法：Provider 下拉用 `if draftProfile != nil` 包裹，常态隐藏；只在点
-            // `+`（→ beginDraft → draftProfile != nil）后随输入区一起出现。这样信息
-            // 架构变成「常态只显示当前 profile / 点 + 进入新增模式才显示类型选择」，
-            // 与 macOS 系统设置「网络 → +」的交互节奏一致。
-            //
-            // Provider 切换仍走原 `supportedProviderBinding`（重建草稿，丢弃同一草稿
-            // 内已输入的 displayName/baseURL/apiKey）。这是合理的——切类型本质就是
-            // 「换底子」，不同 provider 的默认 baseURL 完全不同，保留旧值会更困惑。
-            //
-            // transition 用 `.opacity` + 默认 spring，让出现/消失自然过渡，避免 Form
-            // 里某行突然蹦出来。
-            //
-            // 边界场景：用户在已验证 profile 上修改 displayName/baseURL/apiKey 时，
-            // `editableProfileTextBinding` 会调 `beginDraft(from: current)` 把它提升为
-            // 草稿 → 这里 Provider 行也会跟着出现。这是预期行为：① 与「新增模式」UI
-            // 统一（draft != nil 都显示）；② 用户编辑时本来就可以切类型（如发现 Base
-            // URL 错了想换个 provider），保留这个能力；③ 用户不点 Provider 就不会
-            // 影响输入，干扰极小。
+            // 新增类型选择在独立弹框内；这里保留原有配置编辑时的类型切换和草稿规则。
             if draftProfile != nil {
                 Picker("Provider", selection: supportedProviderBinding) {
                     // 按硬件能力过滤：Intel Mac 不提供本地 AI 选项。
@@ -595,153 +650,269 @@ struct AISettingsTab: View {
             }
         } header: {
             SettingsSectionHeader(
-                "settings.ai.provider.sectionTitle",
+                "settings.models.provider.section",
                 systemImage: "server.rack"
             )
-        } footer: {
-            Text("settings.ai.provider.sectionFooter")
         }
     }
 
-    private var enabledModelsSection: some View {
-        // “模型与供应商”已经是独立一级页面；模型列表常驻展示，避免再套一层折叠。
+    /// 模型列表移至当前服务商的管理弹窗；页面末尾只保留按需展开的入口。
+    private var modelManagementAdvancedSection: some View {
         Section {
-            Group {
-                if let profile = selectedProfile {
-                    if profile.models.isEmpty {
-                        Text("settings.ai.discoveredModels.empty")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 8)
-                    } else {
-                        AIModelListView(
-                            profile: profile,
-                            enabledBinding: { model in modelEnabledBinding(profile.id, model.id) },
-                            capabilityBinding: { model in modelCapabilityBinding(profile.id, model.id) },
-                            parametersBinding: { model in modelParametersBinding(profile.id, model.id) }
-                        )
-                        .id(profile.id)
+            DisclosureGroup(isExpanded: $isModelManagementAdvancedExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    SettingsSectionHeader("settings.ai.models.management.section", systemImage: "slider.horizontal.3")
+                    centeredModelSettingRow {
+                        Button("settings.ai.models.management.open", systemImage: "list.bullet.rectangle") {
+                            // 只确定本次管理对象；编辑仍通过原模型绑定即时写回。
+                            modelManagementProfile = selectedProfile
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .disabled(selectedProfile == nil)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("settings.ai.models.management.available")
+                                .lineLimit(1)
+                                .help(Text("settings.ai.models.management.available"))
+                            Text("settings.ai.models.management.help")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .help(Text("settings.ai.models.management.help"))
+                        }
                     }
                 }
+            } label: {
+                Text("settings.ai.models.advanced.title")
+                    .lineLimit(1)
+                    .help(Text("settings.ai.models.advanced.title"))
             }
-        } header: {
-            SettingsSectionHeader(
-                "settings.ai.discoveredModels.title",
-                systemImage: "list.bullet.rectangle"
-            )
+            .disclosureGroupStyle(SettingsDisclosureGroupStyle(
+                accessibilityLabel: Text("settings.ai.models.advanced.title")
+            ))
         }
     }
 
     // MARK: - Tasks
 
+    /// 三个生成任务共享同一套原生配置行，各自的模型与提示词仍独立保存。
     private var taskModelsSection: some View {
-        // 配置页按依赖顺序常驻展示任务模型；深链接只需切换任务并滚动定位。
         Section {
-            // 等宽铺满：系统 segmented 按文案 intrinsic 定宽，中文短/英文长会两套布局；
-            // EqualWidthSegmentedControl 按父宽均分，中英文同一套整行样式。
-            VStack(alignment: .leading, spacing: 0) {
-                EqualWidthSegmentedControl(
-                    items: AIModelTask.aiSettingsPageTasks,
-                    selection: $taskModelTask,
-                    title: { LocalizedStringKey($0.displayNameKey) }
-                )
-                .accessibilityLabel("settings.ai.task.pickerLabel")
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-
-                Divider()
-
-                taskModelRow(taskModelTask)
-                    .frame(maxWidth: .infinity)
+            centeredModelSettingRow {
+                Picker("settings.ai.task.pickerLabel", selection: $taskModelTask) {
+                    ForEach(AIModelTask.aiSettingsPageTasks) { task in
+                        Text(LocalizedStringKey(task.displayNameKey)).tag(task)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.ai.task.pickerLabel")
+                        .lineLimit(1)
+                        .help(Text("settings.ai.task.pickerLabel"))
+                    Text("settings.ai.models.task.help")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help(Text("settings.ai.models.task.help"))
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            centeredModelSettingRow {
+                taskModelPicker(taskModelTask, label: "settings.ai.models.model.title")
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.ai.models.model.title")
+                        .lineLimit(1)
+                        .help(Text("settings.ai.models.model.title"))
+                    Text("settings.ai.models.model.help")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help(Text("settings.ai.models.model.help"))
+                }
+            }
+
+            centeredModelSettingRow {
+                Button("settings.ai.models.prompt.edit", systemImage: "text.quote") {
+                    promptEditingTask = taskModelTask
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.ai.models.prompt.title")
+                        .lineLimit(1)
+                        .help(Text("settings.ai.models.prompt.title"))
+                    Text(LocalizedStringKey(isDefaultPrompt(taskModelTask)
+                        ? "settings.ai.models.prompt.default" : "settings.ai.models.prompt.custom"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            DisclosureGroup(isExpanded: $isTaskModelAdvancedExpanded) {
+                taskCustomModelConfiguration(taskModelTask)
+            } label: {
+                Text("settings.ai.task.customModelLabel")
+                    .lineLimit(1)
+                    .help(Text("settings.ai.task.customModelLabel"))
+            }
+            .disclosureGroupStyle(SettingsDisclosureGroupStyle(
+                accessibilityLabel: Text("settings.ai.task.customModelLabel")
+            ))
         } header: {
-            SettingsSectionHeader(
-                "settings.ai.taskModels.title",
-                systemImage: "slider.horizontal.3"
-            )
+            SettingsSectionHeader("settings.ai.models.defaults.title", systemImage: "slider.horizontal.3")
         }
     }
 
-    private func taskModelRow(_ task: AIModelTask) -> some View {
-        // 2026-07-19：自定义模型改为「左 label + 右 Switch」；开启后下一行出加长输入框。
-        // 关闭开关只改 useCustomModel，不清空 customModelName。
-        let currentProviderID = taskConfig(task).providerID
-        let useCustom = taskConfig(task).useCustomModel
-        let availableModels = enabledModels(
-            providerID: currentProviderID,
-            capability: task.requiredCapability
-        )
-        let availableProfiles = eligibleVerifiedProfiles(for: task)
+    /// 一个原生菜单汇总已验证服务商的适用模型，保留自定义及暂不可用配置的显示身份。
+    private func taskModelPicker(_ task: AIModelTask, label: LocalizedStringKey) -> some View {
+        let config = taskConfig(task)
+        let profiles = eligibleVerifiedProfiles(for: task)
+        let providerName = profile(config.providerID)?.displayName ?? config.providerID
 
-        return VStack(alignment: .leading, spacing: 0) {
-            taskModelTrailingRow(label: "settings.ai.task.providerLabel") {
-                // HOM-AIPROVIDERS-2026-06-06：挂 provider logo，自定义 profile 名时仍能辨认服务商。
-                Picker("settings.ai.task.providerLabel", selection: taskProviderBinding(task)) {
-                    ForEach(availableProfiles) { profile in
-                        Label {
-                            Text(profile.displayName)
-                        } icon: {
-                            AIProviderIconView(provider: profile.provider, size: 14)
-                        }
-                        .tag(profile.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-            }
+        return AITaskModelPicker(
+            title: label,
+            profiles: profiles,
+            selection: taskModelChoiceBinding(task),
+            providerDisplayName: providerName
+        ) { provider in
+            enabledModels(providerID: provider.id, capability: task.requiredCapability)
+        }
+    }
 
-            Divider()
-
-            taskModelTrailingRow(label: "settings.ai.task.modelLabel") {
-                Picker("settings.ai.task.modelLabel", selection: taskModelBinding(task)) {
-                    if availableModels.isEmpty {
-                        Text("settings.ai.task.noAvailableModel")
-                            .tag("")
-                    } else {
-                        ForEach(availableModels) { model in
-                            Text(AnthropicModelCatalog.displayName(forAPIID: model.name)).tag(model.name)
-                        }
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-            }
-
-            Divider()
-
-            // 与「标签分类」同款：用 Toggle 自带的左标题 + 右开关，不要再套
-            // labelsHidden + 手写 HStack——后者在 Form 里会把开关撑得异常大、行高留白。
-            Toggle("settings.ai.task.customModelLabel", isOn: taskCustomEnabledBinding(task))
+    /// 自定义模型继承当前默认模型的服务商；原开关和名称绑定仍保留输入文本。
+    private func taskCustomModelConfiguration(_ task: AIModelTask) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("settings.ai.models.custom.enabled", isOn: taskCustomEnabledBinding(task))
                 .toggleStyle(.switch)
-                .padding(.vertical, 8)
-
-            if useCustom {
-                Divider()
-                taskModelTrailingRow(label: "settings.ai.task.customModelPlaceholder") {
-                    TextField("", text: taskCustomModelBinding(task))
+                .lineLimit(1)
+                .help(Text("settings.ai.models.custom.enabled"))
+            if taskConfig(task).useCustomModel {
+                LabeledContent {
+                    TextField("settings.ai.models.custom.name", text: taskCustomModelBinding(task))
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
                         .disableAutocorrection(true)
-                        .frame(maxWidth: .infinity)
+                } label: {
+                    Text("settings.ai.models.custom.name")
+                        .lineLimit(1)
+                        .help(Text("settings.ai.models.custom.name"))
                 }
             }
         }
     }
 
-    /// 设置行：左侧 label、右侧控件（一左一右）。
-    private func taskModelTrailingRow<Content: View>(
-        label: LocalizedStringKey,
-        @ViewBuilder content: () -> Content
+    /// LabeledContent 默认按首行基线排版；双行说明改用原生 HStack 让整个文本块与控件居中。
+    private func centeredModelSettingRow<Content: View, RowLabel: View>(
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder label: () -> RowLabel
     ) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            Text(label)
-                .foregroundStyle(.primary)
+            label()
+                .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 12)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
+    }
+
+    /// 语义搜索与知识库检索只保留一个向量模型入口，索引管理仍跳转到各自现有页面。
+    private var sharedEmbeddingSection: some View {
+        Section {
+            centeredModelSettingRow {
+                taskModelPicker(.embedding, label: "settings.ai.models.embedding.model")
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.ai.models.embedding.model")
+                        .lineLimit(1)
+                        .help(Text("settings.ai.models.embedding.model"))
+                    Text("settings.ai.models.embedding.help")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help(Text("settings.ai.models.embedding.help"))
+                }
+            }
+            Text("settings.ai.models.embedding.storageHint")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            LabeledContent("settings.ai.models.embedding.index.title") {
+                HStack(spacing: 12) {
+                    Button("settings.ai.models.embedding.index.repo") {
+                        NotificationCenter.default.post(name: .starcatJumpToSettingsTab, object: "ai.index")
+                    }
+                    .help(Text("settings.ai.models.embedding.index.repo"))
+                    Button("settings.ai.models.embedding.index.knowledge") {
+                        NotificationCenter.default.post(name: .starcatJumpToSettingsTab, object: "rag.retrieval")
+                    }
+                    .help(Text("settings.ai.models.embedding.index.knowledge"))
+                }
+                .buttonStyle(.link)
+                .controlSize(.regular)
+                .lineLimit(1)
+            }
+
+            centeredModelSettingRow {
+                Button("settings.ai.models.prompt.edit", systemImage: "text.quote") {
+                    promptEditingTask = .embedding
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("settings.ai.models.embedding.template.title")
+                        .lineLimit(1)
+                        .help(Text("settings.ai.models.embedding.template.title"))
+                    Text("settings.ai.models.embedding.template.help")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help(Text("settings.ai.models.embedding.template.help"))
+                }
+            }
+
+            DisclosureGroup(isExpanded: $isEmbeddingAdvancedExpanded) {
+                taskCustomModelConfiguration(.embedding)
+            } label: {
+                Text("settings.ai.task.customModelLabel")
+                    .lineLimit(1)
+                    .help(Text("settings.ai.task.customModelLabel"))
+            }
+            .disclosureGroupStyle(SettingsDisclosureGroupStyle(
+                accessibilityLabel: Text("settings.ai.task.customModelLabel")
+            ))
+        } header: {
+            SettingsSectionHeader("settings.ai.models.embedding.title", systemImage: "point.3.connected.trianglepath.dotted")
+        } footer: {
+            Text("settings.ai.models.embedding.footer")
+        }
+    }
+
+    /// 状态文案只对比当前任务的已存提示词与默认值，不写入或恢复任何配置。
+    private func isDefaultPrompt(_ task: AIModelTask) -> Bool {
+        let defaults: AIPromptConfiguration
+        switch task {
+        case .summary: defaults = AIDefaultPrompts.summary
+        case .tags: defaults = AIDefaultPrompts.tags
+        case .chat: defaults = AIDefaultPrompts.chat
+        case .embedding: defaults = AIDefaultPrompts.embedding
+        case .translation: defaults = AIDefaultPrompts.translation
+        }
+        return taskConfig(task).prompt == defaults
     }
 
     // MARK: - Parameters (已迁移到 AIModelListView 的齿轮 popover)
@@ -1415,131 +1586,6 @@ struct AISettingsTab: View {
                 self.settings.githubStarListAutoGroupingSettings = grouping
             }
         )
-    }
-
-    // MARK: - Prompt
-
-    /// HOM-68 follow-up v3 (dong4j 反馈 2026-06-05 22:40)：
-    /// - 任务 picker + "恢复默认" 之前同行抢宽度，picker 被挤；改成 picker
-    ///   `.labelsHidden().frame(maxWidth: .infinity)` 优先吃满宽度，按钮固定
-    ///   尺寸跟在右边；
-    /// - 两个标题用 `.frame(maxWidth: .infinity, alignment: .leading)`
-    ///   显式左对齐，避免 Form grouped 样式把它居中显示；
-    /// - 两个 TextEditor 固定高度：System 通常更长，给 180；User 给一半高度 80。
-    ///   TextEditor 在 macOS 上内置垂直滚动，超出高度自动出现滚动条，不再让长
-    ///   prompt 撑大整个设置面板。
-    private var promptSection: some View {
-        // Prompt 有完整默认值但仍属于本一级页面；常驻展示并保留原分隔节奏。
-        Section {
-            // 与模型配置同款：等宽铺满剩余宽度；重置按钮固定在右侧。
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 12) {
-                    EqualWidthSegmentedControl(
-                        items: AIModelTask.aiSettingsPageTasks,
-                        selection: $promptTask,
-                        title: { LocalizedStringKey($0.displayNameKey) }
-                    )
-                    .accessibilityLabel("settings.ai.prompt.task.pickerLabel")
-
-                    // HOM-126 follow-up (dong4j 反馈 2026-06-07)：「恢复默认」按钮去掉文字只保留 icon
-                    // （扫一眼就懂 = 旋转箭头），节省横向空间让左侧 segmented picker 不被挤；语义留在 tooltip。
-                    ResetIconButton(help: Text("settings.ai.prompt.restoreHelpFormat \(promptTask.displayName)")) {
-                        restoreDefaultPrompt(promptTask)
-                    }
-                }
-                .padding(.vertical, 10)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("settings.ai.prompt.system")
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    TextEditor(text: promptSystemBinding(promptTask))
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(height: 180)
-                        .disabled(!promptTask.supportsSystemPrompt)
-                        .opacity(promptTask.supportsSystemPrompt ? 1.0 : 0.5)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
-                        )
-                    if !promptTask.supportsSystemPrompt {
-                        Text("settings.ai.prompt.system.embeddingUnavailable")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 10)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("settings.ai.prompt.user")
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    TextEditor(text: promptUserBinding(promptTask))
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(height: 80)
-                        .disabled(!promptTask.supportsUserPromptTemplate)
-                        .opacity(promptTask.supportsUserPromptTemplate ? 1.0 : 0.5)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
-                        )
-                    if !promptTask.supportsUserPromptTemplate {
-                        Text("settings.ai.prompt.user.chatUnavailable")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 10)
-
-                Divider()
-
-                // 对齐设置页独立操作按钮右对齐规范：长文案收进 popover，底部只留入口。
-                HStack {
-                    Spacer(minLength: 0)
-                    promptPlaceholderHelpButton
-                }
-                .padding(.vertical, 10)
-            }
-            .onChange(of: promptTask) { _, _ in
-                isPromptPlaceholderPopoverPresented = false
-            }
-        } header: {
-            SettingsSectionHeader(
-                "settings.ai.prompt.title",
-                systemImage: "text.quote"
-            )
-        }
-    }
-
-    /// 底部入口：点开看 token + 含义，避免设置页底部一长段 bullet。
-    private var promptPlaceholderHelpButton: some View {
-        Button {
-            isPromptPlaceholderPopoverPresented.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "curlybraces")
-                    .font(.caption2.weight(.semibold))
-                Text("settings.ai.prompt.placeholders.open")
-                    .font(.caption.weight(.medium))
-                Image(systemName: "info.circle")
-                    .font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .help("settings.ai.prompt.placeholders.openHelp")
-        .popover(isPresented: $isPromptPlaceholderPopoverPresented, arrowEdge: .top) {
-            AIPromptPlaceholderPopover(catalog: AIPromptPlaceholderCatalog.catalog(
-                for: promptTask
-            ))
-                .appLocaleEnvironment()
-        }
     }
 
     // MARK: - AI 索引（向量搜索改进 2026-06-12）
@@ -2488,29 +2534,11 @@ struct AISettingsTab: View {
 
         let testingKey = apiKey(for: profile)
         do {
-            let client = try AIClientFactory.make(configuration: AIClientConfiguration(
-                providerID: profile.id,
-                provider: profile.provider,
+            let verified = try await AIProviderConnectionVerifier.verify(
+                profile: profile,
                 apiKey: testingKey,
-                baseURL: profile.baseURL,
-                chatModel: profile.models.first(where: { $0.capability == .chat })?.name ?? profile.provider.defaultChatModel,
-                embeddingModel: profile.models.first(where: { $0.capability == .embedding })?.name ?? profile.provider.defaultEmbeddingModel,
-                timeoutInterval: 60
-            ))
-            let models = try await client.listModels()
-
-            var verified = profile
-            if let anthropic = client as? AnthropicClient {
-                verified.baseURL = anthropic.probedBaseURL
-            }
-            // 去重 / 大目录不全开 / 容量上限：避免 OpenRouter 类目录在勾选时卡死主线程。
-            verified.mergeDiscoveredModels(
-                models,
                 referencedModelNames: referencedModelNames(for: profile.id)
             )
-            verified.isEnabled = true
-            verified.lastTestedAt = ISO8601DateFormatter.shared.string(from: Date())
-            verified.lastTestStatus = .success(modelCount: verified.models.count)
 
             try persistAPIKey(testingKey, forProvider: profile.id, allowsEmpty: profile.provider.allowsEmptyAPIKey)
 
@@ -2777,31 +2805,34 @@ struct AISettingsTab: View {
         )
     }
 
-    private func taskProviderBinding(_ task: AIModelTask) -> Binding<String> {
-        Binding(
-            get: { taskConfig(task).providerID },
-            set: { providerID in
-                updateTask(task) { config in
-                    config.providerID = providerID
-                    if let first = enabledModels(providerID: providerID, capability: task.requiredCapability).first {
-                        config.modelID = first.name
-                        config.customModelName = first.name
-                        config.useCustomModel = false
-                    }
-                }
-            }
+    /// 菜单身份同时包含服务商和模型；自定义项与不可用项只用于显示当前值。
+    private func taskModelChoice(_ task: AIModelTask) -> TaskModelChoice {
+        let config = taskConfig(task)
+        return TaskModelChoice(
+            providerID: config.providerID,
+            modelName: config.useCustomModel ? config.customModelName : config.modelID,
+            isCustom: config.useCustomModel
         )
     }
 
-    private func taskModelBinding(_ task: AIModelTask) -> Binding<String> {
+    /// 合并下拉的一次选择等价于原先先选服务商再选模型，但只写入一次任务配置。
+    private func taskModelChoiceBinding(_ task: AIModelTask) -> Binding<TaskModelChoice> {
         Binding(
-            get: { taskConfig(task).modelID },
-            set: { modelName in
-                settings.selectLocalAIModel(named: modelName, providerID: taskConfig(task).providerID)
+            get: { taskModelChoice(task) },
+            set: { choice in
+                guard !choice.isCustom,
+                      eligibleVerifiedProfiles(for: task).contains(where: { $0.id == choice.providerID }),
+                      enabledModels(providerID: choice.providerID, capability: task.requiredCapability)
+                        .contains(where: { $0.name == choice.modelName }) else { return }
+                settings.selectLocalAIModel(named: choice.modelName, providerID: choice.providerID)
                 updateTask(task) { config in
-                    config.modelID = modelName
-                    // 选列表模型时关掉自定义开关，但保留 customModelName，
-                    // 避免用户关掉/重开开关后发现上次手填内容被冲掉。
+                    if config.providerID != choice.providerID,
+                       let first = enabledModels(providerID: choice.providerID, capability: task.requiredCapability).first {
+                        // 原服务商切换会预填首个模型名称；同服务商切换仍保留手填文本。
+                        config.customModelName = first.name
+                    }
+                    config.providerID = choice.providerID
+                    config.modelID = choice.modelName
                     config.useCustomModel = false
                 }
             }
@@ -2947,9 +2978,7 @@ struct AISettingsTab: View {
         }
     }
 
-    // `groupedEnabledModels(for:)` 已删除：HOM-68 follow-up v3 把"任务 → 模型"下拉
-    // 收紧到只列当前 provider 的模型（见 `taskModelRow`），消除跨 provider 同名模型
-    // 同时选中的视觉 bug。
+    // 统一菜单仍逐服务商过滤，选择身份使用 TaskModelChoice，避免跨服务商同名模型串选。
     private func enabledModels(providerID: String, capability: AIModelCapability) -> [AIModelDescriptor] {
         guard let profile = profile(providerID), profile.isVerifiedConfiguration else { return [] }
         guard capability != .embedding || profile.provider.supportsEmbeddingEndpoint else { return [] }
@@ -3060,7 +3089,8 @@ private struct SettingsWindowCloseListener: NSViewRepresentable {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor [weak self] in
+                // queue 已固定为 main；同步失效新增会话，防止排队的网络成功回调抢先保存。
+                MainActor.assumeIsolated {
                     self?.onClose?()
                 }
             }

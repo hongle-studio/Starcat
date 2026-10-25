@@ -214,7 +214,7 @@ enum AgentRuntimeInfoKind: Sendable {
     var noteKey: LocalizedStringKey {
         switch self {
         case .codex: "settings.integration.agentRuntime.codex.info.note"
-        case .deepSeek: "settings.integration.agentRuntime.deepSeek.info.note"
+        case .deepSeek: "settings.integration.agentRuntime.deepSeek.info.note.modelsSettings"
         }
     }
 }

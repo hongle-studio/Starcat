@@ -95,10 +95,10 @@ struct RAGWorkspaceError: Identifiable {
 
     var messageKey: String {
         switch kind {
-        case .configuration: return "rag.workspace.error.configuration.message"
-        case .embeddingConfiguration: return "rag.workspace.error.embeddingConfiguration.message"
+        case .configuration: return "rag.workspace.error.configuration.message.modelsSettings"
+        case .embeddingConfiguration: return "rag.workspace.error.embeddingConfiguration.message.modelsSettings"
         case .embeddingRequest: return "rag.workspace.error.embeddingRequest.message"
-        case .authentication: return "rag.workspace.error.authentication.message"
+        case .authentication: return "rag.workspace.error.authentication.message.modelsSettings"
         case .network: return "rag.workspace.error.network.message"
         case .timeout: return "rag.workspace.error.timeout.message"
         case .planner: return "rag.workspace.error.planner.message"
@@ -132,7 +132,7 @@ struct RAGWorkspaceError: Identifiable {
     var actionKey: String {
         switch action {
         case .retry: return "rag.workspace.error.action.retry"
-        case .openAISettings: return "rag.workspace.error.action.openAISettings"
+        case .openAISettings: return "rag.workspace.error.action.openAISettings.modelsSettings"
         case .checkNetwork: return "rag.workspace.error.action.checkNetwork"
         case .removeAttachments: return "rag.workspace.error.action.removeAttachments"
         case .dismiss: return "common.close"

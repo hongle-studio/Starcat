@@ -77,43 +77,29 @@ struct GeneralSettingsView: View {
         @Bindable var settings = settings
 
         return Section {
-            VStack(alignment: .leading, spacing: 6) {
-                LabeledContent {
-                    Picker("settings.general.appearanceMode", selection: appearanceSelection) {
-                        ForEach(AppearanceMode.allCases) { mode in
-                            Label(mode.displayName, systemImage: mode.systemImage)
-                                .tag(mode)
-                        }
+            centeredPreferenceRow(
+                "settings.general.appearanceMode",
+                description: "settings.general.appearanceMode.description"
+            ) {
+                Picker("settings.general.appearanceMode", selection: appearanceSelection) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Label(mode.displayName, systemImage: mode.systemImage)
+                            .tag(mode)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                } label: {
-                    Text("settings.general.appearanceMode")
                 }
-
-                Text("settings.general.appearanceMode.description")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .pickerStyle(.segmented)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                LabeledContent {
-                    Picker("settings.general.interfaceScale", selection: $settings.interfaceScale) {
-                        ForEach(InterfaceScale.allCases) { scale in
-                            Text(scale.displayName).tag(scale)
-                        }
+            centeredPreferenceRow(
+                "settings.general.interfaceScale",
+                description: "settings.general.interfaceScale.description"
+            ) {
+                Picker("settings.general.interfaceScale", selection: $settings.interfaceScale) {
+                    ForEach(InterfaceScale.allCases) { scale in
+                        Text(scale.displayName).tag(scale)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                } label: {
-                    Text("settings.general.interfaceScale")
                 }
-
-                Text("settings.general.interfaceScale.description")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .pickerStyle(.segmented)
             }
 
             languagePreferenceRow
@@ -149,7 +135,10 @@ struct GeneralSettingsView: View {
     private var languagePreferenceRow: some View {
         @Bindable var localeStore = localeStore
 
-        return VStack(alignment: .leading, spacing: 6) {
+        return centeredPreferenceRow(
+            "settings.general.language.label",
+            description: "settings.general.language.description"
+        ) {
             Picker(selection: $localeStore.selection) {
                 ForEach(AppLocale.allCases) { option in
                     Text(option.displayName).tag(option)
@@ -158,11 +147,6 @@ struct GeneralSettingsView: View {
                 Text("settings.general.language.label")
             }
             .pickerStyle(.menu)
-
-            Text("settings.general.language.description")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -269,7 +253,10 @@ struct GeneralSettingsView: View {
     private var contributionStyleRow: some View {
         @Bindable var settings = settings
 
-        return VStack(alignment: .leading, spacing: 6) {
+        return centeredPreferenceRow(
+            "settings.snakeStyle.title",
+            description: "settings.snakeStyle.description"
+        ) {
             Picker(selection: $settings.snakeStyle) {
                 ForEach(SnakeStyle.allCases) { style in
                     Label(LocalizedStringKey(style.displayNameKey), systemImage: style.systemImage)
@@ -279,29 +266,66 @@ struct GeneralSettingsView: View {
                 Text("settings.snakeStyle.title")
             }
             .pickerStyle(.menu)
-
-            Text("settings.snakeStyle.description")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    /// 所有说明跟随对应开关，不增加一个需要保存的表单草稿层。
+    /// 所有说明跟随对应开关，控件按整个文本块居中；不增加新的设置或表单草稿。
     private func preferenceToggle(
         _ title: LocalizedStringKey,
         description: LocalizedStringKey,
         isOn: Binding<Bool>
     ) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        centeredPreferenceRow(title, description: description, onLabelActivate: {
+            isOn.wrappedValue.toggle()
+        }) {
+            Toggle(title, isOn: isOn)
+                .toggleStyle(.switch)
+                // 隐藏内置标签后保留开关的原生尺寸，避免在 Form 内被拉伸。
+                .fixedSize()
         }
+    }
+
+    /// 备注属于左侧标签块，不能放在整行下方；显式居中也避免首行基线将控件顶到上方。
+    private func centeredPreferenceRow<Control: View>(
+        _ title: LocalizedStringKey,
+        description: LocalizedStringKey,
+        onLabelActivate: (() -> Void)? = nil,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        let label = VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .help(Text(title))
+            Text(description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        return HStack(alignment: .center, spacing: 12) {
+            if let onLabelActivate {
+                // 保留点击开关原标签即可切换的行为；键盘和读屏只聚焦右侧原生开关，避免双入口。
+                Button(action: onLabelActivate) {
+                    label.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .focusable(false)
+                .accessibilityHidden(true)
+            } else {
+                label
+            }
+
+            Spacer(minLength: 12)
+
+            control()
+                .labelsHidden()
+                .accessibilityLabel(Text(title))
+                .accessibilityHint(Text(description))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Sparkle 配置仅在 Direct 页挂载，继续使用现有控制器与可用性判定。

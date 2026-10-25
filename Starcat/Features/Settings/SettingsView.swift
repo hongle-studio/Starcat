@@ -141,7 +141,7 @@ struct SettingsView: View {
             case .shortcuts:    return "settings.general.shortcuts"
             case .pro:          return "settings.navigation.item.proLicense"
             case .privacy:      return "settings.navigation.item.privacyPermissions"
-            case .aiModels:     return "settings.navigation.item.aiModels"
+            case .aiModels:     return "settings.models.title"
             case .translation:  return "settings.translation.title"
             case .aiAutomation: return "settings.navigation.item.aiAutomation"
             case .aiIndexContext: return "settings.navigation.item.aiIndexContext"
@@ -490,9 +490,9 @@ struct SettingsView: View {
                                keywords: ["遥测", "诊断数据", "telemetry", "privacy"]),
             SettingsSearchItem("privacy.ai", titleKey: "settings.privacy.ai.title", tab: .privacy,
                                keywords: ["AI 隐私", "模型数据", "api key", "privacy"]),
-            SettingsSearchItem("ai", titleKey: "settings.navigation.item.aiModels", tab: .aiModels,
+            SettingsSearchItem("ai", titleKey: "settings.models.title", tab: .aiModels,
                                keywords: ["人工智能", "模型", "provider", "model", "api key"]),
-            SettingsSearchItem("ai.provider", titleKey: "settings.ai.provider.sectionTitle", tab: .aiModels,
+            SettingsSearchItem("ai.provider", titleKey: "settings.models.provider.section", tab: .aiModels,
                                keywords: ["服务商", "provider", "api key"]),
             SettingsSearchItem("ai.chat", titleKey: "settings.ai.taskModels.title", tab: .aiModels, target: "ai.chat",
                                keywords: ["对话", "任务模型", "chat", "model"]),

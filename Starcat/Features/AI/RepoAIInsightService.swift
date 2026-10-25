@@ -30,9 +30,9 @@ enum RepoAIInsightError: Error, LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey(let task):
-            return String(format: String.l10n("ai.insight.error.missingAPIKeyFormat"), task)
+            return String(format: String.l10n("ai.insight.error.missingAPIKeyFormat.modelsSettings"), task)
         case .missingProvider(let task):
-            return String(format: String.l10n("ai.insight.error.missingTaskProviderFormat"), task)
+            return String(format: String.l10n("ai.insight.error.missingTaskProviderFormat.modelsSettings"), task)
         case .invalidJSON:
             return String.l10n("ai.insight.error.invalidJSON")
         }

@@ -635,7 +635,7 @@ struct SidebarView: View {
                     showBackgroundTaskPopover = false
                     openAISettings()
                 } label: {
-                    Label("sidebar.autoTidy.popover.openAISettings", systemImage: "gearshape")
+                    Label("sidebar.autoTidy.popover.openAISettings.modelsSettings", systemImage: "gearshape")
                 }
             }
             .controlSize(.small)
@@ -692,7 +692,7 @@ struct SidebarView: View {
                     showBackgroundTaskPopover = false
                     openAISettings()
                 } label: {
-                    Label("sidebar.autoTidy.popover.openAISettings", systemImage: "gearshape")
+                    Label("sidebar.autoTidy.popover.openAISettings.modelsSettings", systemImage: "gearshape")
                 }
             }
             .controlSize(.small)
