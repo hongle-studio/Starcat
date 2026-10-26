@@ -250,8 +250,7 @@ struct RepoDetailView: View {
         } else {
             try await dependencies.starActionService.toggle(repo: repo)
         }
-        await viewModel.refreshSidebar()
-        await viewModel.reloadItems(forceRefresh: true)
+        await viewModel.refreshAfterExternalStarChange()
     }
 
     // R-01 §3.2.3 Phase B3（2026-06-10）：本 view 的 trending 分支全部交给

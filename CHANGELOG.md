@@ -28,6 +28,9 @@ Release notes for the Mac App Store edition of Starcat.
 
 ### Fixes
 
+- Unstarred repositories: Repositories no longer reappear in lists because of stale sync results or cached data after you unstar them.
+- Unstar confirmation: The single-card dialog uses a narrower width to avoid excessive empty space.
+
 - Stars sync: Prevents background grouping work from keeping refresh active; pending organization authorization writes are retried only after a manual refresh.
 - AI organization tabs: Repository grouping and tag organization tabs keep a stable size as counts change, without shifting when switching states.
 - License filter popover: Keeps its size and options stable during repeated selections and clearing, while results and counts continue to update.
