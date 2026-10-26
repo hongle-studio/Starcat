@@ -117,9 +117,9 @@ struct RepoDetailView: View {
                     onLanguageTapped: { language in
                         viewModel.toggleTemporaryLanguageFilterFromDetail(language)
                     },
-                    onStarTapped: {
+                    onStarTapped: { cleanupScope in
                         // §3.2.3 状态机：throws 让 StarStatChipButton 抖动 + 短暂红色（不弹 alert）
-                        try await handleStarTapped(repo: repo)
+                        try await handleStarTapped(repo: repo, cleanupScope: cleanupScope)
                     }
                     // v2.1 修订（2026-06-11）：撤销 §3.2.9 给 Scaffold 加 `onRefresh:` +
                     // 浮动刷新按钮的设计 —— Manage 详情同位置已经有 `cacheFooter` 内的
@@ -236,13 +236,20 @@ struct RepoDetailView: View {
     ///
     /// 未登录 → `authSession.signIn()` 触发设备流后**不抛错 return**(chip 不抖,
     /// 这不是失败语义)。
-    private func handleStarTapped(repo: Repo) async throws {
+    private func handleStarTapped(
+        repo: Repo,
+        cleanupScope: RepositoryUnstarCleanupScope?
+    ) async throws {
         guard authSession.state.isAuthenticated else {
             // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
             authSession.requestLoginSheet()
             return
         }
-        try await dependencies.starActionService.toggle(repo: repo)
+        if let cleanupScope {
+            try await dependencies.starActionService.unstar(repo: repo, cleanupScope: cleanupScope)
+        } else {
+            try await dependencies.starActionService.toggle(repo: repo)
+        }
         await viewModel.refreshSidebar()
         await viewModel.reloadItems(forceRefresh: true)
     }
@@ -904,7 +911,7 @@ struct ReadmeStateView: View {
             // 不被「空态藏 footer」挡在缓存门外（与 loaded 的 cacheFooter 同结构）。
             VStack(spacing: 0) {
                 EmptyStateView(
-                    systemImage: "doc.text",
+                    systemImage: BusinessIcon.Symbol.readme.systemImage,
                     title: "readme.empty",
                     subtitle: "readme.emptyDescription"
                 )

@@ -126,8 +126,8 @@ struct ActivityDetailScaffoldShell: View {
             // v2.0:tooltip 与 toggle 行为对齐,直接派生自 `repo.isStarred`。
             starHelpKey: repo.isStarred ? "repo.unstar" : "repo.star",
             topBanner: userRepoActivityBanner,
-            onStarTapped: {
-                try await handleStarTapped(repo: repo)
+            onStarTapped: { cleanupScope in
+                try await handleStarTapped(repo: repo, cleanupScope: cleanupScope)
             }
         ) { onScrollReport in
             ActivityRepoDetailContent(
@@ -194,13 +194,20 @@ struct ActivityDetailScaffoldShell: View {
     ///
     /// **D-24 修订**：toggle 完成后**用 registry 派生 isStarred 显式更新 displayRepo**,
     /// 让 hero / 三段当帧拿到真值(不依赖父 View selectedActivityItem 重新派发)。
-    private func handleStarTapped(repo: Repo) async throws {
+    private func handleStarTapped(
+        repo: Repo,
+        cleanupScope: RepositoryUnstarCleanupScope?
+    ) async throws {
         guard authSession.state.isAuthenticated else {
             // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
             authSession.requestLoginSheet()
             return
         }
-        try await dependencies.starActionService.toggle(repo: repo)
+        if let cleanupScope {
+            try await dependencies.starActionService.unstar(repo: repo, cleanupScope: cleanupScope)
+        } else {
+            try await dependencies.starActionService.toggle(repo: repo)
+        }
 
         displayRepo = dependencies.starredRegistry.applyingDisplayState(to: repo)
 

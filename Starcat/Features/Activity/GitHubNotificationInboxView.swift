@@ -27,9 +27,17 @@ struct GitHubNotificationInboxView: View {
     @State private var lastFetchedAt: Date?
     @State private var selectedThreadId: String?
     @State private var isShowingHistoryResyncConfirmation = false
+    @State private var isQuickSearchExpanded = false
+    @State private var quickSearchDraft = ""
+    @State private var quickSearchQuery = ""
 
     private var inbox: GitHubNotificationInboxService {
         dependencies.githubNotificationInboxService
+    }
+
+    /// 首次页面仍在加载时提交搜索，待行数或游标状态变化后需要自动重试补页。
+    private var quickSearchLoadIdentity: String {
+        "\(quickSearchQuery)|\(rows.count)|\(hasMore)"
     }
 
     var body: some View {
@@ -70,6 +78,9 @@ struct GitHubNotificationInboxView: View {
                 state: LibraryState.parse(raw)
             )
         }
+        .task(id: quickSearchLoadIdentity) {
+            await loadUntilSearchMatchIfNeeded()
+        }
         // dwell 活在 InboxService 上。中栏 SwiftUI 重建 / 切走时不要 cancelAllDwells，
         // 否则 pending 会被恢复成未读，点开看过的条目会反复亮蓝点。
         .starcatRefreshCommand(
@@ -100,21 +111,40 @@ struct GitHubNotificationInboxView: View {
         }
     }
 
+    private var toolbarSyncDescription: String? {
+        lastFetchedAt.map {
+            String(format: String.l10n("activity.notification.lastSynced"), RelativeTimeText.pastEvent($0, locale: locale))
+        }
+    }
+
     /// 只保留类型下拉 + 同步行，和星标中栏 `manageFilterBar` 同高。
     /// 总数 / 未读走系统 `navigationSubtitle`（面包屑下一行），不要再叠 `通知 42` 标题。
     @ViewBuilder
     private var toolbar: some View {
-        HStack(spacing: 8) {
+        QuickSearchToolbarContent(
+            isExpanded: $isQuickSearchExpanded,
+            draft: $quickSearchDraft,
+            committedQuery: quickSearchQuery,
+            placeholder: "list.quickSearch.activityPlaceholder",
+            onSubmit: { query in
+                let normalizedQuery = QuickSearchTextMatcher.normalized(query)
+                quickSearchQuery = normalizedQuery
+                quickSearchDraft = normalizedQuery
+            },
+            onClear: { quickSearchQuery = "" }
+        ) {
             GitHubNotificationSegmentMenu(selection: $segment, locale: locale)
                 .onChange(of: segment) { _, newValue in
+                    resetQuickSearch()
                     inbox.listSegment = newValue
                     Task { await reloadFirstPage() }
                 }
 
             Spacer(minLength: 8)
+                .layoutPriority(AdaptiveToolbarStatusText.spacerPriority)
 
-            if let lastFetchedAt {
-                Text(String(format: String.l10n("activity.notification.lastSynced"), RelativeTimeText.pastEvent(lastFetchedAt, locale: locale)))
+            if let text = toolbarSyncDescription {
+                AdaptiveToolbarStatusText(text: text)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -124,7 +154,7 @@ struct GitHubNotificationInboxView: View {
             SyncIconButton(
                 isRefreshing: inbox.isSyncing,
                 disabled: inbox.isSyncing,
-                tooltip: String.l10n("activity.refresh")
+                tooltip: AdaptiveToolbarStatusText.refreshTooltip(action: String.l10n("activity.refresh"), status: toolbarSyncDescription)
             ) {
             Task {
                 await inbox.sync(forceOrganizationIssues: true)
@@ -192,8 +222,28 @@ struct GitHubNotificationInboxView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if rows.isEmpty {
             emptyState
+        } else if visibleRows.isEmpty {
+            searchEmptyState
         } else {
             timeline
+        }
+    }
+
+    /// 通知服务按游标分页；先过滤已加载行，并在当前页无命中时继续补页，直到命中或耗尽。
+    private var visibleRows: [GitHubInboxTimelineRow] {
+        rows.filter { row in
+            let display = timelineDisplay(for: row)
+            return QuickSearchTextMatcher.matches(
+                quickSearchQuery,
+                candidates: [
+                    display.actorLogin,
+                    display.headline,
+                    display.fullName,
+                    display.snippet,
+                    display.subjectType,
+                    display.language
+                ]
+            )
         }
     }
 
@@ -201,7 +251,7 @@ struct GitHubNotificationInboxView: View {
         let calendar = Calendar.current
         let now = Date()
         var buckets: [GitHubNotificationDayGroup: [GitHubInboxTimelineRow]] = [:]
-        for row in rows {
+        for row in visibleRows {
             let date = GitHubNotificationMapper.parseDate(row.occurredAt) ?? now
             let group = GitHubNotificationMapper.dayGroup(for: date, now: now, calendar: calendar)
             buckets[group, default: []].append(row)
@@ -236,8 +286,8 @@ struct GitHubNotificationInboxView: View {
                         )
                         .automaticListPagination(
                             appearingIndex: rowIndex,
-                            visibleItemCount: rows.count,
-                            loadedItemCount: rows.count,
+                            visibleItemCount: visibleRows.count,
+                            loadedItemCount: visibleRows.count,
                             hasMore: hasMore,
                             isLoading: isLoadingPage,
                             identity: "notification-\(String(describing: segment))-\(pagingGeneration)"
@@ -288,6 +338,12 @@ struct GitHubNotificationInboxView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+    }
+
+    private var searchEmptyState: some View {
+        ContentUnavailableView {
+            Label("list.quickSearch.empty", systemImage: "magnifyingglass")
+        }
     }
 
     private var missingScopeEmpty: some View {
@@ -375,6 +431,23 @@ struct GitHubNotificationInboxView: View {
         if let last = page.rows.last {
             self.cursor = last.cursor
         }
+    }
+
+    /// 搜索词在当前游标页无命中时自动补页，否则列表没有可见行触发滚动预取。
+    private func loadUntilSearchMatchIfNeeded() async {
+        guard !quickSearchQuery.isEmpty else { return }
+        while visibleRows.isEmpty, hasMore, !Task.isCancelled {
+            let previousCount = rows.count
+            await loadNextPageIfNeeded()
+            // 若另一个首页/分页请求仍在执行，本轮没有推进游标；直接退出，避免空转占用主线程。
+            guard rows.count > previousCount else { return }
+        }
+    }
+
+    private func resetQuickSearch() {
+        isQuickSearchExpanded = false
+        quickSearchDraft = ""
+        quickSearchQuery = ""
     }
 
     private func consumePendingOpenIfNeeded() {
@@ -694,14 +767,12 @@ private struct GitHubNotificationSegmentMenu: View {
             }
             .pickerStyle(.inline)
         } label: {
+            // 与共享排序菜单一致，只保留 Menu 自带的系统下拉指示器。
             HStack(spacing: 8) {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .foregroundStyle(.secondary)
                 Text(verbatim: selection.displayTitle(locale: locale))
                     .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             .accessibilityLabel(GitHubNotificationMapper.copy(locale, zh: "筛选", en: "Filter"))
             .accessibilityValue(selection.displayTitle(locale: locale))

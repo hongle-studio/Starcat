@@ -60,17 +60,17 @@ enum AIModelCapability: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// 设置页能力 Picker / 行标签用的 SF Symbol。
-    var systemImage: String {
+    /// 能力图标与本地模型分类同源；向量维度不再借用 MCP 的连接图形。
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .chat:      return "bubble.left.and.bubble.right"
-        case .embedding: return "point.3.connected.trianglepath.dotted"
-        case .rerank:    return "arrow.up.arrow.down"
-        case .vision:    return "eye"
-        case .video:     return "video"
-        case .tts:       return "speaker.wave.2"
-        case .asr:       return "waveform"
-        case .unknown:   return "questionmark.circle"
+        case .chat:      return .system("bubble.left.and.bubble.right")
+        case .embedding: return .business(.embedding)
+        case .rerank:    return .system("arrow.up.arrow.down")
+        case .vision:    return .system("eye")
+        case .video:     return .system("video")
+        case .tts:       return .system("speaker.wave.2")
+        case .asr:       return .system("waveform")
+        case .unknown:   return .system("questionmark.circle")
         }
     }
 

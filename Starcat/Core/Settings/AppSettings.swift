@@ -928,6 +928,13 @@ final class AppSettings {
         didSet { persistJSON(key: Keys.globalFilterLanguages, value: Self.normalizedLanguageList(globalFilterLanguages)) }
     }
 
+    /// 主窗口许可证多选；空数组为全部，持久化排序后的规范值，避免选择次序影响缓存。
+    var globalFilterLicenses: [String] {
+        didSet { persistJSON(key: Keys.globalFilterLicenses, value: licenseFilter.persistedValues) }
+    }
+
+    var licenseFilter: RepoLicenseFilter { RepoLicenseFilter(globalFilterLicenses) }
+
     /// toolbar 全局 Wiki 状态筛选。
     var wikiAvailabilityFilter: RepoSignalAvailabilityFilter {
         didSet { persist(key: Keys.wikiAvailabilityFilter, value: wikiAvailabilityFilter.rawValue) }
@@ -1946,6 +1953,9 @@ final class AppSettings {
             key: Keys.globalFilterLanguages,
             defaults: defaults
         ).map(Self.normalizedLanguageList) ?? []
+        self.globalFilterLicenses = RepoLicenseFilter(Self.decodeJSON(
+            [String].self, key: Keys.globalFilterLicenses, defaults: defaults
+        ) ?? []).persistedValues
         self.wikiAvailabilityFilter = defaults.string(forKey: Keys.wikiAvailabilityFilter)
             .flatMap(RepoSignalAvailabilityFilter.init(rawValue:)) ?? .unknown
         self.healthAvailabilityFilter = defaults.string(forKey: Keys.healthAvailabilityFilter)
@@ -2441,6 +2451,7 @@ final class AppSettings {
         repoLanguageFilter = .all
         interestedLanguages = []
         globalFilterLanguages = []
+        globalFilterLicenses = []
         wikiAvailabilityFilter = .unknown
         healthAvailabilityFilter = .unknown
         openSSFAvailabilityFilter = .unknown
@@ -3045,6 +3056,7 @@ final class AppSettings {
         static let repoLanguageFilter = "settings.repoLanguageFilter"
         static let interestedLanguages = "settings.filters.interestedLanguages.v1"
         static let globalFilterLanguages = "settings.filters.global.languages.v1"
+        static let globalFilterLicenses = "settings.filters.global.licenses.v1"
         static let wikiAvailabilityFilter = "settings.filters.global.wikiAvailability.v1"
         static let healthAvailabilityFilter = "settings.filters.global.healthAvailability.v1"
         static let openSSFAvailabilityFilter = "settings.filters.global.openSSFAvailability.v1"
@@ -3170,6 +3182,7 @@ final class AppSettings {
             repoLanguageFilter,
             interestedLanguages,
             globalFilterLanguages,
+            globalFilterLicenses,
             wikiAvailabilityFilter,
             healthAvailabilityFilter,
             openSSFAvailabilityFilter,

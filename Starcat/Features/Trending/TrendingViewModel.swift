@@ -156,6 +156,8 @@ final class TrendingViewModel {
 
     /// 全量 repo（已排序已筛选）。仅 ViewModel 内部用于切片与 `hasMore` 判断，不对外暴露。
     private var allRepos: [TrendingRepo] = []
+    /// 从 pipeline 的完整原始桶聚合，不从当前可见页提取选项。
+    private(set) var licenseOptions: [String] = []
 
     /// 已排序但尚未应用全局筛选的候选列表。
     ///
@@ -649,6 +651,7 @@ final class TrendingViewModel {
             let identityChanged = queryChanged || oldIDs != newIDs
 
             filterCandidateRepos = snapshot.allRepos
+            licenseOptions = RepoLicenseFilter.options(snapshot.allRepos.map(\.license))
             allRepos = snapshot.repos
             publishedRepoIdentityIDs = snapshot.identityIDs
             scoreCache = snapshot.scores

@@ -11,13 +11,13 @@
 import SwiftUI
 
 extension RAGChunkSource {
-    /// 来源类型 → SF Symbol；芯片与右侧引用列表 / 命中分片 popover 必须一致。
+    /// 来源复用详情页的内容图标；不混用圆形/无圆形版本，也不把摘要误画成翻译。
     var systemImageName: String {
         switch self {
-        case .readme: return "books.vertical.circle"
-        case .notes: return "square.and.pencil.circle"
-        case .summary: return "character.bubble"
-        case .metadata: return "tag.circle"
+        case .readme: return BusinessIcon.Symbol.readme.systemImage
+        case .notes: return BusinessIcon.Symbol.notes.systemImage
+        case .summary: return BusinessIcon.Symbol.summary.systemImage
+        case .metadata: return BusinessIcon.Symbol.metadata.systemImage
         }
     }
 
@@ -46,13 +46,13 @@ extension RAGCitationSource {
     /// 两个 XML 是仓库级临时证据，使用独立图标；其它来源保持与分片一致。
     var systemImageName: String {
         switch self {
-        case .readme: return "books.vertical.circle"
-        case .notes: return "square.and.pencil.circle"
-        case .summary: return "character.bubble"
-        case .metadata: return "tag.circle"
-        case .knowledgeBaseMetadata: return "cylinder.split.1x2"
-        case .repositoryInsights: return "gauge.with.dots.needle.bottom.0percent"
-        case .repoContext: return "brain"
+        case .readme: return BusinessIcon.Symbol.readme.systemImage
+        case .notes: return BusinessIcon.Symbol.notes.systemImage
+        case .summary: return BusinessIcon.Symbol.summary.systemImage
+        case .metadata: return BusinessIcon.Symbol.metadata.systemImage
+        case .knowledgeBaseMetadata: return BusinessIcon.Symbol.knowledgeMetadata.systemImage
+        case .repositoryInsights: return BusinessIcon.Symbol.repositoryInsights.systemImage
+        case .repoContext: return BusinessIcon.Symbol.codeContext.systemImage
         }
     }
 

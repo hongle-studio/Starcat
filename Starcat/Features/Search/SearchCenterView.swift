@@ -2871,14 +2871,14 @@ private struct SearchRemoteRepoDetailView: View {
 
     private func statsRow(repo: Repo) -> some View {
         HStack(spacing: 14) {
-            statItem(systemImage: "star", value: "\(effectiveStarsCount(for: repo))", iconColor: .star)
-            statItem(systemImage: "tuningfork", value: "\(repo.forksCount)", iconColor: .fork)
+            statItem(icon: .system("star"), value: "\(effectiveStarsCount(for: repo))", iconColor: .star)
+            statItem(icon: .business(.forkCount), value: "\(repo.forksCount)", iconColor: .fork)
 
             // open_issues_count 在 GitHub 设计里是 "issue + PR 合计"，tooltip 提示
             // 避免用户误读为只有 issues。值为 nil 时整个 stat 隐藏（不显示 "—"）。
             if let openIssues = repo.openIssuesCount {
                 statItem(
-                    systemImage: "exclamationmark.circle",
+                    icon: .system("exclamationmark.circle"),
                     value: "\(openIssues)",
                     iconColor: .issues,
                     tooltipKey: "search.detail.stat.openIssues.tooltip"
@@ -2888,7 +2888,7 @@ private struct SearchRemoteRepoDetailView: View {
             // default_branch 在大多数 repo 是 "main"；它的价值不在炫数据，而在
             // 让用户判断该 repo 还在用旧的 master 默认分支（往往代表久未维护）。
             if let branch = repo.defaultBranch, !branch.isEmpty {
-                statItem(systemImage: "arrow.triangle.branch", value: branch, iconColor: .branch)
+                statItem(icon: .system("arrow.triangle.branch"), value: branch, iconColor: .branch)
             }
 
             // language 也作为统计行的一员（沿用 UnifiedRepoRow / metadata pill 风格）；
@@ -2896,7 +2896,7 @@ private struct SearchRemoteRepoDetailView: View {
             // 「数据维度」而非「状态」。
             if let language = repo.language, !language.isEmpty {
                 statItem(
-                    systemImage: "chevron.left.forwardslash.chevron.right",
+                    icon: .system("chevron.left.forwardslash.chevron.right"),
                     value: language,
                     iconColor: .language
                 )
@@ -2908,7 +2908,7 @@ private struct SearchRemoteRepoDetailView: View {
 
     @ViewBuilder
     private func statItem(
-        systemImage: String,
+        icon: BusinessIcon.Source,
         value: String,
         iconColor: StatSemanticColor,
         tooltipKey: LocalizedStringKey? = nil
@@ -2920,8 +2920,7 @@ private struct SearchRemoteRepoDetailView: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         } icon: {
-            Image(systemName: systemImage)
-                .font(interfaceScale.font(.captionSmall, weight: .medium))
+            BusinessIcon(source: icon, pointSize: 11 * interfaceScale.multiplier, weight: .medium)
                 .foregroundStyle(tint)
         }
         .labelStyle(.titleAndIcon)

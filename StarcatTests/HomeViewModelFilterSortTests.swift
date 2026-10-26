@@ -94,6 +94,103 @@ struct HomeViewModelFilterSortTests {
         )
     }
 
+    @Test("许可证全局状态在数据库与内存列表回切一致，重置不保留旧缓存")
+    func licenseGlobalStateAndReset() async throws {
+        let (vm, db, _) = try makeSUT()
+        for id in 1...3 {
+            try await insertRepo(db, id: Int64(id), fullName: "license/repo\(id)", stars: id,
+                                 starredAt: "2026-05-01T00:00:00Z", language: "Swift")
+        }
+        try await db.writer.write { db in
+            try db.execute(sql: "UPDATE repos SET license = 'MIT' WHERE id = 1")
+            try db.execute(sql: "UPDATE repos SET license = 'Apache-2.0' WHERE id = 2")
+        }
+        await vm.reloadItems()
+        vm.licenseFilter = RepoLicenseFilter(["MIT", "Apache-2.0"])
+        await vm.awaitPendingListReloadForTesting()
+        #expect(Set(vm.items.map(\.id)) == [1, 2])
+        #expect(vm.hasActiveFilter)
+        #expect(vm.persistentGlobalFilterState.licenseFilter == vm.licenseFilter)
+        vm.licenseFilter = RepoLicenseFilter([RepoLicenseFilter.unknownKey])
+        await vm.awaitPendingListReloadForTesting()
+        #expect(vm.items.map(\.id) == [3])
+        vm.licenseFilter = RepoLicenseFilter(["MIT", "Apache-2.0"])
+        await vm.awaitPendingListReloadForTesting()
+        #expect(Set(vm.items.map(\.id)) == [1, 2])
+        vm.resetAllFilters()
+        await vm.awaitPendingListReloadForTesting()
+        #expect(!vm.licenseFilter.isActive)
+        #expect(Set(vm.items.map(\.id)) == [1, 2, 3])
+    }
+
+    @Test("许可证候选在连续筛选和清空期间保持稳定，过期计数仍不可用")
+    func licenseOptionsSurviveFilterCountInvalidation() async throws {
+        let (vm, db, _) = try makeSUT()
+        for id in 1...3 {
+            try await insertRepo(db, id: Int64(id), fullName: "license/option\(id)", stars: id,
+                                 starredAt: "2026-05-01T00:00:00Z")
+        }
+        try await db.writer.write { db in
+            try db.execute(sql: "UPDATE repos SET license = 'MIT' WHERE id = 1")
+            try db.execute(sql: "UPDATE repos SET license = 'Apache-2.0' WHERE id = 2")
+        }
+        await vm.reloadItems()
+        await vm.refreshSidebarFacetCounts()
+        let options = vm.sidebarLicenseOptions
+        #expect(options == RepoLicenseFilter.options(["MIT", "Apache-2.0", nil]))
+
+        // 在异步统计尚未返回的同一主线程片段内连续切换，重现原来的“先清空再补回”。
+        let selections: [([String], Int)] = [(["MIT"], 1), (["MIT", "Apache-2.0"], 2), (["LicenseRef-NoMatch"], 0), ([], 3)]
+        for (values, expectedCount) in selections {
+            vm.setGlobalFilterFromUser(\.licenseFilter, to: RepoLicenseFilter(values))
+            if !values.isEmpty { #expect(vm.sidebarFacetCounts == nil) }
+            #expect(vm.sidebarLicenseOptions == options)
+            await vm.awaitPendingListReloadForTesting()
+            #expect(vm.sidebarLicenseOptions == options)
+            await vm.refreshSidebarFacetCounts()
+            #expect(vm.sidebarLicenseOptions == options)
+            #expect(vm.sidebarFacetCounts != nil)
+            #expect(vm.visibleRepoTotalCount == expectedCount)
+        }
+        #expect(Set(vm.items.map(\.id)) == [1, 2, 3])
+    }
+
+    @Test("许可证候选不泄漏到新分类、搜索或真实数据版本")
+    func licenseOptionsRejectDifferentSources() async throws {
+        let (vm, db, _) = try makeSUT()
+        try await insertRepo(db, id: 1, fullName: "license/source", stars: 1,
+                             starredAt: "2026-05-01T00:00:00Z")
+        try await db.writer.write { db in
+            try db.execute(sql: "UPDATE repos SET license = 'MIT' WHERE id = 1")
+        }
+        await vm.reloadItems()
+        await vm.refreshSidebarFacetCounts()
+        #expect(vm.sidebarLicenseOptions.contains("mit"))
+
+        vm.searchQuery = "different"
+        #expect(vm.sidebarLicenseOptions.isEmpty)
+        vm.searchQuery = ""
+        #expect(vm.sidebarLicenseOptions.contains("mit"))
+
+        vm.selectSidebarFromUser(.library)
+        #expect(vm.sidebarLicenseOptions.isEmpty)
+        await vm.reloadItems()
+        await vm.refreshSidebarFacetCounts()
+        #expect(!vm.sidebarLicenseOptions.contains("mit"))
+
+        vm.selectSidebarFromUser(.allStars)
+        await vm.reloadItems()
+        await vm.refreshSidebarFacetCounts()
+        try await db.writer.write { db in
+            try db.execute(sql: "UPDATE repos SET license = 'Apache-2.0' WHERE id = 1")
+        }
+        await vm.reloadItems(forceRefresh: true)
+        #expect(vm.sidebarLicenseOptions.isEmpty)
+        await vm.refreshSidebarFacetCounts()
+        #expect(vm.sidebarLicenseOptions.contains("apache-2.0"))
+        #expect(!vm.sidebarLicenseOptions.contains("mit"))
+    }
+
     // MARK: - D1 排序
 
     /// 同时包含未 Star 知识库、多标签仓库、库外仓库和无语言仓库，防止计数退回全局 Stars。

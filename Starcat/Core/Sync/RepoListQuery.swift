@@ -146,6 +146,8 @@ enum RepoLanguageFilter: Equatable, Hashable, Codable, Sendable {
 struct RepoListFacetCounts: Equatable {
     var languages: [LanguageStat]
     var tags: [String: Int]
+    /// 当前基础 scope 的完整规范许可证选项，不受许可证自身或分页影响。
+    var licenses: [String] = []
 
     var languageTotal: Int { languages.reduce(0) { $0 + $1.count } }
 }
@@ -195,6 +197,7 @@ struct RepoListFilters: Equatable, Sendable {
     var library: RepoLibraryFilter
     var language: RepoLanguageFilter
     var selectedLanguages: Set<String>
+    var license: RepoLicenseFilter
     /// `.language == .other` 时生效：要排除的语言集合（即「感兴趣的语言」全集）。
     /// 单独建字段而不复用 selectedLanguages，因两者语义相反：selectedLanguages 是
     /// 「全局筛选选中、要保留」的语言，excludedLanguages 是「其他分类要排除」的语言。
@@ -221,6 +224,7 @@ struct RepoListFilters: Equatable, Sendable {
         library: RepoLibraryFilter = .all,
         language: RepoLanguageFilter = .all,
         selectedLanguages: Set<String> = [],
+        license: RepoLicenseFilter = .all,
         excludedLanguages: Set<String> = [],
         wikiAvailability: RepoSignalAvailabilityFilter = .unknown,
         healthAvailability: RepoSignalAvailabilityFilter = .unknown,
@@ -241,6 +245,7 @@ struct RepoListFilters: Equatable, Sendable {
         self.library = library
         self.language = language
         self.selectedLanguages = selectedLanguages
+        self.license = license
         self.excludedLanguages = excludedLanguages
         self.wikiAvailability = wikiAvailability
         self.healthAvailability = healthAvailability

@@ -71,6 +71,8 @@ struct ActivityView: View {
     @State private var showClearAnnouncementConfirmation = false
     @State private var libraryStateMap: [Int64: LibraryState] = [:]
     @State private var wikiAvailabilityMap: [Int64: Bool] = [:]
+    @State private var isQuickSearchExpanded = false
+    @State private var quickSearchDraft = ""
 
     init(
         viewModel: Binding<ActivityViewModel?>,
@@ -119,6 +121,7 @@ struct ActivityView: View {
             // 以前默认分类是「全部」，ensureLoaded 会顺便发布计数；现在默认时间线，
             // 若不在这里读缓存，公告 / 发行版等会一直空白，点进去才出现。
             let model = ensureViewModel()
+            model.changeLicenseFilter(to: settings.licenseFilter)
             if selectedCategory == .notification || selectedCategory == .undoStar {
                 await model.primeSidebarCategoryCountsIfNeeded()
                 return
@@ -140,13 +143,19 @@ struct ActivityView: View {
         .task {
             await observeLibraryStateChanges()
         }
+        .onChange(of: settings.licenseFilter) { _, filter in
+            selectedItem = nil
+            viewModel?.changeLicenseFilter(to: filter)
+        }
         .onChange(of: selectedCategory) { _, newCategory in
+            resetQuickSearch(viewModel)
             if newCategory == .notification || newCategory == .undoStar {
                 selectedItem = nil
                 return
             }
             if viewModel == nil {
                 let model = ensureViewModel()
+                model.changeLicenseFilter(to: settings.licenseFilter)
                 Task {
                     await model.ensureLoaded(category: newCategory)
                     applySelectionPolicy(from: model.items)
@@ -239,6 +248,7 @@ struct ActivityView: View {
         } message: {
             Text("activity.announcement.clear.message")
         }
+        .preference(key: RepoLicenseOptionsPreferenceKey.self, value: viewModel.licenseOptions)
         .onAppear {
             reportItemCount(viewModel)
         }
@@ -371,7 +381,18 @@ struct ActivityView: View {
 
     /// 本地聚合分类顶部栏：时间排序 + 刷新时间 + 刷新按钮（公告 / 关注额外清空）。
     private func activityFilterBar(_ viewModel: ActivityViewModel) -> some View {
-        HStack(spacing: 10) {
+        QuickSearchToolbarContent(
+            isExpanded: $isQuickSearchExpanded,
+            draft: $quickSearchDraft,
+            committedQuery: viewModel.quickSearchQuery,
+            placeholder: "list.quickSearch.activityPlaceholder",
+            onSubmit: { query in
+                let normalizedQuery = QuickSearchTextMatcher.normalized(query)
+                viewModel.changeQuickSearchQuery(to: normalizedQuery)
+                quickSearchDraft = normalizedQuery
+            },
+            onClear: { viewModel.changeQuickSearchQuery(to: "") }
+        ) {
             UnifiedSortMenu(
                 selection: activitySortBinding(viewModel),
                 options: Array(ActivityTimeSort.allCases),
@@ -380,9 +401,10 @@ struct ActivityView: View {
             )
 
             Spacer()
+                .layoutPriority(AdaptiveToolbarStatusText.spacerPriority)
 
-            if let last = viewModel.lastRefreshedAt {
-                Text(String(format: String.l10n("activity.lastRefreshedFormat"), relativeDate(last)))
+            if let text = activityFreshnessDescription(viewModel) {
+                AdaptiveToolbarStatusText(text: text)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -411,6 +433,13 @@ struct ActivityView: View {
         .onChange(of: selectedCategory) { _, _ in
             restoreTimeSortPreferenceIfNeeded(viewModel)
         }
+    }
+
+    /// 活动分类相互独立；切换分类时恢复完整列表，避免搜索条件静默带到新分类。
+    private func resetQuickSearch(_ viewModel: ActivityViewModel?) {
+        isQuickSearchExpanded = false
+        quickSearchDraft = ""
+        viewModel?.changeQuickSearchQuery(to: "")
     }
 
     private func clearActivityButton(help: LocalizedStringKey, action: @escaping () -> Void) -> some View {
@@ -507,11 +536,15 @@ struct ActivityView: View {
         return RepoCardInlineMetadata(systemImage: "calendar", text: Self.absoluteDate(date))
     }
 
+    private func activityFreshnessDescription(_ viewModel: ActivityViewModel) -> String? {
+        viewModel.lastRefreshedAt.map { String(format: String.l10n("activity.lastRefreshedFormat"), relativeDate($0)) }
+    }
+
     private func activityRefreshButton(_ viewModel: ActivityViewModel) -> some View {
         SyncIconButton(
             isRefreshing: viewModel.isRefreshing,
             disabled: viewModel.isRefreshing,
-            tooltip: String.l10n("activity.refresh")
+            tooltip: AdaptiveToolbarStatusText.refreshTooltip(action: String.l10n("activity.refresh"), status: activityFreshnessDescription(viewModel))
         ) {
             refreshCurrentActivityList(viewModel)
         }

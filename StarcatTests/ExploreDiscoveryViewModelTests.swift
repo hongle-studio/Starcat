@@ -24,7 +24,7 @@ struct ExploreDiscoveryViewModelTests {
         #expect(ExploreMode(rawValue: "weekly") == .weekly)
         #expect(ExploreMode.weekly.id == "weekly")
         #expect(ExploreMode.weekly.localizedTitle == String.l10n("explore.mode.weekly"))
-        #expect(ExploreMode.weekly.systemImage == "newspaper")
+        #expect(ExploreMode.weekly.businessIcon == .weekly)
         #expect(ExploreMode.weekly.usesDiscoveryAPI == false)
         #expect(ExploreMode.weekly.discoveryListMode == nil)
         #expect(ExploreMode.allCases.contains(.weekly))
@@ -77,6 +77,20 @@ struct ExploreDiscoveryViewModelTests {
         )
         #expect(discover.thirdLevelTitle == "\(String.l10n("explore.topic.ai")) · macOS")
         #expect(discover.isFiltered)
+
+        let linuxDo = ExploreNavigationPresentation.make(
+            mode: .discover,
+            discoverySource: .linuxDo,
+            trendingLanguage: .all,
+            discoveryLanguage: nil,
+            discoveryTopic: "ai",
+            discoveryPlatform: "macos",
+            weeklyLanguage: nil,
+            topics: topics,
+            platforms: platforms
+        )
+        #expect(linuxDo.thirdLevelTitle == "Linux.do")
+        #expect(!linuxDo.isFiltered)
 
         let popular = ExploreNavigationPresentation.make(
             mode: .popular,
@@ -516,6 +530,62 @@ struct ExploreDiscoveryViewModelTests {
         await reloadTask.value
     }
 
+    @Test("许可证切换后迟到的旧刷新不得覆盖新列表")
+    func licenseSwitchRejectsOldRefresh() async throws {
+        let repository = FakeDiscoveryRepository()
+        let repos = [
+            Self.makeRepo(repoID: 1, owner: "race", name: "mit", license: "MIT"),
+            Self.makeRepo(repoID: 2, owner: "race", name: "apache", license: "Apache-2.0")
+        ]
+        await repository.seedCached(Self.makeBulkResult(repos: repos), lastFetchedAt: Date())
+        let model = ExploreDiscoveryViewModel()
+        await model.reload(repository: repository, mode: .popular, language: nil, topic: nil, platform: nil, sort: .popular)
+        await repository.enqueueBulk(Self.makeBulkResult(repos: [repos[0]]))
+        await repository.pauseNextBulkFetch()
+        let old = Task {
+            await model.reload(repository: repository, mode: .popular, language: nil, topic: nil, platform: nil,
+                               sort: .popular, licenseFilter: RepoLicenseFilter(["MIT"]), showsRefreshIndicator: true)
+        }
+        await repository.waitForBulkFetchToStart()
+        await model.reload(repository: repository, mode: .popular, language: nil, topic: nil, platform: nil,
+                           sort: .popular, licenseFilter: RepoLicenseFilter(["Apache-2.0"]))
+        await repository.resumeBulkFetch()
+        await old.value
+        #expect(model.repos.map(\.fullName) == ["race/apache"])
+        #expect(model.total == 1)
+        #expect(!model.isLoading)
+    }
+
+    @Test("许可证全量派生后分页，切换与回切使用独立缓存")
+    func licensePagingAndPreparedCache() async throws {
+        let repository = FakeDiscoveryRepository()
+        let repos = (1...50).map { index in
+            Self.makeRepo(repoID: Int64(index), owner: "license", name: "repo-\(index)",
+                          categoryRanks: ["popular": index], license: index <= 25 ? "GPL-3.0" : (index == 50 ? "Apache-2.0" : "MIT"))
+        }
+        await repository.seedCached(Self.makeBulkResult(repos: repos), lastFetchedAt: Date())
+        let model = ExploreDiscoveryViewModel()
+        let selection = RepoLicenseFilter(["MIT", "Apache-2.0"])
+        await model.reload(repository: repository, mode: .popular, language: nil, topic: nil, platform: nil, sort: .popular, licenseFilter: selection)
+        #expect(model.total == 25)
+        #expect(model.repos.count == 20)
+        #expect(model.repos.allSatisfy { selection.matches($0.licenseSpdx) })
+        #expect(model.licenseOptions.contains("gpl-3.0"), "选项不能来自过滤后的第一页")
+        await model.loadMoreIfNeeded(repository: repository, currentRepo: model.repos.last, mode: .popular, language: nil, topic: nil, platform: nil, sort: .popular, licenseFilter: selection)
+        #expect(model.repos.count == 25)
+        #expect(model.nextPage == nil)
+        await model.reload(repository: repository, mode: .popular, language: nil, topic: nil, platform: nil, sort: .popular, licenseFilter: RepoLicenseFilter(["GPL-3.0"]))
+        #expect(model.total == 25)
+        #expect(model.repos.allSatisfy { $0.licenseSpdx == "GPL-3.0" })
+        let derivations = model.localDerivationCountForTesting
+        await model.reload(repository: repository, mode: .popular, language: nil, topic: nil, platform: nil, sort: .popular, licenseFilter: selection)
+        #expect(model.total == 25)
+        #expect(model.repos.count == 20, "回切恢复首屏，不沿用另一条件的分页")
+        #expect(model.localDerivationCountForTesting == derivations)
+        #expect(await repository.fetchPageCount() == 0)
+        #expect(await repository.fetchBulkCount() == 0)
+    }
+
     @Test("本地分页 meta 驱动 loadMore 追加下一页")
     func loadMoreAppendsNextLocalPage() async throws {
         let repository = FakeDiscoveryRepository()
@@ -747,7 +817,8 @@ struct ExploreDiscoveryViewModelTests {
         discoveryScore: Double = 1,
         releaseScore: Double = 1,
         categories: [String] = ["popular"],
-        categoryRanks: [String: Int] = ["popular": 1]
+        categoryRanks: [String: Int] = ["popular": 1],
+        license: String? = "MIT"
     ) -> DiscoveryRepoDTO {
         let fullName = "\(owner)/\(name)"
         var repo = DiscoveryRepoDTO(
@@ -765,7 +836,7 @@ struct ExploreDiscoveryViewModelTests {
             openIssues: 5,
             ownerAvatar: nil,
             defaultBranch: "main",
-            licenseSpdx: "MIT",
+            licenseSpdx: license,
             topics: topics,
             platforms: platforms,
             pushedAt: "2026-06-29T00:00:00Z",

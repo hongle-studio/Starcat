@@ -25,70 +25,9 @@ struct BatchAIUntaggedBanner: View {
     let onShowPanel: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 16))
-                .foregroundStyle(.tint)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(String(format: String.l10n("batchAI.banner.titleFormat"), untaggedCount))
-                    .font(.subheadline.weight(.medium))
-                Text(secondaryText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            actionButton
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.tint.opacity(0.08))
+        AIOrganizationBanner(
+            kind: .tags, repositoryCount: untaggedCount, state: .tags(service), canStart: untaggedCount > 0,
+            onStart: onStart, onShowPanel: onShowPanel
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(.tint.opacity(0.18))
-        )
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    @ViewBuilder
-    private var actionButton: some View {
-        if service.isRunning || (!service.jobs.isEmpty && !service.isFinished) {
-            Button {
-                onShowPanel()
-            } label: {
-                Label("batchAI.banner.viewProgress", systemImage: "rectangle.stack")
-            }
-            .controlSize(.regular)
-        } else {
-            Button {
-                onStart()
-            } label: {
-                Label("batchAI.banner.start", systemImage: "play.fill")
-            }
-            .controlSize(.regular)
-            .buttonStyle(.borderedProminent)
-            .disabled(untaggedCount == 0)
-        }
-    }
-
-    /// 副标题：未运行时给提示，运行 / 完成时显示当前状态摘要。
-    private var secondaryText: String {
-        if service.isRunning {
-            if service.isPaused {
-                return String(format: String.l10n("batchAI.banner.runningPausedFormat"), service.finishedCount, service.totalCount)
-            }
-            return String(format: String.l10n("batchAI.banner.runningFormat"), service.finishedCount, service.totalCount)
-        }
-        if service.isFinished {
-            return String(format: String.l10n("batchAI.banner.finishedFormat"), service.completedCount, service.failedCount)
-        }
-        return String.l10n("batchAI.banner.hint")
     }
 }

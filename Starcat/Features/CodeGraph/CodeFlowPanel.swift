@@ -75,8 +75,7 @@ struct CodeFlowPanel: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-                .font(.system(size: 18, weight: .semibold))
+            BusinessIcon(.codeFlow, pointSize: 18, weight: .semibold)
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 38, height: 38)
                 .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))

@@ -171,28 +171,28 @@ struct SettingsView: View {
             LocalizedStringKey(titleKeyString)
         }
 
-        var systemImage: String {
+        var businessIcon: BusinessIcon.Symbol {
             switch self {
-            case .general:      return "gearshape"
-            case .notifications: return "bell"
-            case .shortcuts:    return "keyboard"
-            case .pro:          return "crown.fill"
-            case .privacy:      return "lock.shield"
-            case .aiModels:     return "cpu"
-            case .translation:  return "character.bubble"
-            case .aiAutomation: return "arrow.triangle.2.circlepath"
-            case .aiIndexContext: return "magnifyingglass.circle"
-            case .externalSearch: return "globe"
-            case .mcp:          return "point.3.connected.trianglepath.dotted"
-            case .services:     return "server.rack"
-            case .browserExtensions: return "puzzlepiece.extension"
-            case .localTools:   return "hammer"
-            case .ragInference: return RAGSettingsSection.inference.systemImage
-            case .ragPrompts:   return RAGSettingsSection.prompts.systemImage
-            case .ragRetrieval: return RAGSettingsSection.retrieval.systemImage
-            case .storage:      return "internaldrive"
-            case .diagnostics:  return "stethoscope"
-            case .labs:         return "flask"
+            case .general:      return .general
+            case .notifications: return .notifications
+            case .shortcuts:    return .shortcuts
+            case .pro:          return .pro
+            case .privacy:      return .privacy
+            case .aiModels:     return .models
+            case .translation:  return .translation
+            case .aiAutomation: return .automation
+            case .aiIndexContext: return .aiIndex
+            case .externalSearch: return .languages
+            case .mcp:          return .mcp
+            case .services:     return .services
+            case .browserExtensions: return .browserExtensions
+            case .localTools:   return .localTools
+            case .ragInference: return RAGSettingsSection.inference.businessIcon
+            case .ragPrompts:   return RAGSettingsSection.prompts.businessIcon
+            case .ragRetrieval: return RAGSettingsSection.retrieval.businessIcon
+            case .storage:      return .storage
+            case .diagnostics:  return .diagnostics
+            case .labs:         return .labs
             }
         }
 
@@ -401,15 +401,25 @@ struct SettingsView: View {
                     settingsSearchText = ""
                     navigate(to: SettingsLocation(tab: item.tab, target: item.target))
                 } label: {
-                    Label(LocalizedStringKey(item.titleKey), systemImage: item.tab.systemImage)
+                    Label {
+                        Text(LocalizedStringKey(item.titleKey))
+                    } icon: {
+                        BusinessIcon(item.tab.businessIcon, pointSize: item.tab.businessIcon.isAsset ? 16 : 13)
+                    }
                 }
             }
         }
     }
 
     private func settingsSidebarRow(_ tab: SettingsTab) -> some View {
-        Label(tab.titleKey, systemImage: tab.systemImage)
-            .tag(tab)
+        Label {
+            Text(tab.titleKey)
+        } icon: {
+            // SF 与资产共用原生 Label 图标列；换图不能改变导航行的宽高。
+            BusinessIcon(tab.businessIcon, pointSize: tab.businessIcon.isAsset ? 16 : 13)
+                .frame(width: 16, height: 16)
+        }
+        .tag(tab)
     }
 
     /// 只构造当前页，避免旧版 ZStack 让所有访问过的重型 Form 一直参与布局与刷新。
@@ -1247,6 +1257,23 @@ struct SettingsView: View {
         let updateController = dependencies.directUpdateController
 
         return Section {
+            Picker("settings.pro.direct.updates.channel", selection: Binding(
+                get: { updateController.updateChannel },
+                set: { updateController.selectUpdateChannel($0) }
+            )) {
+                Text("settings.pro.direct.updates.channel.stable")
+                    .tag(DirectUpdateChannel.stable)
+                Text("settings.pro.direct.updates.channel.development")
+                    .tag(DirectUpdateChannel.development)
+            }
+
+            if updateController.updateChannel == .development {
+                Text("settings.pro.direct.updates.channel.development.help")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Toggle("settings.pro.direct.updates.autoCheck", isOn: Binding(
                 get: { updateController.automaticallyChecksForUpdates },
                 set: { updateController.automaticallyChecksForUpdates = $0 }

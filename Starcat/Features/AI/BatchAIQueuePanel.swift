@@ -26,7 +26,6 @@ struct BatchAIQueuePanel: View {
     @State private var expandedRepoID: Int64?
     @State private var presentation = BatchAIQueuePresentationStore()
     @Environment(\.starcatInterfaceScale) private var interfaceScale
-    @Environment(\.locale) private var locale
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,26 +74,14 @@ struct BatchAIQueuePanel: View {
     private var resultToolbar: some View {
         @Bindable var store = presentation
         return HStack(spacing: 8) {
-            Picker("githubStarLists.aiGrouping.filter.label", selection: $store.filter) {
-                filterLabel(
-                    "githubStarLists.aiGrouping.filter.tab.actionable",
-                    count: store.count(for: .actionable)
-                )
-                    .tag(BatchAIResultFilter.actionable)
-                filterLabel("batchAI.panel.counter.pendingReview", count: store.count(for: .pendingReview))
-                    .tag(BatchAIResultFilter.pendingReview)
-                filterLabel("batchAI.panel.counter.completed", count: store.count(for: .completed))
-                    .tag(BatchAIResultFilter.completed)
-                filterLabel("batchAI.panel.counter.failed", count: store.count(for: .failed))
-                    .tag(BatchAIResultFilter.failed)
-                filterLabel("batchAI.panel.counter.ignored", count: store.count(for: .ignored))
-                    .tag(BatchAIResultFilter.ignored)
-                filterLabel("general.all", count: store.count(for: .all))
-                    .tag(BatchAIResultFilter.all)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize(horizontal: true, vertical: false)
+            CountedSegmentedControl(
+                items: [BatchAIResultFilter.actionable, .pendingReview, .completed, .failed, .ignored, .all],
+                selection: $store.filter,
+                totalCount: store.totalJobCount,
+                title: filterTitle,
+                count: { store.count(for: $0) },
+                accessibilityLabel: "githubStarLists.aiGrouping.filter.label"
+            )
 
             Spacer(minLength: 8)
 
@@ -123,9 +110,16 @@ struct BatchAIQueuePanel: View {
         .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48, alignment: .leading)
     }
 
-    private func filterLabel(_ key: LocalizedStringKey, count: Int) -> some View {
-        (Text(key) + Text(verbatim: " \(count.formatted(.number.locale(locale)))"))
-            .monospacedDigit()
+    /// 仅映射已有短标题，业务状态与数量继续由原展示 Store 负责。
+    private func filterTitle(_ filter: BatchAIResultFilter) -> LocalizedStringKey {
+        switch filter {
+        case .actionable: "githubStarLists.aiGrouping.filter.tab.actionable"
+        case .pendingReview: "batchAI.panel.counter.pendingReview"
+        case .completed: "batchAI.panel.counter.completed"
+        case .failed: "batchAI.panel.counter.failed"
+        case .ignored: "batchAI.panel.counter.ignored"
+        case .all: "general.all"
+        }
     }
 
     private var jobList: some View {

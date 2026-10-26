@@ -66,6 +66,12 @@ struct SyncProgress: Equatable {
 @Observable
 final class SyncManager {
 
+    /// force 只控制全量/ETag，不能代表用户意图；只有显式手动刷新允许后台重试组织授权。
+    enum Trigger {
+        case automatic
+        case manual
+    }
+
     // MARK: - 可观察状态
 
     var state: SyncState = .idle
@@ -127,6 +133,8 @@ final class SyncManager {
 
     /// 当前进行中的同步 Task，便于取消。
     private var runningTask: Task<Void, Never>?
+    /// 取消后的旧请求不能结束新一轮同步，也不能触发新账号的后台回写。
+    private var runGeneration: UInt64 = 0
 
     /// R-01（2026-06-09）：每次全量 / 增量同步「成功完成」后的回调。
     ///
@@ -137,6 +145,10 @@ final class SyncManager {
     /// 不调用。`weak self` 由调用方在闭包内自行处理（registry / bootstrapper 都是
     /// long-lived，正常无循环引用风险）。
     var onSyncCompleted: (@MainActor () async -> Void)?
+
+    /// 主同步完成态之后的旁路通知（含 304）。只允许同步调度，不 await 网络、RAG 或共享快照。
+    /// 真实后台 Task 由 StarsSyncFollowUpCoordinator 持有，并在切库前取消与等待。
+    var onSyncSettled: (@MainActor (_ userID: Int64, _ trigger: Trigger) -> Void)?
 
     /// 数据贡献等旁路能力只消费成功“完整”同步边沿；增量和 ETag 304 不得触发。
     /// 回调是同步 Void，调用方必须自行启动异步 Task，不能让旁路工作阻塞同步完成态。
@@ -169,12 +181,8 @@ final class SyncManager {
     ///   默认 false（信任 ETag 早退路径）。UI 暂未暴露 force 入口；调用方在
     ///   "用户希望立即检测 unstar / 怀疑数据不一致" 场景下传 true。
     /// 重复调用：如果已在同步中，直接返回；不排队。
-    func performFullSync(userID: Int64, force: Bool = false) {
-        guard !isSyncing else { return }
-        runningTask = Task { [weak self] in
-            guard let self else { return }
-            await self.runSync(userID: userID, force: force)
-        }
+    func performFullSync(userID: Int64, force: Bool = false, trigger: Trigger = .automatic) {
+        startSync(userID: userID, force: force, trigger: trigger, maxAge: nil)
     }
 
     /// 启动期自动同步：仅当本地 `lastSyncAt` 超过 `maxAge` 才走网络。
@@ -187,25 +195,43 @@ final class SyncManager {
         maxAge: TimeInterval = SyncManager.defaultAutoSyncMaxAge,
         force: Bool = false
     ) {
-        guard !isSyncing else { return }
+        startSync(userID: userID, force: force, trigger: .automatic, maxAge: maxAge)
+    }
+
+    /// 在创建 Task 的同一帧占住句柄，避免连续点击在 state 变为 syncing 前启动多轮。
+    private func startSync(userID: Int64, force: Bool, trigger: Trigger, maxAge: TimeInterval?) {
+        guard runningTask == nil else { return }
+        runGeneration &+= 1
+        let generation = runGeneration
         runningTask = Task { [weak self] in
             guard let self else { return }
+            defer { if self.runGeneration == generation { self.runningTask = nil } }
 
-            if !force, await self.isLastSyncFresh(userID: userID, maxAge: maxAge) {
+            if let maxAge, !force, await self.isLastSyncFresh(userID: userID, maxAge: maxAge) {
                 AppLog.sync.info(
                     "Auto sync skipped (lastSyncAt within \(Int(maxAge), privacy: .public)s TTL)"
                 )
                 return
             }
 
-            await self.runSync(userID: userID, force: force)
+            guard !Task.isCancelled, self.runGeneration == generation else { return }
+            await self.runSync(userID: userID, force: force, trigger: trigger, generation: generation)
         }
     }
 
     /// 取消进行中的同步。
     func cancel() {
         runningTask?.cancel()
-        runningTask = nil
+        // 保留句柄到 Task 真正退出；否则紧接着切账号时 cancelAndWait 找不到尚未结束的旧写入。
+        state = .idle
+        progress = nil
+    }
+
+    /// 切库屏障必须等旧 runSync 退出；仅 cancel 后立即 reopen 会让旧写入碰到新数据库。
+    func cancelAndWait() async {
+        let task = runningTask
+        cancel()
+        await task?.value
     }
 
     var isSyncing: Bool {
@@ -215,7 +241,7 @@ final class SyncManager {
 
     // MARK: - 实现
 
-    private func runSync(userID: Int64, force: Bool) async {
+    private func runSync(userID: Int64, force: Bool, trigger: Trigger, generation: UInt64) async {
         lastRunWroteRepos = false
         state = .syncing
         progress = SyncProgress(current: 0, total: nil, currentPage: 1)
@@ -300,17 +326,19 @@ final class SyncManager {
                     if let hook = onSyncCompleted {
                         await hook()
                     }
+                    try Task.checkCancellation()
 
                     lastRunWroteRepos = false
                     state = .completed(at: Date())
+                    onSyncSettled?(userID, trigger)
                     telemetryManager?.track(
                         .syncFinished,
                         properties: [.result: .string("not_modified")]
                     )
-                    runningTask = nil
                     return
                 }
 
+                try Task.checkCancellation()
                 // C2：page 1 拿到新 ETag → 立即持久化，避免后续页失败时丢失这次的 ETag。
                 if page == 1, let newEtag = response.etag, !newEtag.isEmpty {
                     try? await repository.updateStarsETag(userID: userID, etag: newEtag)
@@ -405,6 +433,7 @@ final class SyncManager {
             if let hook = onSyncCompleted {
                 await hook()
             }
+            try Task.checkCancellation()
 
             if !incrementalMode {
                 onFullSyncCompleted?(userID, Date())
@@ -412,6 +441,7 @@ final class SyncManager {
 
             lastRunWroteRepos = totalSynced > 0
             state = .completed(at: Date())
+            onSyncSettled?(userID, trigger)
             telemetryManager?.track(
                 .syncFinished,
                 properties: [
@@ -421,12 +451,15 @@ final class SyncManager {
             )
             AppLog.sync.info("Sync complete (incremental=\(incrementalMode, privacy: .public)): wrote \(totalSynced, privacy: .public), local total \(finalCount, privacy: .public) in \(Int(Date().timeIntervalSince(syncStartedAt)), privacy: .public)s")
         } catch is CancellationError {
+            guard runGeneration == generation else { return }
             state = .idle
             AppLog.sync.info("Sync cancelled")
         } catch NetworkError.cancelled {
+            guard runGeneration == generation else { return }
             state = .idle
             AppLog.sync.info("Sync cancelled (network)")
         } catch NetworkError.rateLimited(let retryAfter) {
+            guard runGeneration == generation else { return }
             let retryAt = Date().addingTimeInterval(retryAfter)
             state = .rateLimited(retryAt: retryAt)
             telemetryManager?.track(.syncFailed, properties: [.result: .string("rate_limited")])
@@ -445,6 +478,7 @@ final class SyncManager {
                 context: ["retryAt": ISO8601DateFormatter.shared.string(from: retryAt)]
             )
         } catch NetworkError.unauthorized {
+            guard runGeneration == generation else { return }
             state = .failed(message: String.l10n("sync.error.tokenExpired"))
             telemetryManager?.track(.syncFailed, properties: [.result: .string("unauthorized")])
             AppLog.sync.error("Unauthorized during sync")
@@ -461,6 +495,7 @@ final class SyncManager {
                 statusCode: 401
             )
         } catch let error as LocalizedError {
+            guard runGeneration == generation else { return }
             let friendly = UserFacingError.map(
                 error,
                 operation: String.l10n("diagnostics.operation.syncStars"),
@@ -472,6 +507,7 @@ final class SyncManager {
             await notificationService?.dispatchSyncIssue(kind: .failed, message: friendly.message)
             friendly.record(category: "sync", operation: "github.fullSync", service: "github")
         } catch {
+            guard runGeneration == generation else { return }
             let friendly = UserFacingError.map(
                 error,
                 operation: String.l10n("diagnostics.operation.syncStars"),
@@ -484,7 +520,6 @@ final class SyncManager {
             friendly.record(category: "sync", operation: "github.fullSync", service: "github")
         }
 
-        runningTask = nil
     }
 
     /// Stars 同步看到的 `starred_at` 记进账本。最新事件已是 star 时仓储会跳过。

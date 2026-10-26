@@ -39,12 +39,12 @@ enum LocalAIModelType: String, Codable, Sendable, CaseIterable, Identifiable {
         }
     }
 
-    /// 设置页类别行的 SF Symbol。
-    var systemImage: String {
+    /// 分类行与模型能力共享图标，保留非向量模型的原生 SF 图形。
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .embedding: return "point.3.connected.trianglepath.dotted"
-        case .reranker: return "arrow.up.arrow.down"
-        case .llm: return "bubble.left.and.text.bubble.right"
+        case .embedding: return AIModelCapability.embedding.iconSource
+        case .reranker: return .system("arrow.up.arrow.down")
+        case .llm: return .system("bubble.left.and.text.bubble.right")
         }
     }
 }

@@ -75,11 +75,11 @@ enum RAGSettingsSection: String, CaseIterable, Identifiable {
         }
     }
 
-    var systemImage: String {
+    var businessIcon: BusinessIcon.Symbol {
         switch self {
-        case .inference: return "cpu"
-        case .prompts: return "text.quote"
-        case .retrieval: return "magnifyingglass"
+        case .inference: return .inference
+        case .prompts: return .prompts
+        case .retrieval: return .retrieval
         }
     }
 }
@@ -152,7 +152,7 @@ private enum RAGPromptEditorTab: String, CaseIterable, Identifiable {
                 .init(token: "{questionSection}", systemImage: "text.bubble", meaningKey: "rag.workspace.prompt.placeholder.questionSection"),
                 .init(token: "{evidenceSection}", systemImage: "doc.text.magnifyingglass", meaningKey: "rag.workspace.prompt.placeholder.evidenceSection"),
                 .init(token: "{repositoryInsightsSection}", systemImage: "gauge.with.dots.needle.bottom.0percent", meaningKey: "rag.workspace.prompt.placeholder.repositoryInsightsSection"),
-                .init(token: "{repoContextSection}", systemImage: "brain.head.profile", meaningKey: "rag.workspace.prompt.placeholder.repoContextSection"),
+                .init(token: "{repoContextSection}", systemImage: BusinessIcon.Symbol.codeContext.systemImage, meaningKey: "rag.workspace.prompt.placeholder.repoContextSection"),
                 .init(token: "{remoteSection}", systemImage: "network", meaningKey: "rag.workspace.prompt.placeholder.remoteSection"),
                 .init(token: "{attachmentSection}", systemImage: "paperclip", meaningKey: "rag.workspace.prompt.placeholder.attachmentSection"),
             ]
@@ -511,7 +511,7 @@ struct RAGWorkspaceSettingsView: View {
         VStack(alignment: .leading, spacing: interfaceScale.scaled(14)) {
             VStack(alignment: .leading, spacing: interfaceScale.scaled(12)) {
                 HStack(spacing: interfaceScale.scaled(8)) {
-                    sectionTitle("rag.workspace.inference.backend.title", systemImage: "cpu")
+                    SettingsSectionHeader("rag.workspace.inference.backend.title", businessIcon: .inference)
                     Spacer(minLength: 0)
                     if availableInferenceBackends.contains(where: \.isCLI) {
                         SyncIconButton(

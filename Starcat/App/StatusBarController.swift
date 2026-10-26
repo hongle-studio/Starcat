@@ -271,7 +271,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             dependencies?.authSession.requestLoginSheet()
             return
         }
-        dependencies.syncManager.performFullSync(userID: user.id, force: true)
+        dependencies.syncManager.performFullSync(userID: user.id, force: true, trigger: .manual)
     }
 
     @objc private func checkForUpdates() {

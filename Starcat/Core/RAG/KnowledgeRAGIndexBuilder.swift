@@ -150,6 +150,12 @@ private struct RAGPendingAutoIndexWork {
     mutating func reset() {
         self = RAGPendingAutoIndexWork()
     }
+
+    /// 用户明确删除单仓库时，丢弃该仓库此前合并进来的自动增量，避免排队任务把数据写回。
+    mutating func remove(repoID: Int64) {
+        repoSources.removeValue(forKey: repoID)
+        libraryAddIDs.removeAll { $0 == repoID }
+    }
 }
 
 /// 单 source 刷新的最小读取集合。Metadata 需要 Note 中的状态/入库时间和用户标签，
@@ -217,6 +223,8 @@ final class KnowledgeRAGIndexBuilder {
     private var debouncedSourceTasks: [Int64: Task<Void, Never>] = [:]
     /// 同一 repo 在 debounce 窗口内的多个事实变更要合并，不能让 notes 事件覆盖 metadata 事件。
     private var debouncedSources: [Int64: Set<RAGChunkSource>] = [:]
+    /// 外部索引删除到本地事务提交之间的单仓库写入屏障，防止旧通知把分片重新生成。
+    private var repositoryRemovalIDs: Set<Int64> = []
     /// source debounce 和全库循环产生的多次 diff 先合并。关键词可在 embedding 前全量同步；
     /// 向量变更仍在 embedding 结束后提交，避免把未 ready 的空向量写入 Qdrant。
     private var externalIndexChanges = RAGExternalIndexChangeSet()
@@ -315,6 +323,7 @@ final class KnowledgeRAGIndexBuilder {
         observationTasks.removeAll()
         debouncedSourceTasks.removeAll()
         debouncedSources.removeAll()
+        repositoryRemovalIDs.removeAll()
         externalIndexChanges.reset()
         lastKeywordSyncFingerprint = nil
         lastVectorSyncFingerprint = nil
@@ -440,7 +449,7 @@ final class KnowledgeRAGIndexBuilder {
     /// 单 source 更新入口。调用方在 README / notes / summary / metadata 变化后使用；移出知识库
     /// 时直接跳过并保留缓存，由 Retriever 的 SQL join 保证不再召回。
     func refresh(repo: Repo, sources: Set<RAGChunkSource>) async {
-        guard !isSuspendedForDatabaseChange else { return }
+        guard !isSuspendedForDatabaseChange, !repositoryRemovalIDs.contains(repo.id) else { return }
         if exclusiveRunning {
             pendingAuto.repoSources[repo.id, default: []].formUnion(sources)
             return
@@ -476,6 +485,26 @@ final class KnowledgeRAGIndexBuilder {
         }
     }
 
+    /// 在本地删除 chunk 前，把单仓库现有 identity 从外部检索后端移除。
+    ///
+    /// 取消 debounce 与 pending 自动工作可防止清理完成后旧事件重新生成索引；互斥队列则保证
+    /// 已经开始的构建先结束，再基于最终 identity 执行删除。
+    func prepareRepositoryRemoval(repoID: Int64) async throws {
+        repositoryRemovalIDs.insert(repoID)
+        debouncedSourceTasks.removeValue(forKey: repoID)?.cancel()
+        debouncedSources.removeValue(forKey: repoID)
+        pendingAuto.remove(repoID: repoID)
+        repositoryRefreshDates.removeValue(forKey: repoID)
+        try await withExclusiveWork(policy: .waitInQueue) {
+            try await self.performRemoveRepositoryFromExternalIndexes(repoID: repoID)
+        }
+    }
+
+    /// 本地删除事务完成后解除单仓库屏障；此时数据库状态已经能让后续自动刷新安全跳过。
+    func finishRepositoryRemoval(repoID: Int64) {
+        repositoryRemovalIDs.remove(repoID)
+    }
+
     /// GitHub stars 同步完成后批量刷新 metadata source。Metadata 是 FTS-only，不会产生 embedding。
     func refreshMetadataForKnowledgeRepos() async {
         do {
@@ -490,7 +519,7 @@ final class KnowledgeRAGIndexBuilder {
     }
 
     private func scheduleDebouncedRefresh(repoID: Int64, sources: Set<RAGChunkSource>) {
-        guard !isSuspendedForDatabaseChange else { return }
+        guard !isSuspendedForDatabaseChange, !repositoryRemovalIDs.contains(repoID) else { return }
         debouncedSources[repoID, default: []].formUnion(sources)
         debouncedSourceTasks[repoID]?.cancel()
         debouncedSourceTasks[repoID] = Task { [weak self] in
@@ -514,6 +543,7 @@ final class KnowledgeRAGIndexBuilder {
     /// 新入库的 repo 属于用户明确要求沉淀的内容，因此主动补齐 README 后再建立完整索引。
     /// 此路径不能复用普通 source refresh：后者只读取本地 Markdown，会留下仅 metadata 的半成品索引。
     private func indexNewlyAddedKnowledgeRepository(repoID: Int64) async {
+        guard !repositoryRemovalIDs.contains(repoID) else { return }
         if exclusiveRunning {
             if !pendingAuto.libraryAddIDs.contains(repoID) {
                 pendingAuto.libraryAddIDs.append(repoID)
@@ -557,12 +587,13 @@ final class KnowledgeRAGIndexBuilder {
     /// 本地 chunk 作为可重建缓存继续保留，但移出知识库后要立即删除自托管后端副本。
     private func removeRepositoryFromExternalIndexes(repoID: Int64) async {
         do {
-            try await withExclusiveWork(policy: .waitInQueue) {
-                try await self.performRemoveRepositoryFromExternalIndexes(repoID: repoID)
-            }
+            try await prepareRepositoryRemoval(repoID: repoID)
+            finishRepositoryRemoval(repoID: repoID)
         } catch is CancellationError {
+            finishRepositoryRemoval(repoID: repoID)
             return
         } catch {
+            finishRepositoryRemoval(repoID: repoID)
             AppLog.ai.error("RAG external removal sync failed for repo \(repoID, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -571,7 +602,9 @@ final class KnowledgeRAGIndexBuilder {
         guard beginOperation() else { throw CancellationError() }
         defer { endOperation() }
         try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
-        let repos = try await repoRepository.fetchKnowledgeRepos()
+        let repos = try await repoRepository.fetchKnowledgeRepos().filter {
+            !repositoryRemovalIDs.contains($0.id)
+        }
         if recordsRefreshSummary {
             refreshSummary = RAGIndexRefreshSummary(
                 totalRepos: repos.count,
@@ -605,6 +638,7 @@ final class KnowledgeRAGIndexBuilder {
     private func performRebuildRepository(_ repo: Repo) async throws {
         guard beginOperation() else { throw CancellationError() }
         defer { endOperation() }
+        guard !repositoryRemovalIDs.contains(repo.id) else { return }
         try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         guard try await noteRepository.fetchLibraryState(repoId: repo.id) == .inLibrary else { return }
 
@@ -664,6 +698,7 @@ final class KnowledgeRAGIndexBuilder {
             let repos = try await repoRepository.fetchKnowledgeRepos()
             for repo in repos {
                 try Task.checkCancellation()
+                guard !repositoryRemovalIDs.contains(repo.id) else { continue }
                 try await rebuildSources(for: repo, summary: nil, sources: [.metadata])
             }
             // 其它 source 的 pending chunk 仍可能来自此前编辑；这里补齐不会包含 Metadata。
@@ -1266,6 +1301,7 @@ final class KnowledgeRAGIndexBuilder {
             }
             for repoID in pending.libraryAddIDs {
                 try Task.checkCancellation()
+                guard !repositoryRemovalIDs.contains(repoID) else { continue }
                 guard let repo = try? await repoRepository.findById(repoID) else { continue }
                 do {
                     try await performRebuildRepository(repo)
@@ -1275,6 +1311,7 @@ final class KnowledgeRAGIndexBuilder {
             }
             for (repoID, sources) in pending.repoSources {
                 try Task.checkCancellation()
+                guard !repositoryRemovalIDs.contains(repoID) else { continue }
                 guard let repo = try? await repoRepository.findById(repoID) else { continue }
                 await performRefresh(repo: repo, sources: sources)
             }

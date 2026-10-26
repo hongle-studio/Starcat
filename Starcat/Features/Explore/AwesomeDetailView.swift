@@ -54,7 +54,7 @@ private struct AwesomeEvidenceHeader: View {
                 }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "square.stack.3d.up")
+                    BusinessIcon(.curatedCollection, pointSize: 16)
                         .foregroundStyle(.secondary)
                     Text("awesome.detail.sources.title")
                         .font(.headline)

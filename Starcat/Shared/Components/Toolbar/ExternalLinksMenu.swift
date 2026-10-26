@@ -189,7 +189,7 @@ private struct FeaturedExternalLinksControl: View {
                 Label {
                     Text("CodeFlow")
                 } icon: {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                    BusinessIcon(.codeFlow, pointSize: 13)
                 }
             }
 
@@ -373,8 +373,7 @@ struct CodeFlowFeaturedTile: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 11) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 17, weight: .semibold))
+                BusinessIcon(.codeFlow, pointSize: 17, weight: .semibold)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("CodeFlow")

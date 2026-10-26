@@ -18,9 +18,6 @@
 //
 
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-#endif
 
 // MARK: - TagWallView
 
@@ -48,7 +45,7 @@ struct TagWallView: View {
     }
 
     var body: some View {
-        FlowLayout(spacing: 6) {
+        TagChipFlowLayout(spacing: 6) {
             ForEach(visibleTags) { tag in
                 TagWallChip(
                     tag: tag,
@@ -82,9 +79,6 @@ struct TagWallChip: View {
     @Environment(\.starcatReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
 
-    /// 圆角常量；放在视图外部以便 background / clipShape / overlay 共用同一个值。
-    private static let cornerRadius: CGFloat = 6
-
     /// 标签颜色，fallback 到默认蓝色（tag.color 解析失败 / nil 时）。
     private var swatchColor: Color {
         Color(hex: tag.color ?? TagColorPalette.defaultHex) ?? .accentColor
@@ -94,7 +88,7 @@ struct TagWallChip: View {
     /// 阈值 0.6 是经验值——常见 tag palette（红蓝绿紫）大都 < 0.6 → 用白字；
     /// 黄色 / 浅绿 / 浅蓝（≥ 0.6）→ 用黑字。
     private var selectedForeground: Color {
-        swatchColor.perceivedLuminance > 0.6 ? .black : .white
+        TagChipSurface.selectedForeground(for: swatchColor)
     }
 
     var body: some View {
@@ -129,27 +123,8 @@ struct TagWallChip: View {
                 // 选中时 count 跟随 selectedForeground，0.85 透明度做层级区分。
                 .foregroundStyle(isSelected ? AnyShapeStyle(selectedForeground) : AnyShapeStyle(.secondary))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        // 选中：实色底，强对比；未选中：18% 浅底，柔和但仍能看清边界。
-        .background {
-            RoundedRectangle(cornerRadius: Self.cornerRadius)
-                .fill(isSelected ? AnyShapeStyle(swatchColor) : AnyShapeStyle(swatchColor.opacity(0.18)))
-        }
-        // 文字色：未选中用 .primary（系统自适应黑/白），选中用 selectedForeground。
-        // 这是与底色对比的关键——.primary 不是 swatchColor，所以肯定不"同色系"。
-        .foregroundStyle(isSelected ? AnyShapeStyle(selectedForeground) : AnyShapeStyle(.primary))
-        // 描边：未选中 0.5pt 35% 同色描边，强化 chip 边界感；选中 1pt 90% 同色描边。
-        .overlay {
-            RoundedRectangle(cornerRadius: Self.cornerRadius)
-                .strokeBorder(
-                    isSelected ? swatchColor.opacity(0.9) : swatchColor.opacity(0.35),
-                    lineWidth: isSelected ? 1 : 0.5
-                )
-        }
-        // 选中态加一层柔和投影，进一步突出"已选"层级；未选中投影 radius=0 退化为无。
-        .shadow(color: swatchColor.opacity(isSelected ? 0.35 : 0), radius: 2, y: 1)
-        .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .modifier(TagChipSurface(color: swatchColor, isSelected: isSelected))
+        .contentShape(RoundedRectangle(cornerRadius: TagChipSurface.cornerRadius))
         .onTapGesture {
             // 标签墙使用手势而非 Button，必须主动遵守父视图的禁用状态。
             guard isEnabled else { return }
@@ -157,69 +132,6 @@ struct TagWallChip: View {
         }
         .pressableHover(scale: 1)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isSelected)
-    }
-}
-
-// MARK: - 颜色亮度工具
-
-fileprivate extension Color {
-    /// sRGB 相对亮度（0..1）。用于在已知色块上选择黑 / 白文字。
-    /// 公式来自 W3C WCAG：L = 0.2126R + 0.7152G + 0.0722B（线性近似，
-    /// 不做严格 gamma 反变换；对 chip 这种非长文场景足够）。
-    var perceivedLuminance: Double {
-        #if canImport(AppKit)
-        guard let ns = NSColor(self).usingColorSpace(.sRGB) else { return 0.5 }
-        return 0.2126 * Double(ns.redComponent)
-             + 0.7152 * Double(ns.greenComponent)
-             + 0.0722 * Double(ns.blueComponent)
-        #else
-        return 0.5
-        #endif
-    }
-}
-
-// MARK: - FlowLayout
-
-/// 横向排列自动换行布局，复用自 RepoTagsSection。
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        var rowWidth: CGFloat = 0
-        var totalHeight: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if rowWidth + size.width > maxWidth {
-                totalHeight += rowHeight + spacing
-                rowWidth = size.width + spacing
-                rowHeight = size.height
-            } else {
-                rowWidth += size.width + spacing
-                rowHeight = max(rowHeight, size.height)
-            }
-        }
-        totalHeight += rowHeight
-        return CGSize(width: maxWidth.isFinite ? maxWidth : rowWidth, height: totalHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let maxWidth = bounds.width
-        var x: CGFloat = bounds.minX
-        var y: CGFloat = bounds.minY
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > bounds.minX + maxWidth {
-                x = bounds.minX
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
     }
 }
 

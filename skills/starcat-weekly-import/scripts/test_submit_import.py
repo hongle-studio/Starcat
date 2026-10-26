@@ -10,7 +10,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from submit_import import PRODUCTION_BASE_URL, api_request, load_and_validate, resolve_runtime_config
+from submit_import import (
+    PRODUCTION_BASE_URL,
+    PRODUCTION_ENV_FILE,
+    STARCAT_ROOT,
+    api_request,
+    load_and_validate,
+    resolve_runtime_config,
+)
 
 
 class SubmitImportTests(unittest.TestCase):
@@ -23,6 +30,12 @@ class SubmitImportTests(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / ".env"
         path.write_text(content, encoding="utf-8")
         return path
+
+    def test_production_env_file_is_resolved_from_starcat_repository_root(self) -> None:
+        # 防止 skill 目录迁移后层级写错，导致生产提交读取到仓库外的配置文件。
+        expected_root = Path(__file__).resolve().parents[3]
+        self.assertEqual(STARCAT_ROOT, expected_root)
+        self.assertEqual(PRODUCTION_ENV_FILE, expected_root / "supports" / "starcat-api" / ".env")
 
     def test_auto_idempotency_key_is_stable_after_normalization(self) -> None:
         first = self.write_payload({"repositories": [{"owner": " Acme ", "repo": "Agent"}]})

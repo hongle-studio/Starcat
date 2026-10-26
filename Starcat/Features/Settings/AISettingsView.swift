@@ -857,7 +857,7 @@ struct AISettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.autoTidy.section",
-                systemImage: "wand.and.stars"
+                businessIcon: .automation
             )
         }
     }
@@ -916,7 +916,7 @@ struct AISettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.githubListGrouping.section",
-                systemImage: "folder.badge.gearshape"
+                businessIcon: .groups
             )
         } footer: {
             Text("settings.githubListGrouping.footer")
@@ -1588,7 +1588,7 @@ struct AISettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "settings.aiIndex.section",
-                systemImage: "brain.head.profile"
+                businessIcon: .aiIndex
             )
         }
     }
@@ -1991,7 +1991,7 @@ struct AISettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 "ai.context.settings.title",
-                systemImage: "shippingbox.fill"
+                businessIcon: .codeContext
             )
         }
     }

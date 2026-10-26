@@ -17,6 +17,9 @@ import SwiftUI
 
 /// Manage 列表顶栏的 Stars 同步按钮（保留侧边栏时代的取消 / 限流交互）。
 struct StarsSyncButton: View {
+    /// 窄中栏隐藏同步时间时，仍通过提示提供完整说明；不覆盖取消 / 限流提示。
+    var statusDescription: String? = nil
+
     @Environment(SyncManager.self) private var syncManager
     @Environment(AuthSession.self) private var authSession
     /// 同步图标旋转在「关闭应用内动画」时跳过，仅瞬切角度给"刷新中"提示。
@@ -32,7 +35,7 @@ struct StarsSyncButton: View {
                 syncManager.cancel()
             } else if case .authenticated(let user) = authSession.state {
                 NotificationCenter.default.post(name: .gettingStartedDidRequestSync, object: nil)
-                syncManager.performFullSync(userID: user.id)
+                syncManager.performFullSync(userID: user.id, trigger: .manual)
             }
         } label: {
             Image(systemName: iconName)
@@ -52,7 +55,7 @@ struct StarsSyncButton: View {
             updateRotation(isSyncing: newValue)
         }
         .gettingStartedAnchor(.syncStars)
-        .help(helpText)
+        .help(helpTextWithStatus)
     }
 
     private var isSyncing: Bool {
@@ -79,6 +82,15 @@ struct StarsSyncButton: View {
             return Text("action.syncRateLimited")
         case .idle, .completed, .failed:
             return Text("action.syncInProgress")
+        }
+    }
+
+    /// 保留原操作提示的本地化语义，时间说明只作为第二行追加。
+    private var helpTextWithStatus: Text {
+        if let statusDescription, !statusDescription.isEmpty {
+            Text("\(helpText)\n\(Text(verbatim: statusDescription))")
+        } else {
+            helpText
         }
     }
 

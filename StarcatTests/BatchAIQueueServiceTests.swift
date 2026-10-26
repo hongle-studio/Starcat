@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import Observation
 import Testing
 @testable import Starcat
 
@@ -49,6 +50,7 @@ struct BatchAIQueueServiceTests {
         #expect(provider.generationCount == 1)
         #expect(!restoredService.isRunning)
         #expect(restoredService.pendingTagReviewCount == 1)
+        #expect(AIOrganizationBannerState.tags(restoredService) == .review(count: 1))
         #expect(restoredService.jobs.first?.suggestedTags == Self.sampleSuggestions)
         #expect(restoredService.discardCurrentSession())
         for _ in 0..<50 {
@@ -110,6 +112,7 @@ struct BatchAIQueueServiceTests {
         #expect(service.jobs.first?.status == .failed)
         #expect(service.jobs.first?.failure == .cancelled)
         #expect(service.hasUnresolvedManualWork)
+        #expect(AIOrganizationBannerState.tags(service) == .failed(count: 1))
         #expect(service.canDiscardCurrentSession)
         #expect(!service.finishManualSessionIfResolved())
 
@@ -619,13 +622,26 @@ struct BatchAIQueueServiceTests {
 
         var tagsChangedCount = 0
         service.onTagsChanged = { tagsChangedCount += 1 }
-        await service.applySelectedTagReviewRepositories()
+        await confirmation("分析已结束、仓库选择被移除时仍展示真实的应用批次") { observed in
+            // Observation 回调在 willSet 执行：此处仍处在整批应用锁内，不能退回完成/开始态。
+            withObservationTracking {
+                _ = service.selectedRepoIDsForTagApplication
+            } onChange: {
+                MainActor.assumeIsolated {
+                    #expect(service.isFinished)
+                    #expect(AIOrganizationBannerState.tags(service) == .applying(processed: 0, total: 2))
+                    observed()
+                }
+            }
+            await service.applySelectedTagReviewRepositories()
+        }
 
         // 旧实现每仓成功都回调一次；会话级合并后整批只应刷新 Sidebar 一次。
         #expect(tagsChangedCount == 1)
         #expect(!service.isApplyingSuggestedTags)
         #expect(service.jobs.allSatisfy { $0.tagReviewState == .applied })
         #expect(service.selectedTagReviewRepositoryCount == 0)
+        #expect(AIOrganizationBannerState.tags(service) == .idle)
     }
 
     @Test("批量应用跨越分块边界仍完整落库并只刷新一次")

@@ -624,6 +624,11 @@ struct GRDBRepoRepository {
             projection: "r.id", scope: scope, filters: tagFilters,
             sort: .starredAtDesc, limit: nil, offset: nil, includeOrderBy: false
         )
+        // 选项来自完整基础 scope，而非分页前缀或许可证过滤后的结果。
+        let licenses = Self.makeListQuery(
+            projection: "DISTINCT r.license", scope: scope, filters: .empty,
+            sort: .starredAtDesc, limit: nil, offset: nil, includeOrderBy: false
+        )
         return try await database.writer.read { db in
             let languageStats = try LanguageStat.fetchAll(db, sql: """
                 SELECT COALESCE(language, '') AS language, COUNT(*) AS count
@@ -636,7 +641,9 @@ struct GRDBRepoRepository {
                 """, arguments: tags.arguments)
             return RepoListFacetCounts(
                 languages: languageStats,
-                tags: Dictionary(uniqueKeysWithValues: tagRows.map { ($0["tag_id"] as String, $0["count"] as Int) })
+                tags: Dictionary(uniqueKeysWithValues: tagRows.map { ($0["tag_id"] as String, $0["count"] as Int) }),
+                licenses: RepoLicenseFilter.options(try Row.fetchAll(db, sql: licenses.sql, arguments: licenses.arguments)
+                    .map { $0["license"] as String? })
             )
         }
     }
@@ -827,6 +834,10 @@ struct GRDBRepoRepository {
 
         if filters.hideArchived {
             whereClauses.append("r.is_archived = 0")
+        }
+        if let license = filters.license.sqlPredicate(column: .repository) {
+            whereClauses.append(license.sql)
+            args.append(contentsOf: license.arguments)
         }
         if filters.hideForks {
             whereClauses.append("r.is_fork = 0")

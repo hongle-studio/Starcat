@@ -412,7 +412,7 @@ struct HomeView: View {
                         return
                     }
                     requestGettingStartedSync()
-                    syncManager.performFullSync(userID: user.id, force: true)
+                    syncManager.performFullSync(userID: user.id, force: true, trigger: .manual)
                 },
                 onSelectRepo: {
                     selectFirstRepoForGettingStarted()
@@ -602,6 +602,13 @@ struct HomeView: View {
         // 304 早退 / performFullSyncIfStale 跳过等路径 lastRunWroteRepos=false，避免无谓 DB 重查。
         .task(id: syncManager.state) {
             await reloadAfterSyncIfNeeded()
+        }
+        // 后台分组快照/授权回写落盘后只读本地，不能再次触发远端 Lists 同步形成反馈环。
+        .onChange(of: dependencies.githubStarListSyncService.snapshotRevision) { _, _ in
+            Task { @MainActor in
+                guard authSession.state.user?.id == dependencies.database.currentUserId else { return }
+                await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
+            }
         }
         // R-07（2026-06-15）：SyncManager 写完第一页后立即刷一次列表，让首次登录 1~2s 内看到前 20 条。
         //
@@ -2005,6 +2012,9 @@ struct HomeView: View {
         if viewModel.globalFilterLanguages != settings.globalFilterLanguages {
             viewModel.globalFilterLanguages = settings.globalFilterLanguages
         }
+        if viewModel.licenseFilter != settings.licenseFilter {
+            viewModel.licenseFilter = settings.licenseFilter
+        }
         if viewModel.interestedLanguages != settings.interestedLanguages {
             viewModel.interestedLanguages = settings.interestedLanguages
         }
@@ -2075,13 +2085,9 @@ struct HomeView: View {
     private func reloadAfterSyncIfNeeded() async {
         guard case .completed = syncManager.state else { return }
         startInitialWarmupIfNeeded()
-        if case .authenticated(let user) = authSession.state {
-            await syncGitHubStarListsAndRefreshSidebar(login: user.login)
-        } else {
-            await viewModel.refreshSidebar()
-        }
+        await viewModel.refreshSidebar()
         guard syncManager.lastRunWroteRepos else { return }
-        // GitHub Stars List 已在上方随 stars 同步完成刷新；这里只处理 repo 数据写入后的列表重载。
+        // 分组由后台快照的 revision 单独刷新；这里不等网络，只把新写入的 Stars 显示出来。
         await viewModel.reloadItems(forceRefresh: true, reason: .sync)
         await Task.yield()
         applyManageDetailSelectionPolicy()
@@ -2557,7 +2563,10 @@ struct HomeView: View {
         }
 
         Task { @MainActor in
-            await syncGitHubStarListsAndRefreshSidebar(login: user.login)
+            // 先显示本地数据并启动 Stars；分组网络快照不能挡住首页和主同步的启动。
+            await viewModel.refreshSidebar()
+            guard authSession.state.user?.id == user.id,
+                  dependencies.database.currentUserId == user.id else { return }
 
             if !isManageSelectionValid(viewModel.selection) {
                 viewModel.selection = .allStars
@@ -2568,11 +2577,15 @@ struct HomeView: View {
                 applyManageDetailSelectionPolicy()
             }
 
+            // 本地读取期间用户仍可能切号；旧入口不得给新账号启动 Stars 或分组网络任务。
+            guard authSession.state.user?.id == user.id,
+                  dependencies.database.currentUserId == user.id else { return }
             if isAccountSwitch {
                 syncManager.performFullSync(userID: user.id)
             } else {
                 syncManager.performFullSyncIfStale(userID: user.id)
             }
+            await syncGitHubStarListsAndRefreshSidebar(login: user.login)
         }
 
         // 项目同步不阻塞 Stars 首屏。完成后只刷新项目计数；用户当前正在浏览“我的项目”
@@ -2658,6 +2671,7 @@ struct HomeView: View {
         settings.libraryFilter = .all
         settings.repoLanguageFilter = .all
         settings.globalFilterLanguages = []
+        settings.globalFilterLicenses = []
         settings.wikiAvailabilityFilter = .unknown
         settings.healthAvailabilityFilter = .unknown
         settings.openSSFAvailabilityFilter = .unknown

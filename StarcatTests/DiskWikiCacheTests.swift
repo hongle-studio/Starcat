@@ -342,6 +342,21 @@ struct DiskWikiCacheTests {
         #expect(cache.totalBytes == 0)
     }
 
+    @Test("单仓删除只移除目标 Wiki 快照并同步统计")
+    func deleteSingleRepositorySnapshot() throws {
+        let (cache, root) = makeIsolatedCache()
+        defer { cleanup(root) }
+        try cache.save(snapshot: makeSnapshot(owner: "octo", repo: "one"))
+        try cache.save(snapshot: makeSnapshot(owner: "octo", repo: "two"))
+
+        try cache.delete(owner: "octo", repo: "one")
+
+        #expect(cache.load(owner: "octo", repo: "one") == nil)
+        #expect(cache.load(owner: "octo", repo: "two") != nil)
+        #expect(cache.itemCount == 1)
+        #expect(cache.totalBytes > 0)
+    }
+
     @Test("覆盖同一快照只增量更新字节数，不重复增加条目")
     func overwritingSnapshotKeepsIncrementalCountersAccurate() throws {
         let (cache, root) = makeIsolatedCache()

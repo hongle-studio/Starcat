@@ -401,7 +401,7 @@ struct InsightsCardIllustration: View {
 
 /// 洞察卡左上角的彩色图标 chip：亮色白底 / 深色提亮底 + 语义色图标。
 struct InsightsCardIconChip: View {
-    let systemImage: String
+    let iconSource: BusinessIcon.Source
     let tint: Color
     /// 外部需要更小 / 更大 chip 时显式传入；默认对齐原型比例。
     var size: CGFloat = 26
@@ -412,8 +412,7 @@ struct InsightsCardIconChip: View {
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
                 .fill(chipFill)
-            Image(systemName: systemImage)
-                .font(.system(size: size * 0.5, weight: .semibold))
+            BusinessIcon(source: iconSource, pointSize: size * (iconSource.isAsset ? 0.62 : 0.5), weight: .semibold)
                 .foregroundStyle(tint)
         }
         .frame(width: size, height: size)

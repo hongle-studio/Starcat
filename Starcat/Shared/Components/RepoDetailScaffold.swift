@@ -161,10 +161,9 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
     /// - 成功（不抛错）→ chip 自动退出 loading；UI 由 `StarredRegistry` /
     ///   `Repo.isStarred` 字段变更驱动重渲染（API 200 才变 UI 原则）
     /// - 抛错 → chip 抖动 + 短暂红色 600ms，不弹 toast / alert
-    /// - 闭包内部应：① 未登录走 `authSession.signIn()` 后 return（不抛错）
-    ///   ② 已 star 调 `dependencies.starActionService.unstar(repo:)`
-    ///   ③ 未 star 调 `dependencies.starActionService.star(owner:repo:)`
-    let onStarTapped: () async throws -> Void
+    /// - `cleanupScope == nil` 表示普通 Star；非 nil 表示用户已经在 Sheet 中确认 Unstar 范围
+    /// - 闭包内部应：① 未登录走登录入口后 return ② 按 scope 调用 unstar ③ nil 时执行 star/toggle
+    let onStarTapped: (RepositoryUnstarCleanupScope?) async throws -> Void
 
     /// Activity 等场景的 fallback 颜色（无语言时 Hero 渐变使用）。
     let fallbackAccentColor: Color
@@ -242,6 +241,8 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
     /// 乐观 UI。Scaffold 会被详情浮窗复用，不能只依赖 HomeViewModel 当前列表页缓存。
     @State private var libraryState: LibraryState = .outsideLibrary
     @State private var isLibraryOperationInFlight = false
+    /// 任何已 Star 仓库取消前都展示会删除的基础数据；已入库时再提供扩展清理选项。
+    @State private var isShowingUnstarDataChoice = false
     /// 详情页共用 Toast。知识库操作与中栏 toolbar 的复制反馈共享同一承载层，
     /// 避免相邻列各自弹提示导致反馈位置与操作对象不一致。
     @State private var detailToastMessage: String?
@@ -303,7 +304,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         onLanguageTapped: ((String) -> Void)? = nil,
         showsContributorsStat: Bool = true,
         topBanner: String? = nil,
-        onStarTapped: @escaping () async throws -> Void,
+        onStarTapped: @escaping (RepositoryUnstarCleanupScope?) async throws -> Void,
         @ViewBuilder heroExtension: @escaping () -> HeroExt,
         @ViewBuilder body: @escaping (@escaping (RepoDetailScrollReport) -> Void) -> Body
     ) {
@@ -330,7 +331,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         onLanguageTapped: ((String) -> Void)? = nil,
         showsContributorsStat: Bool = true,
         topBanner: String? = nil,
-        onStarTapped: @escaping () async throws -> Void,
+        onStarTapped: @escaping (RepositoryUnstarCleanupScope?) async throws -> Void,
         @ViewBuilder body: @escaping (@escaping (RepoDetailScrollReport) -> Void) -> Body
     ) where HeroExt == EmptyView {
         self.init(
@@ -465,6 +466,15 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         .sheet(item: $proPaywallContext) { context in
             ProPaywallSheet.hosted(context: context, dependencies: dependencies)
         }
+        .sheet(isPresented: $isShowingUnstarDataChoice) {
+            RepositoryUnstarDataChoiceSheet(
+                repositoryFullName: repo.fullName,
+                isInKnowledgeLibrary: libraryState == .inLibrary,
+                onConfirm: { cleanupScope in
+                    try await onStarTapped(cleanupScope)
+                }
+            )
+        }
         .toast(
             message: $detailToastMessage,
             icon: detailToastIcon,
@@ -487,6 +497,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
             aiOverlayTopChromeInset = 0
             libraryState = .outsideLibrary
             isLibraryOperationInFlight = false
+            isShowingUnstarDataChoice = false
             detailToastMessage = nil
             proPaywallContext = nil
         }
@@ -779,7 +790,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
                     libraryState: libraryState,
                     onLanguageTapped: onLanguageTapped,
                     showsContributorsStat: showsContributorsStat,
-                    onStarTapped: onStarTapped
+                    onStarTapped: handleStarTapped
                 ) {
                     trailingActionsView
                 }
@@ -789,6 +800,18 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
                 RepoLocalSections(repo: repo)
             }
         }
+    }
+
+    /// 已 Star 仓库取消前统一展示删除清单；只有知识库成员才出现“同时移出知识库”。
+    private func handleStarTapped() async throws {
+        let isCurrentlyStarred = repo.isStarred || dependencies.starredRegistry.contains(ghRepoId: repo.id)
+        guard isCurrentlyStarred else {
+            try await onStarTapped(nil)
+            return
+        }
+        // 不能依赖 `.task(id:)` 是否已经完成；点击当下重新读取，确保入库仓库一定展示扩展选项。
+        await loadLibraryState(for: repo)
+        isShowingUnstarDataChoice = true
     }
 
     /// trailingActions 派发渲染（按 RepoDetailAction enum 类型）。
@@ -1043,7 +1066,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         case .weeklyIssue(let number, let url):
             Link(destination: url) {
                 HStack(spacing: 4) {
-                    Image(systemName: "newspaper")
+                    Image(systemName: BusinessIcon.Symbol.weekly.systemImage)
                         .font(.system(size: 12, weight: .semibold))
                     Text("# \(number)")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))

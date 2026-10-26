@@ -29,6 +29,7 @@ class FakeGitHub:
 
     def __init__(self):
         self.draft = None
+        self.prerelease = False
         self.assets = {}
         self.events = []
         self.fail_upload = None
@@ -42,7 +43,7 @@ class FakeGitHub:
             if self.draft is None:
                 return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)")
             payload = {
-                "draft": self.draft, "prerelease": False,
+                "draft": self.draft, "prerelease": self.prerelease,
                 "assets": [{"name": name} for name in self.assets],
                 "html_url": "https://github.com/starcat-app/Starcat/releases/tag/v9.9.9",
             }
@@ -54,6 +55,7 @@ class FakeGitHub:
         if action == "create":
             assert "--draft" in args and "--verify-tag" in args
             self.draft = True
+            self.prerelease = "--prerelease" in args
         elif action == "upload":
             artifact = Path(args[3])
             if self.fail_upload == artifact.name:
@@ -98,6 +100,24 @@ class DirectReleaseTests(unittest.TestCase):
         self.publish()
         self.assertEqual(self.github.events, ["create", "upload", "download", "upload", "download", "edit"])
         self.assertFalse(self.github.draft)
+
+    def test_development_release_is_published_as_prerelease(self):
+        self.changelog.write_text(
+            "## 9.9.9-待发布\n\n### New\n\n- Preview: Development feature.\n"
+        )
+
+        release.publish(
+            "9.9.9-dev.1",
+            self.dmg,
+            self.sha,
+            self.changelog,
+            prerelease=True,
+            marketing_version="9.9.9",
+        )
+
+        self.assertFalse(self.github.draft)
+        self.assertTrue(self.github.prerelease)
+        self.assertNotIn("--latest", self.github.events)
 
     def test_upload_failure_keeps_draft_and_retry_only_fills_missing_asset(self):
         self.github.fail_upload = self.sha.name
@@ -181,11 +201,12 @@ main
                 self.assertEqual(result.returncode, 23 if fail_github else 0, result.stderr)
                 self.assertEqual(result.stdout.splitlines(), stages[:5] if fail_github else stages)
 
-    def test_server_upload_contains_only_appcast(self):
+    def test_server_upload_contains_only_stable_and_development_appcasts(self):
         probe = '''set -eu
 DOWNLOAD_BASE_URL=https://github.com/starcat-app/Starcat/releases/download/v9.9.9/
 VERSION=9.9.9
 APPCAST_PATH=/fixture/appcast.xml
+DEVELOPMENT_APPCAST_PATH=/fixture/appcast-development.xml
 RELEASE_HOST=fixture-server
 REMOTE_WEB_DIR=/fixture/site
 SSH_CMD=(ssh)
@@ -196,9 +217,27 @@ run_or_print() { printf '%s\\n' "$*"; }
 ''' + self.shell_function("publish_appcast") + "\npublish_appcast\n"
         result = subprocess.run(["bash", "-c", probe], text=True, capture_output=True, check=True)
         self.assertIn("/fixture/appcast.xml fixture-server:/fixture/site/appcast.xml", result.stdout)
+        self.assertIn(
+            "/fixture/appcast-development.xml fixture-server:/fixture/site/appcast-development.xml",
+            result.stdout,
+        )
         self.assertNotIn("/downloads", result.stdout)
         self.assertNotIn(".dmg", result.stdout)
         self.assertNotIn(".sha256", result.stdout)
+
+    def test_development_release_help_and_version_gate_do_not_publish(self):
+        script = ROOT / "scripts/release-direct-development.sh"
+        help_result = subprocess.run(
+            ["bash", str(script), "--help"], text=True, capture_output=True
+        )
+        invalid_result = subprocess.run(
+            ["bash", str(script), "9.9.9-beta.1"], text=True, capture_output=True
+        )
+
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("X.Y.Z-dev.N", help_result.stdout)
+        self.assertNotEqual(invalid_result.returncode, 0)
+        self.assertIn("X.Y.Z-dev.N", invalid_result.stderr)
 
     def test_reuse_does_not_rebuild_or_staple(self):
         probe = '''set -eu

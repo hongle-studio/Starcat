@@ -64,8 +64,7 @@ struct RepoRecommendationPopover: View {
     @ViewBuilder
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-                .font(.system(size: 14, weight: .semibold))
+            BusinessIcon(.recommendations, pointSize: 17, weight: .semibold)
                 .foregroundStyle(.secondary)
             Text("repo.recommendations.title")
                 .font(.headline)

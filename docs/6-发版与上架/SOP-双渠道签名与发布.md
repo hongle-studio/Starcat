@@ -226,7 +226,50 @@ STARCAT_NOTARIZE=1 STARCAT_RELEASE_SKIP_TAG=1 STARCAT_NOTARY_SUBMISSION_ID=<subm
 6. 生成并部署官网 changelog、静态页和 nginx，确认下载可用后上传 appcast。
 7. 校验官网 appcast、GitHub DMG 和 changelog。
 
-### 5.3 GitHub Release 与 appcast 发布
+### 5.3 Direct 开发版更新通道
+
+Direct 用户可在「设置 → 通用 → 更新」选择正式版或开发版。新安装和没有历史偏好的
+用户固定默认为正式版：
+
+| 通道 | Appcast | 发布类型 | 接收范围 |
+|------|---------|----------|----------|
+| 正式版 | `https://starcat.ink/appcast.xml` | GitHub Release | 仅正式版 |
+| 开发版 | `https://starcat.ink/appcast-development.xml` | GitHub prerelease | 开发版及后续正式版 |
+
+两个通道共用 Direct Bundle ID、Developer ID 签名、公证和 Sparkle EdDSA 信任链，不是
+Debug 包。Sparkle 继续按数值型 `CFBundleVersion` 判断新旧：切回正式版不会降级当前
+安装版本，而是等待构建号更高的正式版。
+
+开发版版本号固定为 `X.Y.Z-dev.N`，其中 App 内
+`CFBundleShortVersionString` 仍为合法的 `X.Y.Z`，`dev.N` 用于 tag、GitHub prerelease
+和发布记录。执行入口：
+
+```bash
+STARCAT_NOTARIZE=1 ./scripts/release-direct-development.sh 2.0.0-dev.1
+# 或
+make release-direct-development VERSION=2.0.0-dev.1
+```
+
+该脚本默认要求 `dev` 分支和干净工作区，产物放在 `dist/direct-development/`，并且只会：
+
+1. 创建并推送 `vX.Y.Z-dev.N` tag。
+2. 生成 Developer ID 签名、公证并 staple 的 Release DMG。
+3. 创建 GitHub prerelease，上传并回读校验 DMG/SHA256。
+4. 合并并发布 `appcast-development.xml`。
+
+它不会更新正式 `appcast.xml`、官网最新版、正式 Changelog、Homebrew Cask 或 App Store。
+上传中断且本地最终产物仍完整时，使用：
+
+```bash
+STARCAT_DEVELOPMENT_RELEASE_SKIP_TAG=1 \
+STARCAT_DEVELOPMENT_RELEASE_REUSE_ARTIFACTS=1 \
+./scripts/release-direct-development.sh 2.0.0-dev.1
+```
+
+正式版发布仍执行原命令。正式 item 会同时合入开发版 appcast，按相同营销版本替换对应
+开发 item，保证开发版用户能回到后续正式版；开发 item 永远不会反向进入正式 appcast。
+
+### 5.4 GitHub Release 与 appcast 发布
 
 GitHub 发布由 `release-direct.sh` 调用 `publish-direct-github-release.py` 完成，
 固定使用本机 gh 和 `starcat-app/Starcat` 仓库，不使用 GitHub Actions。
@@ -236,8 +279,9 @@ appcast 在上传前本地生成，下载地址预先指向同版本 GitHub tag�
 从 Direct 英文 Changelog 提取正式版本说明，再上传 DMG/SHA256，下载真实附件核对
 SHA256；全部一致才公开 Release。官网 appcast 在附件公开并可下载后最后上传。
 
-DMG/SHA256 不再上传阿里云。appcast 仍发布到 `https://starcat.ink/appcast.xml`，
-官网和已发布客户端继续使用这个更新入口。
+DMG/SHA256 不再上传阿里云。正式 appcast 仍发布到
+`https://starcat.ink/appcast.xml`，官网和默认客户端继续使用这个更新入口；正式发布还会
+同步 `https://starcat.ink/appcast-development.xml`，但不会向其中写入任何开发版内容。
 
 上传或官网发布失败后，保留最终 DMG、SHA256、`appcast-current.xml`，使用：
 

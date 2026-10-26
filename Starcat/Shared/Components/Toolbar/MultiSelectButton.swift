@@ -36,7 +36,8 @@ struct MultiSelectButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+            // 两种状态保持同一图形，仅通过颜色表达是否处于多选模式。
+            Image(systemName: "checklist")
                 .font(SyncIconButton.defaultFont)
                 .foregroundStyle(isActive ? Color.green : Color.secondary)
                 .frame(width: SyncIconButton.defaultFrameSize, height: SyncIconButton.defaultFrameSize)

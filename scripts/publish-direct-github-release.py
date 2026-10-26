@@ -49,10 +49,11 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def release_notes(changelog: Path, version: str) -> str:
-    """只接受目标版本的正式标题，不把待发布内容带入公开 Release。"""
+def release_notes(changelog: Path, version: str, *, allow_pending: bool = False) -> str:
+    """正式 Release 拒绝待发布标题；开发版 prerelease 可以复用待发布说明。"""
+    heading_suffix = r"(?:-待发布)?" if allow_pending else ""
     match = re.search(
-        rf"^## {re.escape(version)}\s*\n(.*?)(?=^## |\Z)",
+        rf"^## {re.escape(version)}{heading_suffix}\s*\n(.*?)(?=^## |\Z)",
         changelog.read_text(encoding="utf-8"),
         re.MULTILINE | re.DOTALL,
     )
@@ -61,33 +62,48 @@ def release_notes(changelog: Path, version: str) -> str:
     return match.group(1).strip() + "\n"
 
 
-def publish(version: str, dmg: Path, checksum: Path, changelog: Path) -> None:
-    """上传草稿、回读实际附件并校验摘要，再公开；已发布的一致版本只回读。"""
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        raise ValueError("版本号必须是 X.Y.Z")
-    if dmg.name != f"Starcat-{version}-arm64.dmg" or checksum.name != dmg.name + ".sha256":
+def publish(
+    version: str,
+    dmg: Path,
+    checksum: Path,
+    changelog: Path,
+    *,
+    prerelease: bool = False,
+    marketing_version: str | None = None,
+) -> None:
+    """上传草稿、回读实际附件并校验摘要，再按指定发布类型公开。"""
+    expected_pattern = r"\d+\.\d+\.\d+(?:-dev\.\d+)?" if prerelease else r"\d+\.\d+\.\d+"
+    if not re.fullmatch(expected_pattern, version):
+        raise ValueError("正式版本必须是 X.Y.Z；开发版本必须是 X.Y.Z-dev.N")
+    marketing_version = marketing_version or version
+    if not re.fullmatch(r"\d+\.\d+\.\d+", marketing_version):
+        raise ValueError("App 营销版本必须是 X.Y.Z")
+    if dmg.name != f"Starcat-{marketing_version}-arm64.dmg" or checksum.name != dmg.name + ".sha256":
         raise ValueError("DMG/SHA256 文件名必须与目标版本一致")
     digest = file_sha256(dmg)
     if not re.fullmatch(
         rf"{digest}\s+\*?{re.escape(dmg.name)}", checksum.read_text().strip()
     ):
         raise ValueError("本地 DMG 与 SHA256 不一致，禁止上传")
-    notes = release_notes(changelog, version)
+    notes = release_notes(changelog, marketing_version, allow_pending=prerelease)
     tag = f"v{version}"
     release = get_release(tag)
-    if release and release["prerelease"]:
-        raise ValueError("目标 tag 已是预发布版本，请先确认发布策略")
+    if release and release["prerelease"] != prerelease:
+        raise ValueError("目标 tag 的正式版/预发布属性与本次发布策略不一致")
 
     with tempfile.TemporaryDirectory(prefix="starcat-github-release-") as directory:
         work = Path(directory)
         if release is None:
             notes_path = work / "release-notes.md"
             notes_path.write_text(notes, encoding="utf-8")
-            gh(
+            create_args = [
                 "release", "create", tag, "--repo", REPOSITORY,
                 "--draft", "--verify-tag", "--title", f"Starcat {version}",
                 "--notes-file", str(notes_path),
-            )
+            ]
+            if prerelease:
+                create_args.append("--prerelease")
+            gh(*create_args)
             release = get_release(tag)
             if release is None:
                 raise RuntimeError("创建草稿后无法回读 Release")
@@ -107,10 +123,15 @@ def publish(version: str, dmg: Path, checksum: Path, changelog: Path) -> None:
                 raise ValueError(f"GitHub 附件与本地不同，禁止覆盖或发布: {artifact.name}")
 
         if release["draft"]:
-            gh("release", "edit", tag, "--repo", REPOSITORY, "--draft=false", "--latest")
+            edit_args = ["release", "edit", tag, "--repo", REPOSITORY, "--draft=false"]
+            if prerelease:
+                edit_args.append("--prerelease")
+            else:
+                edit_args.append("--latest")
+            gh(*edit_args)
         published = get_release(tag)
-        if published is None or published["draft"] or published["prerelease"]:
-            raise RuntimeError("Release 尚未正式公开，禁止发布 appcast")
+        if published is None or published["draft"] or published["prerelease"] != prerelease:
+            raise RuntimeError("GitHub Release 状态与发布策略不一致，禁止发布 appcast")
         print(f"GitHub Release 已核验: {published['html_url']}")
 
 
@@ -121,9 +142,18 @@ def main() -> None:
     parser.add_argument("--dmg", required=True, type=Path)
     parser.add_argument("--sha256", required=True, type=Path)
     parser.add_argument("--changelog", required=True, type=Path)
+    parser.add_argument("--prerelease", action="store_true")
+    parser.add_argument("--marketing-version")
     args = parser.parse_args()
     try:
-        publish(args.version, args.dmg, args.sha256, args.changelog)
+        publish(
+            args.version,
+            args.dmg,
+            args.sha256,
+            args.changelog,
+            prerelease=args.prerelease,
+            marketing_version=args.marketing_version,
+        )
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"[github-release] ERROR: {error}", file=sys.stderr)
         sys.exit(1)

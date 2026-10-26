@@ -50,7 +50,8 @@ private func bulkFixtureBody(
     archivedFullNames: Set<String> = [],
     forkFullNames: Set<String> = [],
     pushedAtByFullName: [String: String] = [:],
-    pinPositionsByFullName: [String: Int] = [:]
+    pinPositionsByFullName: [String: Int] = [:],
+    licensesByFullName: [String: String] = [:]
 ) -> Data {
     // Wire payload 是**扁平**对象：card 字段（gh_repo_id / full_name / owner / ...）
     // 与 feed 字段（is_available / source_types / weekly / ...）同级，由
@@ -89,6 +90,9 @@ private func bulkFixtureBody(
                 "issue_url": "https://example.com/issue/\(100 + idx)"
             ]
         ]
+        if let license = licensesByFullName[tuple.0] {
+            dict["license_spdx"] = license
+        }
         if let lang = tuple.1 {
             dict["language"] = lang
         }
@@ -257,6 +261,7 @@ struct WeeklyBulkRepositoryTests {
             starsFilter: .all,
             pushedRecency: .all,
             language: "",
+            searchQuery: "",
             sort: .defaultOrder,
             page: 1,
             pageSize: 20,
@@ -266,6 +271,56 @@ struct WeeklyBulkRepositoryTests {
         #expect(page.items.first?.isPinned == true)
         #expect(page.items.first?.pinPosition == 1)
         #expect(page.items.first?.sourceEntries.first?.title == "Source 1")
+    }
+
+    @MainActor
+    @Test("许可证 SQLite 分页与内存快照的计数、回切缓存一致")
+    func licenseCachePagingAndMemoryAgree() async throws {
+        let (repository, _) = try makeRepository { request in
+            let names = (1...50).map { "owner/repo\($0)" }
+            let body = bulkFixtureBody(
+                repos: names.enumerated().map { ($0.element, "Swift", 1000 - $0.offset, "2026-06-15T10:00:00Z") },
+                licensesByFullName: Dictionary(uniqueKeysWithValues: names.enumerated().map {
+                    ($0.element, $0.offset < 25 ? "GPL-3.0" : ($0.offset == 49 ? "Apache-2.0" : "MIT License"))
+                })
+            )
+            return (bulkHTTPResponse(200, request.url!), body)
+        }
+        _ = try await repository.fetchBulk()
+        let filter = RepoLicenseFilter(["MIT", "Apache-2.0"])
+        func query(_ page: Int) -> WeeklyBulkCacheQuery {
+            WeeklyBulkCacheQuery(source: .all, coverage: .all, hideArchived: false, hideForks: false,
+                                 starsFilter: .all, pushedRecency: .all, language: "", searchQuery: "",
+                                 sort: .defaultOrder, page: page, pageSize: 20, now: Date(), licenseFilter: filter)
+        }
+        let first = try #require(await repository.cachedPage(query: query(1)))
+        let second = try #require(await repository.cachedPage(query: query(2)))
+        #expect(first.filteredTotal == 25)
+        #expect(first.catalogTotal == 50)
+        #expect(first.items.count == 20)
+        #expect(second.items.count == 5)
+        #expect((first.items + second.items).allSatisfy { filter.matches($0.card.licenseSpdx) })
+        #expect(first.licenseOptions.contains("gpl-3.0"))
+
+        let api = WeeklyAPI(baseURL: URL(string: "https://weekly.test.invalid")!)
+        let model = WeeklyContentViewModel(api: api, languageStore: WeeklyLanguageStore(api: api), bulkRepository: repository)
+        model.changeLicenseFilter(to: filter)
+        await model.loadInitialIfNeeded()
+        #expect(model.total == 25)
+        #expect(model.items.map(\.id) == first.items.map(\.id))
+        await model.loadMoreIfNeeded()
+        #expect(model.items.count == 25)
+        await model.reload()
+        #expect(model.total == 25)
+        model.changeLicenseFilter(to: RepoLicenseFilter(["GPL-3.0"]))
+        await allowWeeklyFilterTaskToFinish()
+        #expect(model.items.allSatisfy { $0.card.licenseSpdx == "GPL-3.0" })
+        let derivations = model.localDerivationCountForTesting
+        model.changeLicenseFilter(to: filter)
+        await allowWeeklyFilterTaskToFinish()
+        #expect(model.total == 25)
+        #expect(model.localDerivationCountForTesting == derivations)
+        #expect(model.items.map(\.id) == first.items.map(\.id))
     }
 
     @Test("cachedPage: SQLite 分页筛选排序只返回当前页")
@@ -305,6 +360,7 @@ struct WeeklyBulkRepositoryTests {
             starsFilter: .min1000,
             pushedRecency: .days30,
             language: "Swift",
+            searchQuery: "",
             sort: .starsDesc,
             page: 1,
             pageSize: 1,
@@ -324,12 +380,30 @@ struct WeeklyBulkRepositoryTests {
             starsFilter: query.starsFilter,
             pushedRecency: query.pushedRecency,
             language: query.language,
+            searchQuery: query.searchQuery,
             sort: query.sort,
             page: 2,
             pageSize: 1,
             now: query.now
         )))
         #expect(secondPage.items.isEmpty)
+
+        let searchedPage = try #require(await repo.cachedPage(query: WeeklyBulkCacheQuery(
+            source: .all,
+            coverage: .all,
+            hideArchived: false,
+            hideForks: false,
+            starsFilter: .all,
+            pushedRecency: .all,
+            language: "",
+            searchQuery: "OWNER/C",
+            sort: .starsDesc,
+            page: 1,
+            pageSize: 20,
+            now: Date()
+        )))
+        #expect(searchedPage.filteredTotal == 1)
+        #expect(searchedPage.items.map(\.fullName) == ["owner/c"])
     }
 
     @Test("fetchBulk 整批替换：第二次拉新数据，旧行被全部清掉")

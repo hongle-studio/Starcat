@@ -43,6 +43,8 @@ final class AppDependencies {
     let oauthService: any GithubOAuthServiceProtocol
     let authSession: AuthSession
     let syncManager: SyncManager
+    /// Stars 完成后的后台工作拥有独立生命周期，不延长主窗口同步状态。
+    @ObservationIgnored private var starsSyncFollowUp: StarsSyncFollowUpCoordinator?
     /// 前台探测外部新增 star，只提示不写库。点击后复用 `syncManager` 增量同步。
     let externalStarInbox: ExternalStarInbox
     /// 主应用唯一的 Widget 快照发布器；负责账户隔离、去抖与 WidgetCenter 刷新。
@@ -250,6 +252,9 @@ final class AppDependencies {
     /// 当前“趋势”仍使用 `trendingRepository`，不从 discovery 新趋势候选切换数据源。
     let discoveryRepository: any DiscoveryRepositoryProtocol
 
+    /// 与用户 Stars、普通 Discovery 和 Awesome 目录隔离的 Linux.do 公共来源缓存。
+    let linuxDoStore: LinuxDoStore
+
     /// Awesome 精选目录、账户订阅、自定义来源和来源证据的本地优先仓储。
     /// 与普通 Discovery bulk 分开，避免用户按需订阅的长清单进入全量探索缓存。
     let awesomeRepository: any AwesomeRepositoryProtocol
@@ -445,6 +450,8 @@ final class AppDependencies {
 
     /// star / unstar 唯一权威服务（写入 registry 的唯一路径）。
     let starActionService: StarActionService
+    /// GitHub unstar 成功后统一删除单仓库私有整理、派生分析与可选知识库数据。
+    let repositoryUnstarCleanupService: RepositoryUnstarCleanupService
 
     /// owner 卡片（详情页 hero owner 名入口弹出）的数据与关注动作服务。
     ///
@@ -1279,6 +1286,20 @@ final class AppDependencies {
             entitlementGate: self.entitlementGate
         )
 
+        let repositoryUnstarCleanupService = RepositoryUnstarCleanupService(
+            database: db,
+            cancelAISession: { [weak sessionStore = self.repoAIInsightSessionStore] repoID in
+                await sessionStore?.remove(repoID: repoID)
+            },
+            prepareKnowledgeIndexRemoval: { [weak ragIndexBuilder = self.knowledgeRAGIndexBuilder] repoID in
+                try await ragIndexBuilder?.prepareRepositoryRemoval(repoID: repoID)
+            },
+            finishKnowledgeIndexRemoval: { [weak ragIndexBuilder = self.knowledgeRAGIndexBuilder] repoID in
+                ragIndexBuilder?.finishRepositoryRemoval(repoID: repoID)
+            }
+        )
+        self.repositoryUnstarCleanupService = repositoryUnstarCleanupService
+
         // Star 写入核心必须先于 MCP 门面装配：MCP 的 star/unstar 只能复用这条业务路径，
         // 才能同步维护本地缓存、Undo 历史、活动账本和 Home 刷新。
         let registry = StarredRegistry()
@@ -1294,6 +1315,7 @@ final class AppDependencies {
             userNameProvider: { [weak session] in
                 session?.state.user?.login
             },
+            cleanupService: repositoryUnstarCleanupService,
             homeRefresher: nil,
             activityRepository: self.userRepoActivityRepository
         )
@@ -1433,6 +1455,7 @@ final class AppDependencies {
         self.repoStarHistoryRepository = repoStarHistoryRepository
         let discoveryRepo = DiscoveryRepository(api: discoveryAPIInstance, database: db)
         self.discoveryRepository = discoveryRepo
+        self.linuxDoStore = LinuxDoStore(repository: LinuxDoRepository(api: discoveryAPIInstance))
         self.exploreCatalogStore = ExploreCatalogStore(repository: discoveryRepo)
         let awesomeRepository = AwesomeRepository(api: discoveryAPIInstance, database: db)
         self.awesomeRepository = awesomeRepository
@@ -1569,6 +1592,14 @@ final class AppDependencies {
         )
         self.repositoryInsightsContextCoordinator = repositoryInsightsContextCoordinator
         aiInsight.setRepositoryInsightsContextProvider(repositoryInsightsContextCoordinator)
+        repositoryUnstarCleanupService.attachKnowledgeArtifactCleanup {
+            [repositoryInsightsCache, knowledgeBaseMetadataSnapshotCache, readmeAvailability = self.readmeAvailability]
+            repo in
+            try await repositoryInsightsContextCoordinator.deleteArtifact(for: repo)
+            await repositoryInsightsCache.clearTransientState()
+            await knowledgeBaseMetadataSnapshotCache.removeAll()
+            readmeAvailability.clearNotFound(repoId: repo.id)
+        }
         let healthService = RepoHealthService(
             repository: healthRepo,
             releaseRepository: releaseRecordRepo,
@@ -1731,16 +1762,42 @@ final class AppDependencies {
 
         // SyncManager 全量 / 增量同步成功完成 → bootstrapper.reload() 同步 registry 到 DB
         // 注：weak 不需要，bootstrapper 与 syncManager 都由 self 强持（生命周期一致）
-        self.syncManager.onSyncCompleted = { [bootstrapper, starListSyncService = self.githubStarListSyncService, session, ragIndexBuilder = self.knowledgeRAGIndexBuilder, widgetRefreshCoordinator = self.widgetRefreshCoordinator, screensaverRefreshCoordinator = self.screensaverRefreshCoordinator, repositorySpotlightService, externalStarInbox = self.externalStarInbox] in
+        self.syncManager.onSyncCompleted = { [bootstrapper] in
             await bootstrapper.reload()
-            if let login = session.state.user?.login {
+        }
+        // 只有本地 Stars 与注册表属于主同步。网络分组、RAG 和图片快照均为旁路，
+        // 两个独立 lane 合并在途请求；每个 await 后校验账号，切库前还必须取消并等待。
+        let currentStarsAccountID: @MainActor () -> Int64? = {
+            guard let id = session.state.user?.id, db.currentUserId == id else { return nil }
+            return id
+        }
+        let followUp = StarsSyncFollowUpCoordinator(
+            accountIDProvider: currentStarsAccountID,
+            refreshGroups: { [starListSyncService = self.githubStarListSyncService, externalStarInbox = self.externalStarInbox] login in
+                guard !Task.isCancelled else { return false }
+                await externalStarInbox.handleSyncCompleted()
+                guard !Task.isCancelled else { return false }
                 await starListSyncService.sync(login: login)
+                return !Task.isCancelled && starListSyncService.lastErrorMessage == nil
+            },
+            retryMemberships: { [starListSyncService = self.githubStarListSyncService] in
+                _ = await starListSyncService.retryPendingLocalMemberships()
+            },
+            refreshDerivedData: { [ragIndexBuilder = self.knowledgeRAGIndexBuilder, widgetRefreshCoordinator = self.widgetRefreshCoordinator, screensaverRefreshCoordinator = self.screensaverRefreshCoordinator, repositorySpotlightService] userID in
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                await ragIndexBuilder.refreshMetadataForKnowledgeRepos()
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                await widgetRefreshCoordinator.publishReady()
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                await screensaverRefreshCoordinator.publishReady()
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                repositorySpotlightService.scheduleRebuild()
             }
-            await ragIndexBuilder.refreshMetadataForKnowledgeRepos()
-            await widgetRefreshCoordinator.publishReady()
-            await screensaverRefreshCoordinator.publishReady()
-            repositorySpotlightService.scheduleRebuild()
-            await externalStarInbox.handleSyncCompleted()
+        )
+        self.starsSyncFollowUp = followUp
+        self.syncManager.onSyncSettled = { [session, followUp] userID, trigger in
+            guard let user = session.state.user, user.id == userID else { return }
+            followUp.schedule(userID: userID, login: user.login, retryPendingMemberships: trigger == .manual)
         }
         self.syncManager.onFullSyncCompleted = { [dataContributionCoordinator] userID, capturedAt in
             // 不 await：快照和上传是严格旁路，SyncManager 的完成态不等待 Collection 服务。
@@ -1887,6 +1944,10 @@ final class AppDependencies {
     func switchUserDatabase(to userId: Int64?) async throws {
         let previousUserId = database.currentUserId
         if previousUserId != userId {
+            await syncManager.cancelAndWait()
+            // 先停止服务拥有的子 Task，再等待协调器退出；反向等待会让旧快照迟迟无法取消。
+            await githubStarListSyncService.resetForAccountChange()
+            await starsSyncFollowUp?.resetForAccountChange()
             // 两套人工 AI 草稿都属于账号作用域。必须在 reopen 前等旧请求退出，随后再从
             // 新账号库恢复；把屏障放在数据库所有者内部，避免 View 生命周期竞态。
             await batchAIQueueService.resetForAccountChange()
@@ -2036,7 +2097,9 @@ final class AppDependencies {
         case .sharing:  await shareAPI.updateBaseURL(target)
         case .wiki:     await wikiAPI.updateBaseURL(target)
         case .recommend: await recommendAPI.updateBaseURL(target)
-        case .discovery: await discoveryAPI.updateBaseURL(target)
+        case .discovery:
+            await discoveryAPI.updateBaseURL(target)
+            await linuxDoStore.providerDidChange()
         case .history: await starHistoryAPI.updateBaseURL(target)
         }
 
@@ -2087,7 +2150,9 @@ final class AppDependencies {
         case .sharing:  await shareAPI.updateAPIKey(resolved)
         case .wiki:     await wikiAPI.updateAPIKey(resolved)
         case .recommend: await recommendAPI.updateAPIKey(resolved)
-        case .discovery: await discoveryAPI.updateAPIKey(resolved)
+        case .discovery:
+            await discoveryAPI.updateAPIKey(resolved)
+            await linuxDoStore.providerDidChange()
         case .history: await starHistoryAPI.updateAPIKey(resolved)
         }
 

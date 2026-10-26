@@ -726,6 +726,35 @@ struct RepoRepositoryTests {
         #expect(snapshots.first?.fullName == "owner/repo-1")
     }
 
+    @Test("许可证在 LIMIT 前多选过滤，分页、总数、全选和分面一致")
+    func licensePagingAndCountsAgree() async throws {
+        let (repo, database) = try makeRepo()
+        try await repo.upsertStarred((1...45).map {
+            makeDTO(id: Int64($0), name: String(format: "repo%03d", $0))
+        }, userID: 100, syncedAt: Date())
+        try await database.writer.write { db in
+            try db.execute(sql: "UPDATE repos SET license = 'GPL-3.0'")
+            try db.execute(sql: "UPDATE repos SET license = 'MIT License' WHERE id > 22")
+            try db.execute(sql: "UPDATE repos SET license = 'Apache-2.0' WHERE id = 45")
+        }
+        var filters = RepoListFilters.empty
+        filters.license = RepoLicenseFilter(["MIT", "Apache-2.0"])
+        filters.selectedLanguages = ["Swift"]
+        let first = try await repo.fetchListPage(scope: .allStars, filters: filters, sort: .nameAsc, limit: 20, offset: 0)
+        let second = try await repo.fetchListPage(scope: .allStars, filters: filters, sort: .nameAsc, limit: 20, offset: 20)
+        let ids = try await repo.fetchListIDs(scope: .allStars, filters: filters, sort: .nameAsc)
+        #expect(first.count == 20)
+        #expect(second.count == 3)
+        #expect(first.map(\.id) + second.map(\.id) == ids)
+        #expect(ids == Array(Int64(23)...Int64(45)))
+        #expect(try await repo.fetchListCount(scope: .allStars, filters: filters) == 23)
+        let facets = try await repo.fetchListFacetCounts(scope: .allStars, filters: filters)
+        #expect(facets.languageTotal == 23)
+        #expect(Set(facets.licenses) == ["gpl-3.0", "mit", "apache-2.0", RepoLicenseFilter.unknownKey])
+        filters.selectedLanguages = ["Rust"]
+        #expect(try await repo.fetchListCount(scope: .allStars, filters: filters) == 0)
+    }
+
     @Test("DB Paging: fetchListCount 遵守当前 Manage 筛选条件")
     func listCountHonorsManageFilters() async throws {
         let (repo, db) = try makeRepo()

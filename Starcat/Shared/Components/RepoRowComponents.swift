@@ -147,10 +147,10 @@ public struct StarsBadge: View {
 
 // MARK: - MetaBadge
 
-/// 通用小型信息徽章。用于 fork count / tuningfork 等次要元数据。
+/// 通用小型信息徽章。用于 Fork 身份、次数等次要元数据。
 /// 显示效果：icon + text，胶囊背景使用 `tint` 的 12% opacity。
 public struct MetaBadge: View {
-    let systemImage: String
+    private let icon: BusinessIcon.Source
     let text: String
     let tint: Color
     /// 仅图标模式：不显示文字，胶囊宽度随图标收缩。
@@ -166,7 +166,22 @@ public struct MetaBadge: View {
         iconOnly: Bool = false,
         accessibilityLabel: LocalizedStringKey? = nil
     ) {
-        self.systemImage = systemImage
+        self.icon = .system(systemImage)
+        self.text = text
+        self.tint = tint
+        self.iconOnly = iconOnly
+        self.accessibilityLabel = accessibilityLabel
+    }
+
+    /// 定制业务图标沿用徽章的字号和内边距，不以素材网格扩大卡片布局。
+    init(
+        businessIcon: BusinessIcon.Symbol,
+        text: String,
+        tint: Color,
+        iconOnly: Bool = false,
+        accessibilityLabel: LocalizedStringKey? = nil
+    ) {
+        self.icon = .business(businessIcon)
         self.text = text
         self.tint = tint
         self.iconOnly = iconOnly
@@ -175,8 +190,7 @@ public struct MetaBadge: View {
 
     public var body: some View {
         HStack(spacing: 3) {
-            Image(systemName: systemImage)
-                .font(interfaceScale.font(.captionSmall, weight: .medium))
+            BusinessIcon(source: icon, pointSize: 11 * interfaceScale.multiplier, weight: .medium)
             if iconOnly {
                 EmptyView()
             } else {

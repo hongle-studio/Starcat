@@ -59,8 +59,7 @@ struct AwesomeSourceLogo: View {
     }
 
     private var symbolFallback: some View {
-        Image(systemName: "sparkles.rectangle.stack")
-            .font(.system(size: max(12, size * 0.38), weight: .medium))
+        BusinessIcon(.curatedCollection, pointSize: max(12, size * 0.38), weight: .medium)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.quaternary)

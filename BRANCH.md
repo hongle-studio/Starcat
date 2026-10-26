@@ -6,7 +6,7 @@
 >
 > 操作规范：[`docs/5-规范/Git-分支与Worktree规范.md`](docs/5-规范/Git-分支与Worktree规范.md)
 >
-> 最后核对：2026-10-11
+> 最后核对：2026-10-23
 
 ## 登记说明
 
@@ -32,9 +32,9 @@
 
 | 分支 | 位置 | 用途 | 当前状态 | 下一步 |
 |---|---|---|---|---|
-| `dev` | 本地 + `origin/dev`；当前未检出 | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；本地与远端已与 `main` 对齐。`v1.9.0` Direct 已公开发布，App Store archive 已生成但未上传；当前分支仅在发布 tag 之后包含本次分支登记更新。 | 继续承载后续开发；新增变更不得回写已公开的 `v1.9.0` tag。 |
+| `dev` | 本地 + `origin/dev`；仓库根目录 worktree | 日常开发与功能集成主线。新功能完成验收后先进入这里，再按发布流程进入 `main`。 | `开发中`；2026-10-23 以 fast-forward 提升到 `main` 并发布 Direct `v1.9.1`，两分支同步；后续 2.0.0 功能继续在此集成。 | 继续承载后续开发；Direct 预览版通过 `scripts/release-direct-development.sh` 从本分支发布 `1.9.2-dev.N`；新增变更不得回写已公开的 `v1.9.0` / `v1.9.1` tag。 |
 | `codex/laya-mlx-swift-poc` | 本地；无独立 worktree、无远端分支 | Laya MLX 决策引擎 PoC 的历史分支。 | `已合并`；分支头 `706f6bff` 已是 `dev` 的 ancestor，独有提交为 0。 | 暂时保留本地分支；如需删除，等待 dong4j 单独授权。 |
-| `main` | 本地 + `origin/main`；仓库根目录 worktree | 远端默认稳定主线和发布基线。 | `长期保留`；本地与远端已与 `dev` 对齐。`v1.9.0` Direct 已公开发布，App Store archive 已生成但未上传；当前分支仅在发布 tag 之后包含本次分支登记更新。 | 保持稳定；App Store Connect 上传由 dong4j 后续处理，下一版本验收后再从 `dev` 提升。 |
+| `main` | 本地 + `origin/main`；仓库根目录 worktree（发布期间检出） | 远端默认稳定主线和发布基线。 | `长期保留`；2026-10-23 从 `dev` fast-forward 到 `9d4cc2c2` 并打出 Direct `v1.9.1`（仅 Direct 渠道，App Store 未发布）。 | 保持稳定；下一版本验收后再从 `dev` 提升，打包、上传和发布须另行授权。 |
 
 ## 推荐数据链路跨仓分支
 

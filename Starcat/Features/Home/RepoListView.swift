@@ -28,11 +28,18 @@ import Observation
 @Observable
 private final class RepoListNavigationMetrics {
     private(set) var trendingRepoCount = 0
+    private(set) var linuxDoRepoCount = 0
     private(set) var activityItemCount = 0
+    var licenseOptions: [String] = []
 
     func applyTrendingRepoCount(_ count: Int) {
         guard trendingRepoCount != count else { return }
         trendingRepoCount = count
+    }
+
+    func applyLinuxDoRepoCount(_ count: Int) {
+        guard linuxDoRepoCount != count else { return }
+        linuxDoRepoCount = count
     }
 
     func applyActivityItemCount(_ count: Int) {
@@ -105,6 +112,7 @@ private struct RepoListNavigationSubtitleModifier: ViewModifier {
     let listVisibilityBadge: GitHubStarListVisibilityBadge?
     let metrics: RepoListNavigationMetrics
     let exploreCatalogStore: ExploreCatalogStore
+    let linuxDoStore: LinuxDoStore
     let trendingLanguageStore: TrendingLanguageStore
     let weeklyLanguageStore: WeeklyLanguageStore
     let weeklySelectionService: WeeklySelectionService
@@ -112,6 +120,7 @@ private struct RepoListNavigationSubtitleModifier: ViewModifier {
     let activityCategoryCountService: ActivityCategoryCountService
 
     @Environment(\.locale) private var locale
+    @Environment(AppSettings.self) private var settings
 
     func body(content: Content) -> some View {
         content
@@ -119,8 +128,11 @@ private struct RepoListNavigationSubtitleModifier: ViewModifier {
             .background {
                 if selectedPage == .trending, !countText.isEmpty {
                     TitlebarSubtitleAccessoryAttacher(subtitle: countText) {
-                        ExploreModeInfoButton(mode: selectedExploreMode)
-                            .id(selectedExploreMode)
+                        ExploreModeInfoButton(
+                            mode: selectedExploreMode,
+                            discoverySource: linuxDoStore.selectedSource
+                        )
+                        .id("\(selectedExploreMode.rawValue):\(linuxDoStore.selectedSource.rawValue)")
                     }
                     .frame(width: 0, height: 0)
                     .accessibilityHidden(true)
@@ -175,8 +187,17 @@ private struct RepoListNavigationSubtitleModifier: ViewModifier {
     }
 
     private var exploreRepoCountSubtitle: String {
+        // 来源 summary 是未过滤目录总数；许可证激活时分子改用完整派生结果，分母保留来源总量。
+        if settings.licenseFilter.isActive {
+            let current = selectedExploreMode == .discover && linuxDoStore.selectedSource == .linuxDo
+                ? metrics.linuxDoRepoCount : metrics.trendingRepoCount
+            guard let total = exploreRepoCounts.total else { return repoCountSubtitle(current) }
+            return String(format: String.l10n("list.filteredRepoCountFormat"), current, total)
+        }
         let presentation = ExploreNavigationPresentation.make(
             mode: selectedExploreMode,
+            discoverySource: linuxDoStore.selectedSource,
+            linuxDoLanguage: linuxDoStore.selectedLanguage,
             trendingLanguage: selectedTrendingLanguage,
             discoveryLanguage: selectedDiscoveryLanguage,
             discoveryTopic: selectedDiscoveryTopic,
@@ -205,6 +226,11 @@ private struct RepoListNavigationSubtitleModifier: ViewModifier {
     private var exploreRepoCounts: (current: Int, total: Int?) {
         switch selectedExploreMode {
         case .discover:
+            // Linux.do 是独立目录，不能沿用普通 Discover 的 total，否则标题会显示
+            // 与当前列表无关的全站发现数量。
+            if linuxDoStore.selectedSource == .linuxDo {
+                return (metrics.linuxDoRepoCount, linuxDoStore.repositories.count)
+            }
             let total = exploreCatalogStore.total(for: .discover)
             let current: Int
             if selectedDiscoveryTopic != nil, selectedDiscoveryPlatform != nil {
@@ -514,6 +540,9 @@ struct RepoListView: View {
     @State private var gitHubStarListOAuthRestrictedRepo: Repo?
     /// 列表顶栏「同步于」文案；会话内跟 `SyncManager.state`，冷启动读 DB `last_sync_at`。
     @State private var lastSyncedAt: Date?
+    /// Manage 仓库卡片分类共用快速搜索；草稿与已提交查询分离，避免每次输入都触发 FTS。
+    @State private var isManageQuickSearchExpanded = false
+    @State private var manageQuickSearchDraft = ""
     /// 列表计数由独立观察对象承载，避免计数发布让整个 RepoListView 根层重算。
     @State private var navigationMetrics = RepoListNavigationMetrics()
     /// 摘要存在状态与导航计数同样局部观察，避免摘要生成后重算整个页面根视图。
@@ -574,6 +603,9 @@ struct RepoListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .toast(message: $toastMessage, icon: "doc.on.clipboard")
+        .onPreferenceChange(RepoLicenseOptionsPreferenceKey.self) { keys in
+            navigationMetrics.licenseOptions = keys
+        }
         .toast(message: $repoPinToastMessage, icon: "pin.fill")
         .sheet(item: $gitHubStarListOAuthRestrictedRepo) { repo in
             GitHubStarListOAuthRestrictionSheet(repo: repo)
@@ -737,6 +769,7 @@ struct RepoListView: View {
                 listVisibilityBadge: listVisibilityBadge,
                 metrics: navigationMetrics,
                 exploreCatalogStore: dependencies.exploreCatalogStore,
+                linuxDoStore: dependencies.linuxDoStore,
                 trendingLanguageStore: dependencies.trendingLanguageStore,
                 weeklyLanguageStore: dependencies.weeklyLanguageStore,
                 weeklySelectionService: dependencies.weeklySelectionService,
@@ -766,7 +799,9 @@ struct RepoListView: View {
                 ToolbarItem(placement: .primaryAction) {
                     AppStatusToolbarButton(
                         lastSyncedAt: lastSyncedAt,
-                        onShowBatchAIPanel: onShowBatchAIPanel
+                        onShowBatchAIPanel: onShowBatchAIPanel,
+                        onShowGitHubGrouping: onStartGitHubStarListAIGrouping,
+                        onShowKnowledgeWorkspace: onOpenKnowledgeRAGWorkspace
                     )
                 }
                 ToolbarItem(placement: .primaryAction) {
@@ -1173,6 +1208,9 @@ struct RepoListView: View {
         .onChange(of: viewModel.globalFilterLanguages) { _, newValue in
             settings.globalFilterLanguages = AppSettings.normalizedLanguageList(newValue)
         }
+        .onChange(of: viewModel.licenseFilter) { _, filter in
+            settings.globalFilterLicenses = filter.persistedValues
+        }
         .onChange(of: viewModel.wikiAvailabilityFilter) { _, newValue in
             settings.wikiAvailabilityFilter = newValue
         }
@@ -1205,6 +1243,21 @@ struct RepoListView: View {
         Divider()
         languageFilterSection()
         Divider()
+        RepoLicenseFilterSection(
+            options: selectedPage == .manage
+                ? viewModel.sidebarLicenseOptions
+                : navigationMetrics.licenseOptions,
+            selection: globalFilterBinding(\.licenseFilter)
+        )
+        .task(id: viewModel.sidebarFacetQuery) {
+            if selectedPage == .manage {
+                await viewModel.refreshSidebarFacetCounts()
+            } else if selectedPage == .trending, selectedExploreMode == .awesome {
+                // 选项来自完整来源，不能只展示已经加载的第一页协议。
+                await dependencies.awesomeStore.loadAllRepositoryPages()
+            }
+        }
+        Divider()
         availabilityPicker(
             title: "list.filter.wikiAvailability",
             icon: "doc.text.magnifyingglass",
@@ -1225,7 +1278,7 @@ struct RepoListView: View {
             Label("settings.general.hideArchived", systemImage: "archivebox")
         }
         Toggle(isOn: globalFilterBinding(\.hideForks)) {
-            Label("settings.general.hideForks", systemImage: "tuningfork")
+            Label("settings.general.hideForks", businessIcon: .forkedRepository, pointSize: 13)
         }
         if viewModel.selection == .myProjects {
             Toggle(isOn: onlyPrivateProjectsBinding) {
@@ -1408,7 +1461,8 @@ struct RepoListView: View {
                     selectedDiscoveryRepoID: $selectedDiscoveryRepoID,
                     selectedDiscoveryRepo: $selectedDiscoveryRepo,
                     selectedWeeklyLanguage: $selectedWeeklyLanguage,
-                    onRepoCountChange: { navigationMetrics.applyTrendingRepoCount($0) }
+                    onRepoCountChange: { navigationMetrics.applyTrendingRepoCount($0) },
+                    onLinuxDoRepoCountChange: { navigationMetrics.applyLinuxDoRepoCount($0) }
                 )
                 .transition(.opacity)
             } else if selectedPage == .activity {
@@ -1499,8 +1553,9 @@ struct RepoListView: View {
                 } else if let error = viewModel.loadError, viewModel.items.isEmpty {
                     emptyState(systemImage: "exclamationmark.triangle", title: "error.loadFailed", subtitleText: error)
                 } else if viewModel.items.isEmpty {
-                    if selectedPage == .manage, viewModel.selection == .githubStarListUngrouped {
-                        // 未分组数量为 0 时仍要露出横幅（按钮灰掉），不能只在有列表时才插入。
+                    if selectedPage == .manage,
+                       viewModel.selection == .githubStarListUngrouped || viewModel.selection == .untagged {
+                        // 分类数量变成 0 也不能隐藏正在应用或待确认的任务入口。
                         listWithOptionalBanner {
                             emptyState(systemImage: emptyImage, title: emptyTitle, subtitle: emptySubtitle)
                         }
@@ -1591,7 +1646,7 @@ struct RepoListView: View {
             authSession.requestLoginSheet()
             return
         }
-        syncManager.performFullSync(userID: user.id, force: true)
+        syncManager.performFullSync(userID: user.id, force: true, trigger: .manual)
     }
 
     private var isManageRefreshInProgress: Bool {
@@ -1632,31 +1687,53 @@ struct RepoListView: View {
                 lastSyncedAt = at
             }
         }
+        .onChange(of: viewModel.selection) { _, _ in
+            resetManageQuickSearch()
+        }
     }
 
-    /// Manage 列表顶栏：排序 + 同步于 + Stars 同步 + 多选；仅仓库列表分类使用。
+    private var manageSyncDescription: String? {
+        lastSyncedAt.map { String(format: String.l10n("list.lastSyncedFormat"), relativeDate($0)) }
+    }
+
+    /// Manage 仓库卡片列表共用顶栏：可切换快速搜索，折叠时保留原排序 / 同步 / 多选布局。
     private func manageFilterBar(sortOption: Binding<RepoSortOption>) -> some View {
-        HStack(spacing: 10) {
-            UnifiedSortMenu(
-                selection: sortOption,
-                options: RepoSortOption.manageOptions,
-                displayName: { $0.displayName },
-                systemImage: { $0.systemImage },
-                dividerBefore: { $0.isManageSpecificSort && $0 == RepoSortOption.manageOptions.first(where: \.isManageSpecificSort) }
-            )
-
-            Spacer()
-
-            if let lastSyncedAt {
-                Text(String(format: String.l10n("list.lastSyncedFormat"), relativeDate(lastSyncedAt)))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        QuickSearchToolbarContent(
+            isExpanded: $isManageQuickSearchExpanded,
+            draft: $manageQuickSearchDraft,
+            committedQuery: viewModel.searchQuery,
+            placeholder: "list.quickSearch.placeholder",
+            onSubmit: { query in
+                viewModel.submitSearch(query)
+                manageQuickSearchDraft = viewModel.searchQuery
+            },
+            onClear: {
+                if !viewModel.searchQuery.isEmpty {
+                    viewModel.submitSearch("")
+                }
             }
-            StarsSyncButton()
-            MultiSelectButton(
-                isActive: dependencies.manageMultiSelectionStore.isActive,
-                action: toggleManageMultiSelection
-            )
+        ) {
+                UnifiedSortMenu(
+                    selection: sortOption,
+                    options: RepoSortOption.manageOptions,
+                    displayName: { $0.displayName },
+                    systemImage: { $0.systemImage },
+                    dividerBefore: { $0.isManageSpecificSort && $0 == RepoSortOption.manageOptions.first(where: \.isManageSpecificSort) }
+                )
+
+                Spacer()
+                    .layoutPriority(AdaptiveToolbarStatusText.spacerPriority)
+
+                if let text = manageSyncDescription {
+                    AdaptiveToolbarStatusText(text: text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                StarsSyncButton(statusDescription: manageSyncDescription)
+                MultiSelectButton(
+                    isActive: dependencies.manageMultiSelectionStore.isActive,
+                    action: toggleManageMultiSelection
+                )
         }
         .padding(.horizontal, ManageListFilterBarMetrics.horizontalPadding)
         .padding(.top, ManageListFilterBarMetrics.topPadding)
@@ -1669,6 +1746,12 @@ struct RepoListView: View {
         .onChange(of: viewModel.sortOption) { _, newValue in
             settings.repoSortOption = newValue
         }
+    }
+
+    /// 分类切换时不保留试用入口的瞬时 UI 状态；查询本身由既有 selection 流程负责清理。
+    private func resetManageQuickSearch() {
+        manageQuickSearchDraft = ""
+        isManageQuickSearchExpanded = false
     }
 
     /// Manage 从单选切入多选时，把当前可见仓库接续为第一项，避免卡片选中态突然消失。
@@ -1744,6 +1827,7 @@ struct RepoListView: View {
                 GitHubStarListUngroupedBanner(
                     ungroupedCount: viewModel.githubStarListUngroupedCount,
                     isLoggedIn: authSession.state.user != nil,
+                    session: dependencies.githubStarListAIGroupingSession,
                     onStart: { onStartGitHubStarListAIGrouping?() }
                 )
                 content()
@@ -2318,6 +2402,8 @@ struct RepoListView: View {
     private var exploreNavigationTitle: Text {
         let presentation = ExploreNavigationPresentation.make(
             mode: selectedExploreMode,
+            discoverySource: dependencies.linuxDoStore.selectedSource,
+            linuxDoLanguage: dependencies.linuxDoStore.selectedLanguage,
             trendingLanguage: selectedTrendingLanguage,
             discoveryLanguage: selectedDiscoveryLanguage,
             discoveryTopic: selectedDiscoveryTopic,

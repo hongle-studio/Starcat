@@ -153,6 +153,7 @@ APPCAST_INPUT_DIR="${PROJECT_ROOT}/dist/direct/appcast-input"
 DMG_PATH="${DOWNLOADS_DIR}/Starcat-${VERSION}-arm64.dmg"
 SHA_PATH="${DMG_PATH}.sha256"
 APPCAST_PATH="${PAGES_DIR}/appcast.xml"
+DEVELOPMENT_APPCAST_PATH="${PAGES_DIR}/appcast-development.xml"
 CURRENT_APPCAST_PATH="${DOWNLOADS_DIR}/appcast-current.xml"
 NOTARY_SUBMISSION_PATH="${DOWNLOADS_DIR}/Starcat-${VERSION}-arm64.notary-submission-id"
 
@@ -459,10 +460,20 @@ merge_appcast() {
     --incoming "$CURRENT_APPCAST_PATH" \
     --output "$APPCAST_PATH"
 
+  # 开发版用户也必须接收后续正式版。正式 item 会按营销版本替换同版本的
+  # 开发 item，但正式 appcast 永远不会反向合入开发版条目。
+  log "同步正式版本到开发版 appcast: ${VERSION}"
+  python3 "${SCRIPT_DIR}/merge-appcast.py" \
+    --base "$DEVELOPMENT_APPCAST_PATH" \
+    --incoming "$CURRENT_APPCAST_PATH" \
+    --output "$DEVELOPMENT_APPCAST_PATH"
+
   # 合并后再按 CHANGELOG 全量回填，历史版本说明与当前版本保持一致来源。
   log "回填 appcast 更新说明"
   python3 "${SCRIPT_DIR}/inject-appcast-release-notes.py" \
     --appcast "$APPCAST_PATH"
+  python3 "${SCRIPT_DIR}/inject-appcast-release-notes.py" \
+    --appcast "$DEVELOPMENT_APPCAST_PATH"
 
   if ! grep -q "Starcat-${VERSION}-arm64.dmg" "$APPCAST_PATH"; then
     fail "合并后的 appcast 未指向本次 DMG: Starcat-${VERSION}-arm64.dmg"
@@ -482,17 +493,24 @@ publish_appcast() {
     -e "$RSYNC_SSH" \
     "$APPCAST_PATH" \
     "$RELEASE_HOST:$REMOTE_WEB_DIR/appcast.xml"
+  run_or_print rsync -avz --progress \
+    -e "$RSYNC_SSH" \
+    "$DEVELOPMENT_APPCAST_PATH" \
+    "$RELEASE_HOST:$REMOTE_WEB_DIR/appcast-development.xml"
 
   log "设置远程文件权限"
   run_or_print "${SSH_CMD[@]}" "$RELEASE_HOST" "chmod 644 '$REMOTE_WEB_DIR/appcast.xml'"
+  run_or_print "${SSH_CMD[@]}" "$RELEASE_HOST" "chmod 644 '$REMOTE_WEB_DIR/appcast-development.xml'"
 }
 
 verify_remote_urls() {
   local appcast_url="https://starcat.ink/appcast.xml"
+  local development_appcast_url="https://starcat.ink/appcast-development.xml"
   local dmg_url="${DOWNLOAD_BASE_URL%/}/Starcat-${VERSION}-arm64.dmg"
   local changelog_url="https://starcat.ink/changelog.html"
 
   verify_public_url "appcast" "$appcast_url"
+  verify_public_url "development appcast" "$development_appcast_url"
   verify_public_url "DMG" "$dmg_url"
 
   if [ "${STARCAT_RELEASE_SKIP_SITE:-0}" != "1" ]; then

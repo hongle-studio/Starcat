@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 actor DiscoveryAPI {
     /// 自动加载有本地缓存兜底，应尽快失败；手动刷新允许更长等待，但也不能让 UI
@@ -146,6 +147,39 @@ actor DiscoveryAPI {
 
     func updateBaseURL(_ url: URL) {
         baseURL = url
+    }
+
+    /// URL 与凭证只参与摘要，不将 API Key 写入文件名、日志或公共来源快照。
+    func linuxDoProviderIdentity() -> String {
+        SHA256.hash(data: Data((baseURL.absoluteString + "\n" + (apiKey ?? "")).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Linux.do 由仓储显式处理条件请求，绕过 URLCache 以区分 200 与 304。
+    /// actor 在 await 处可重入：切换服务后，旧请求不得以新 provider 身份发布。
+    func fetchLinuxDo(
+        _ resource: LinuxDoResource,
+        providerID: String,
+        ifNoneMatch: String?
+    ) async throws -> LinuxDoResponse {
+        guard providerID == linuxDoProviderIdentity() else { throw CancellationError() }
+        let url = AppEndpoints.appendPath(resource.path, to: baseURL)
+        let (data, response) = try await performRequest(url: url, ignoresCache: true, ifNoneMatch: ifNoneMatch)
+        try Task.checkCancellation()
+        guard providerID == linuxDoProviderIdentity() else { throw CancellationError() }
+        let http = try requireHTTPResponse(response)
+        let etag = http.value(forHTTPHeaderField: "ETag")
+        if http.statusCode == 304 {
+            guard ifNoneMatch != nil else { throw LinuxDoCacheError.missingCachedBody }
+            return LinuxDoResponse(payload: nil, etag: etag ?? ifNoneMatch)
+        }
+        guard data.count <= 16 * 1024 * 1024 else { throw LinuxDoCacheError.invalidSnapshot }
+        let envelope = try decodeEnvelope(LinuxDoPayload.self, data: data, response: response)
+        // 来源撤回依赖完整语义，不能沿用通用解码器“未知 schema 仅警告”的宽松策略。
+        guard envelope.schemaVersion == 1 else { throw LinuxDoCacheError.invalidSnapshot }
+        let payload = envelope.data
+        try payload.validate(for: resource)
+        return LinuxDoResponse(payload: payload, etag: etag)
     }
 
     func updateAPIKey(_ key: String?) {

@@ -6,7 +6,7 @@
 //    1. StarredRegistry.contains O(1) 查询正确性（含 nil 防御）
 //    2. StarActionService.star 完整流程：apiClient.star → apiClient.repo → DB upsert
 //       → registry._add → homeRefresher.refreshAfterStarChange
-//    3. StarActionService.unstar 保留私有数据（DB markUnstarred 行为 + registry._remove）
+//    3. StarActionService.unstar 删除 Star 私有数据，但可保留知识库成员关系
 //    4. StarredRegistryBootstrapper.reload 从 DB 全量重建 registry
 //    5. StarredRegistryBootstrapper.clearOnSignOut 清空 registry
 //    6. StarActionService.star API 失败时 registry 不变（不污染状态）
@@ -19,6 +19,7 @@
 
 import Testing
 import Foundation
+import GRDB
 @testable import Starcat
 
 @MainActor
@@ -31,6 +32,7 @@ struct StarringSubsystemTests {
     private func makeDeps(
         currentUserID: Int64? = 100
     ) throws -> (
+        database: InMemoryDatabaseManager,
         api: MockGitHubAPIClient,
         repo: GRDBRepoRepository,
         note: GRDBRepoNoteRepository,
@@ -45,16 +47,26 @@ struct StarringSubsystemTests {
         let api = MockGitHubAPIClient()
         let registry = StarredRegistry()
         let refresher = SpyHomeRefresher()
+        let cleanupService = RepositoryUnstarCleanupService(
+            database: db,
+            deleteChatHistory: { _ in },
+            deleteRepoContext: { _ in },
+            deleteCodeFlow: { _ in },
+            deleteCodebaseMemory: { _ in },
+            deleteReadmeTranslations: { _ in },
+            deleteWikiCache: { _ in }
+        )
         let service = StarActionService(
             apiClient: api,
             repoRepository: repo,
             registry: registry,
             undoStarHistory: MockUndoStarHistoryRepository(),
             userIDProvider: { currentUserID },
+            cleanupService: cleanupService,
             homeRefresher: refresher
         )
         let bootstrapper = StarredRegistryBootstrapper(registry: registry, repoRepository: repo)
-        return (api, repo, note, registry, service, bootstrapper, refresher)
+        return (db, api, repo, note, registry, service, bootstrapper, refresher)
     }
 
     /// 构造一个 GitHubRepoDTO（默认字段足够 upsert 不挂）。
@@ -137,7 +149,7 @@ struct StarringSubsystemTests {
         #expect(starredCount == 1)
     }
 
-    // MARK: - 3. StarActionService.unstar 保留私有数据
+    // MARK: - 3. StarActionService.unstar 删除 Star 私有数据、保留可选知识库归属
 
     @Test("unstar: 调 markUnstarred + registry._remove + 保留 repos 行和 libraryState")
     func unstarPreservesPrivateData() async throws {
@@ -150,7 +162,37 @@ struct StarringSubsystemTests {
 
         // 先 star
         let saved = try await deps.service.star(owner: "alice", repo: "foo")
+        try await deps.note.updateContent(repoId: saved.id, content: "private note", isAIGenerated: true)
+        try await deps.note.updateStatus(repoId: saved.id, status: .read)
         try await deps.note.updateLibraryState(repoId: saved.id, state: .inLibrary)
+        try await deps.database.writer.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO repo_embeddings
+                    (repo_id, model, dimensions, embedding, snapshot_json, updated_at)
+                VALUES (?, 'test-model', 1, ?, '{}', '2026-10-15T00:00:00Z')
+                """,
+                arguments: [saved.id, Data([0, 0, 0, 0])]
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO open_ssf_scores
+                    (repo_id, fetch_status, fetched_at)
+                VALUES (?, 'success', '2026-10-15T00:00:00Z')
+                """,
+                arguments: [saved.id]
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO repo_health_snapshots
+                    (repo_id, overall_score, grade, maintenance_score, popularity_score,
+                     quality_score, security_score, payload_json, computed_at, stale_after, fetch_status)
+                VALUES (?, 80, 'B', 80, 80, 80, 80, '{}',
+                        '2026-10-15T00:00:00Z', '2026-10-16T00:00:00Z', 'success')
+                """,
+                arguments: [saved.id]
+            )
+        }
         #expect(deps.registry.contains(ghRepoId: 5555))
         #expect(try await deps.repo.starredCount() == 1)
 
@@ -161,11 +203,99 @@ struct StarringSubsystemTests {
         #expect(deps.registry.count == 0)
         #expect(try await deps.repo.starredCount() == 0)
 
-        // 但 repos 表还留着这一行（is_starred=0），保留用户私有数据
+        // repos 元数据行仍保留，知识库归属也保留，后续重新 Star / 重建索引可正常工作。
         let stillThere = try await deps.repo.findById(5555)
         #expect(stillThere != nil)
         #expect(stillThere?.isStarred == false)
-        #expect(try await deps.note.fetchLibraryState(repoId: saved.id) == .inLibrary)
+        let retainedLibraryRow = try await deps.note.find(repoId: saved.id)
+        #expect(retainedLibraryRow?.libraryState == LibraryState.inLibrary.rawValue)
+        #expect(retainedLibraryRow?.content == nil)
+        #expect(retainedLibraryRow?.status == RepoStatus.unread.rawValue)
+        #expect(retainedLibraryRow?.isAIGenerated == false)
+        let derivedCounts = try await deps.database.writer.read { db in
+            [
+                "embedding": try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM repo_embeddings WHERE repo_id = ?",
+                    arguments: [saved.id]
+                ) ?? -1,
+                "openssf": try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM open_ssf_scores WHERE repo_id = ?",
+                    arguments: [saved.id]
+                ) ?? -1,
+                "health": try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM repo_health_snapshots WHERE repo_id = ?",
+                    arguments: [saved.id]
+                ) ?? -1
+            ]
+        }
+        #expect(derivedCounts.values.allSatisfy { $0 == 0 })
+    }
+
+    @Test("unstar: GitHub API 失败时不删除任何本地数据")
+    func unstarRemoteFailurePreservesLocalData() async throws {
+        let deps = try makeDeps()
+        deps.api.starHandler = { _, _ in }
+        deps.api.repoHandler = { owner, repo in
+            self.makeRepoDTO(id: 5_556, owner: owner, name: repo)
+        }
+
+        let saved = try await deps.service.star(owner: "alice", repo: "remote-failure")
+        try await deps.note.updateContent(repoId: saved.id, content: "must survive", isAIGenerated: false)
+        deps.api.unstarHandler = { _, _ in throw URLError(.notConnectedToInternet) }
+
+        await #expect(throws: URLError.self) {
+            try await deps.service.unstar(repo: saved)
+        }
+
+        #expect(deps.registry.contains(ghRepoId: saved.id))
+        #expect(try await deps.repo.starredCount() == 1)
+        #expect(try await deps.note.find(repoId: saved.id)?.content == "must survive")
+    }
+
+    @Test("unstar + 移出知识库: 删除索引墓碑，重新 Star 与重新入库可成功")
+    func unstarAndRemoveKnowledgeAllowsCleanReentry() async throws {
+        let deps = try makeDeps()
+        deps.api.starHandler = { _, _ in }
+        deps.api.repoHandler = { owner, repo in
+            self.makeRepoDTO(id: 5_557, owner: owner, name: repo)
+        }
+        deps.api.unstarHandler = { _, _ in }
+
+        let saved = try await deps.service.star(owner: "alice", repo: "clean-reentry")
+        try await deps.note.updateContent(repoId: saved.id, content: "delete me", isAIGenerated: false)
+        try await deps.note.updateLibraryState(repoId: saved.id, state: .inLibrary)
+        try await deps.database.writer.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO rag_chunk_tombstones (repo_id, source, source_id, chunk_key, removed_at)
+                VALUES (?, 'readme', '', 'old-chunk', '2026-10-15T00:00:00Z')
+                """,
+                arguments: [saved.id]
+            )
+        }
+
+        try await deps.service.unstar(
+            repo: saved,
+            cleanupScope: .removeFromKnowledgeLibrary
+        )
+
+        #expect(try await deps.note.find(repoId: saved.id) == nil)
+        let tombstoneCount = try await deps.database.writer.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM rag_chunk_tombstones WHERE repo_id = ?",
+                arguments: [saved.id]
+            ) ?? -1
+        }
+        #expect(tombstoneCount == 0)
+
+        let restored = try await deps.service.star(owner: "alice", repo: "clean-reentry")
+        try await deps.note.updateLibraryState(repoId: restored.id, state: .inLibrary)
+        #expect(restored.isStarred)
+        #expect(try await deps.note.fetchLibraryState(repoId: restored.id) == .inLibrary)
     }
 
     @Test("unstar: 本地 starsCount 从 1 回到 0（不依赖 GitHub GET 的最终一致性）")

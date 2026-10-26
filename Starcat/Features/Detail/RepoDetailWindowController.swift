@@ -248,11 +248,14 @@ struct RepoDetailWindowContent: View {
             viewData: viewData,
             starHelpKey: "repo.unstar",
             showsRepoHealthEntry: true,
-            onStarTapped: {
+            onStarTapped: { cleanupScope in
                 // 推荐窗里的 star 点击：本地已 star → 触发 unstar。
                 // StarredRegistry @Observable 变更会自动驱动主窗 list + 主窗 hero
                 // 同步刷新（AppDependencies 共享）。
-                try await dependencies.starActionService.unstar(repo: repo)
+                try await dependencies.starActionService.unstar(
+                    repo: repo,
+                    cleanupScope: cleanupScope ?? .keepKnowledgeLibrary
+                )
             },
             heroExtension: { EmptyView() },
             body: { onScrollReport in

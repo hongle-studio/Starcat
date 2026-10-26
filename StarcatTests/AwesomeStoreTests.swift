@@ -183,6 +183,28 @@ struct AwesomeStoreTests {
         #expect(!store.hasMoreRepositories)
     }
 
+    @Test("完整来源加载等待新来源首屏，不沿用旧来源 offset")
+    @MainActor
+    func completeLoadWaitsForSelectedSource() async throws {
+        let old = Self.source(id: "old")
+        let current = Self.source(id: "current")
+        let values = (1...95).map { Self.repositoryItem(id: Int64($0), source: current) }
+        let repository = AwesomeStoreRepositoryFake(sources: [old, current],
+            repositoriesBySource: [old.id: [Self.repositoryItem(id: 200, source: old)], current.id: values],
+            delaysBySource: [current.id: 20_000_000])
+        let service = AwesomeCustomSourceService(github: AwesomeStoreGitHubFake(), repository: repository)
+        let store = AwesomeStore(repository: repository, customSourceService: service)
+        store.selectSource(old.id)
+        await store.loadAllRepositoryPages()
+        #expect(store.repositories.map(\.id) == [200])
+        store.selectSource(current.id)
+        await store.loadAllRepositoryPages()
+        #expect(store.repositories.map(\.id) == values.map(\.id))
+        #expect(!store.hasMoreRepositories)
+        #expect(await repository.catalogRefreshPolicies().isEmpty)
+        #expect(await repository.entryRefreshPolicies().isEmpty)
+    }
+
     @Test("选中来源只改变中栏计数而侧栏全量计数保持稳定")
     @MainActor
     func selectedSourceKeepsAllRepositoryCountStable() async throws {
@@ -283,6 +305,12 @@ struct AwesomeStoreTests {
         )
 
         #expect(AwesomeGlobalFilterPolicy.matches(repo, options: matchingOptions, facts: neutralFacts))
+
+        var licenseOptions = matchingOptions
+        licenseOptions.licenseFilter = RepoLicenseFilter(["MIT", "Apache-2.0"])
+        #expect(!AwesomeGlobalFilterPolicy.matches(repo, options: licenseOptions, facts: neutralFacts))
+        licenseOptions.licenseFilter = RepoLicenseFilter([RepoLicenseFilter.unknownKey])
+        #expect(AwesomeGlobalFilterPolicy.matches(repo, options: licenseOptions, facts: neutralFacts))
 
         let languageMismatch = AwesomeGlobalFilterOptions(
             hideArchived: false,

@@ -307,6 +307,90 @@ struct SyncManagerTests {
         try await waitForState(sync) { if case .completed = $0 { return true } else { return false } }
         #expect(calls.value == 0)
     }
+
+    @Test("200 与 304 都在完成态之后通知旁路，保留手动/自动来源", arguments: [false, true], [false, true])
+    func settledHookPreservesManualIntent(notModified: Bool, manual: Bool) async throws {
+        let (sync, mock, _) = try makeSUT()
+        var coreCompleted = false
+        var settledCount = 0
+        sync.onSyncCompleted = { coreCompleted = true }
+        sync.onSyncSettled = { userID, trigger in
+            #expect(userID == 906)
+            #expect(coreCompleted)
+            #expect((trigger == .manual) == manual)
+            if case .completed = sync.state {} else { Issue.record("Follow-up scheduled before Stars completed") }
+            settledCount += 1
+        }
+        mock.starredReposHandler = { _, _, _ in
+            if notModified { throw NetworkError.notModified(etag: "same") }
+            return self.makeOnePageResponse(dtos: [self.makeDTO(id: 5)])
+        }
+        sync.performFullSync(userID: 906, trigger: manual ? .manual : .automatic)
+        try await waitForState(sync) { if case .completed = $0 { true } else { false } }
+        #expect(settledCount == 1)
+        #expect(sync.lastRunWroteRepos == !notModified)
+    }
+
+    @Test("同帧连续触发只拉取一次")
+    func synchronousRequestsAreCoalesced() async throws {
+        let (sync, mock, _) = try makeSUT()
+        let calls = Counter()
+        mock.starredReposHandler = { _, _, _ in
+            calls.increment()
+            return self.makeOnePageResponse(dtos: [self.makeDTO(id: 6)])
+        }
+        sync.performFullSync(userID: 907, trigger: .manual)
+        sync.performFullSync(userID: 907, trigger: .manual)
+        sync.performFullSync(userID: 907, trigger: .manual)
+        try await waitForState(sync) { if case .completed = $0 { true } else { false } }
+        #expect(calls.value == 1)
+    }
+
+    @Test("取消后切库屏障仍等待旧核心收尾，取消与失败不派发后台重试")
+    func cancelledSyncDoesNotScheduleFollowUp() async throws {
+        let (sync, mock, _) = try makeSUT()
+        let gate = SyncCompletionTestGate()
+        defer { gate.open() }
+        var enteredCore = false
+        var settledCount = 0
+        var stopped = false
+        sync.onSyncCompleted = { enteredCore = true; await gate.wait() }
+        sync.onSyncSettled = { _, _ in settledCount += 1 }
+        mock.starredReposHandler = { _, _, _ in self.makeOnePageResponse(dtos: [self.makeDTO(id: 7)]) }
+        sync.performFullSync(userID: 908, trigger: .manual)
+        let deadline = Date().addingTimeInterval(3)
+        while !enteredCore, Date() < deadline { await Task.yield() }
+        #expect(enteredCore)
+        sync.cancel()
+        let stopping = Task { await sync.cancelAndWait(); stopped = true }
+        await Task.yield()
+        #expect(!stopped)
+        gate.open()
+        await stopping.value
+        #expect(sync.state == .idle)
+        #expect(settledCount == 0)
+
+        mock.starredReposHandler = { _, _, _ in throw NetworkError.unauthorized }
+        sync.performFullSync(userID: 908, trigger: .manual)
+        try await waitForState(sync) { if case .failed = $0 { true } else { false } }
+        #expect(settledCount == 0)
+    }
+}
+
+/// 核心回调的可控挂起点；不响应取消，以验证必须等待迟到的回调退出后才能切库。
+@MainActor
+private final class SyncCompletionTestGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 /// 引用类型 box,用于 @Sendable handler 闭包里捕获并修改值类型(配合 Counter 一起做测试观察用)。

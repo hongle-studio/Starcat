@@ -135,6 +135,11 @@ final class ActivityViewModel {
     private(set) var isApplyingCategoryFilter = false
     /// 当前分类是否还有未上屏的 filtered 行（滚到底加载更多）。
     private(set) var hasMoreItems: Bool = false
+    /// 当前活动分类已提交的快速搜索词；草稿由 View 持有，只有 Return 才会更新这里。
+    private(set) var quickSearchQuery = ""
+    private(set) var licenseFilter: RepoLicenseFilter = .all
+    /// 聚合事实源而非分页 items；非仓库活动不会制造虚假的许可证值。
+    var licenseOptions: [String] { RepoLicenseFilter.options(allItems.compactMap { $0.repo?.license }) }
     /// 当前分类 filter + sort 后的完整数量；`items.count` 只是已分页上屏的数量，不能用于标题计数。
     var filteredItemTotalCount: Int { filteredItems.count }
     /// 当前已经有可见列表内容。View 层用它区分“后台过滤中但已有首屏”与“真的空白加载中”。
@@ -330,6 +335,25 @@ final class ActivityViewModel {
         guard sort != timeSort(for: currentCategory) else { return }
         timeSortByCategory[currentCategory] = sort
         filteredItemsCache.removeValue(forKey: currentCategory)
+        applyCategoryFilter(currentCategory, bumpRevision: true)
+    }
+
+    /// 提交或清空快速搜索，并从完整聚合数据重新执行“分类 → 搜索 → 排序 → 分页”。
+    func changeQuickSearchQuery(to query: String) {
+        let normalizedQuery = QuickSearchTextMatcher.normalized(query)
+        guard normalizedQuery != quickSearchQuery else { return }
+        quickSearchQuery = normalizedQuery
+        filteredItemsCache.removeAll()
+        categoryFilterTask?.cancel()
+        applyCategoryFilter(currentCategory, bumpRevision: true)
+    }
+
+    /// 条件变化立即清空分类派生缓存，并取消旧条件下的后台派生。
+    func changeLicenseFilter(to filter: RepoLicenseFilter) {
+        guard filter != licenseFilter else { return }
+        licenseFilter = filter
+        filteredItemsCache.removeAll()
+        categoryFilterTask?.cancel()
         applyCategoryFilter(currentCategory, bumpRevision: true)
     }
 
@@ -781,10 +805,18 @@ final class ActivityViewModel {
         }
 
         let sort = timeSort(for: category)
+        let searchQuery = quickSearchQuery
+        let license = licenseFilter
         let needsAsyncFilter = category == .all || source.count > Self.asyncFilterItemThreshold
 
         if !needsAsyncFilter {
-            let filtered = Self.computeFilteredItems(source: source, category: category, timeSort: sort)
+            let filtered = Self.computeFilteredItems(
+                source: source,
+                category: category,
+                timeSort: sort,
+                searchQuery: searchQuery,
+                licenseFilter: license
+            )
             filteredItemsCache[category] = filtered
             commitFilteredSlice(from: filtered, bumpRevision: bumpRevision, resetPage: resetPage)
             return
@@ -794,10 +826,16 @@ final class ActivityViewModel {
         categoryFilterTask?.cancel()
         categoryFilterTask = Task { @MainActor [weak self] in
             let filtered = await Task.detached(priority: .userInitiated) {
-                Self.computeFilteredItems(source: source, category: category, timeSort: sort)
+                Self.computeFilteredItems(
+                    source: source,
+                    category: category,
+                    timeSort: sort,
+                    searchQuery: searchQuery,
+                    licenseFilter: license
+                )
             }.value
             guard let self, !Task.isCancelled else { return }
-            guard self.currentCategory == category else {
+            guard self.currentCategory == category, self.quickSearchQuery == searchQuery, self.licenseFilter == license else {
                 self.isApplyingCategoryFilter = false
                 return
             }
@@ -837,10 +875,21 @@ final class ActivityViewModel {
         let source = allItems
         guard !source.isEmpty else { return }
         let sort = timeSort(for: category)
-        Task.detached(priority: .utility) { [source, category, sort] in
-            let filtered = Self.computeFilteredItems(source: source, category: category, timeSort: sort)
+        let searchQuery = quickSearchQuery
+        let license = licenseFilter
+        Task.detached(priority: .utility) { [source, category, sort, searchQuery, license] in
+            let filtered = Self.computeFilteredItems(
+                source: source,
+                category: category,
+                timeSort: sort,
+                searchQuery: searchQuery,
+                licenseFilter: license
+            )
             await MainActor.run { [weak self] in
-                guard let self, self.filteredItemsCache[category] == nil else { return }
+                guard let self,
+                      self.quickSearchQuery == searchQuery,
+                      self.licenseFilter == license,
+                      self.filteredItemsCache[category] == nil else { return }
                 self.filteredItemsCache[category] = filtered
             }
         }
@@ -1449,14 +1498,34 @@ final class ActivityViewModel {
     nonisolated static func computeFilteredItems(
         source: [ActivityItem],
         category: ActivityCategory,
-        timeSort: ActivityTimeSort
+        timeSort: ActivityTimeSort,
+        searchQuery: String = "",
+        licenseFilter: RepoLicenseFilter = .all
     ) -> [ActivityItem] {
         PerformanceTracer.shared.trace(.activityLocalFilter) {
-            let filtered: [ActivityItem]
+            let categoryFiltered: [ActivityItem]
             if category == .all {
-                filtered = deduplicateForAllView(source)
+                categoryFiltered = deduplicateForAllView(source)
             } else {
-                filtered = source.filter { $0.category == category }
+                categoryFiltered = source.filter { $0.category == category }
+            }
+            let filtered = categoryFiltered.filter { item in
+                if licenseFilter.isActive {
+                    guard let repo = item.repo, licenseFilter.matches(repo.license) else { return false }
+                }
+                return QuickSearchTextMatcher.matches(
+                    searchQuery,
+                    candidates: [
+                        item.title,
+                        item.subtitle,
+                        item.body,
+                        item.repo?.fullName,
+                        item.repo?.owner,
+                        item.repo?.name,
+                        item.repo?.description,
+                        item.repo?.language
+                    ]
+                )
             }
             return sortFilteredItems(filtered, timeSort: timeSort)
         }

@@ -47,6 +47,32 @@ struct ActivityViewModelTests {
         #expect(ActivityCategory(persistedRawValue: "release") == .release)
     }
 
+    @Test("活动许可证过滤只作用于仓库项目，未知不包含非仓库公告")
+    func licenseFilterMatchesRepositoryMetadata() async throws {
+        let database = try InMemoryDatabaseManager()
+        try await database.insertRepoFixture(id: 1)
+        try await database.insertRepoFixture(id: 2)
+        try await database.writer.write { db in
+            try db.execute(sql: "UPDATE repos SET license = 'MIT License' WHERE id = 1")
+        }
+        let repository = GRDBRepoRepository(database: database)
+        let known = try #require(try await repository.findById(1))
+        let unknown = try #require(try await repository.findById(2))
+        func item(_ id: String, repo: Repo?) -> ActivityItem {
+            ActivityItem(id: id, kind: .release, category: .release, title: id, subtitle: nil,
+                         body: nil, createdAt: Date(), htmlURL: nil, repo: repo, release: nil,
+                         releases: [], isRead: false)
+        }
+        let source = [item("mit", repo: known), item("unknown", repo: unknown), item("not-repo", repo: nil)]
+        let knownResult = ActivityViewModel.computeFilteredItems(source: source, category: .release,
+                                                                 timeSort: .newestFirst, licenseFilter: RepoLicenseFilter(["MIT"]))
+        #expect(knownResult.map(\.id) == ["mit"])
+        let unknownResult = ActivityViewModel.computeFilteredItems(source: source, category: .release,
+                                                                   timeSort: .newestFirst, licenseFilter: RepoLicenseFilter([RepoLicenseFilter.unknownKey]))
+        #expect(unknownResult.map(\.id) == ["unknown"])
+        #expect(ActivityViewModel.computeFilteredItems(source: source, category: .release, timeSort: .newestFirst).count == 3)
+    }
+
     // MARK: - Harness
 
     /// 引用类型计数器（让 releasePollerRunner 闭包能跨调用累加）。

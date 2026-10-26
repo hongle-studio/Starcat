@@ -96,6 +96,9 @@ struct UndoStarContentView: View {
     @State private var starringRepoIDs: Set<Int64> = []
     /// 清空全部确认弹窗
     @State private var showClearAllConfirm = false
+    @State private var isQuickSearchExpanded = false
+    @State private var quickSearchDraft = ""
+    @State private var quickSearchQuery = ""
 
     init(
         repository: any UndoStarHistoryRepositoryProtocol,
@@ -210,7 +213,18 @@ struct UndoStarContentView: View {
     // MARK: - Filter Bar
 
     private var filterBar: some View {
-        HStack(spacing: 10) {
+        QuickSearchToolbarContent(
+            isExpanded: $isQuickSearchExpanded,
+            draft: $quickSearchDraft,
+            committedQuery: quickSearchQuery,
+            placeholder: "list.quickSearch.activityPlaceholder",
+            onSubmit: { query in
+                let normalizedQuery = QuickSearchTextMatcher.normalized(query)
+                quickSearchQuery = normalizedQuery
+                quickSearchDraft = normalizedQuery
+            },
+            onClear: { quickSearchQuery = "" }
+        ) {
             // 排序菜单（与星标模块同款组件）
             UnifiedSortMenu(
                 selection: $viewModel.sortOption,
@@ -255,15 +269,33 @@ struct UndoStarContentView: View {
             emptyState(systemImage: "exclamationmark.triangle", text: error)
         } else if viewModel.records.isEmpty {
             emptyState(systemImage: "clock.arrow.circlepath", titleKey: "activity.undoStar.empty")
+        } else if visibleRecords.isEmpty {
+            emptyState(systemImage: "magnifyingglass", titleKey: "list.quickSearch.empty")
         } else {
             recordList
+        }
+    }
+
+    /// Undo Star 已一次性加载完整历史，因此可直接在内存中匹配仓库主信息。
+    private var visibleRecords: [UndoStarRecord] {
+        viewModel.records.filter { record in
+            QuickSearchTextMatcher.matches(
+                quickSearchQuery,
+                candidates: [
+                    record.fullName,
+                    record.owner,
+                    record.name,
+                    record.repoDescription,
+                    record.language
+                ]
+            )
         }
     }
 
     private var recordList: some View {
         let store = dependencies.undoStarMultiSelectionStore
         return List {
-            ForEach(viewModel.records) { record in
+            ForEach(visibleRecords) { record in
                 let isStarring = starringRepoIDs.contains(record.ghRepoId)
                 Button {
                     if store.isActive {
@@ -294,11 +326,11 @@ struct UndoStarContentView: View {
         .listStyle(.inset)
         .alternatingRowBackgrounds()
         .scrollContentBackground(.hidden)
-        .animation(.easeOut(duration: 0.3), value: viewModel.records.map(\.id))
+        .animation(.easeOut(duration: 0.3), value: visibleRecords.map(\.id))
         .background {
             let store = dependencies.undoStarMultiSelectionStore
             Button {
-                let snapshots = viewModel.records.map {
+                let snapshots = visibleRecords.map {
                     SelectionSnapshot(ghRepoId: $0.ghRepoId, owner: $0.owner, name: $0.name)
                 }
                 store.selectAll(snapshots)

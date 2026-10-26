@@ -165,7 +165,7 @@ struct ServicesSettingsTab: View {
         } header: {
             SettingsSectionHeader(
                 service.titleKey,
-                systemImage: service.systemImage
+                iconSource: service.iconSource
             )
         }
     }

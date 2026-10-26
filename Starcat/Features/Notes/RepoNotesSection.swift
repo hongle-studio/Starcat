@@ -257,7 +257,7 @@ struct RepoNotesSection: View {
                     }
                 } label: {
                     HStack(spacing: 8) {
-                        Label("repo.privateNotes", systemImage: hasNoteContent ? "note.text" : "note.text.badge.plus")
+                        Label("repo.privateNotes", systemImage: (hasNoteContent ? BusinessIcon.Symbol.notes : .addNote).systemImage)
                             .font(.caption)
                         if let edited = viewModel?.note?.editedAt {
                             Text(String(format: String.l10n("repo.lastEditedFormat"), formattedEditedAt(edited)))

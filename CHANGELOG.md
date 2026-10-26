@@ -2,6 +2,29 @@
 
 Release notes for the Mac App Store edition of Starcat.
 
+## 2.0.0-待发布
+
+### New
+
+- Linux.do discovery: Browse verified open-source projects promoted on Linux.do, see provenance badges across repository lists, and open original discussions from repository details.
+- Quick search across lists: Expand the middle-column search field to quickly find repositories and activity items across Manage, Explore, Trending, Weekly, Awesome, Linux.do, notifications, and Undo Star.
+- Repository license filters: Select multiple licenses in the main window and combine them with other filters, with consistent pagination, project counts, and cached results.
+
+### Improvements
+
+- Business icons: Insights icons now match the main window, while similar-repository recommendations, embedding models, and CodeFlow are easier to distinguish.
+- Background task overview: Expand the status panel's task list to see each task's state and available workspace links or stop controls; idle cards are disabled and no longer open tag organization.
+- Background organization entry: After closing repository grouping or tag organization, the middle column keeps showing the current phase and processed counts, with direct access to the task or results.
+- Localized organization status: Task states and actions cover all 18 interface languages, stay on one line in narrow columns, and show their full text on hover.
+- License filter chips: Match sidebar tags with wrapping, content-sized height, and bounded scrolling; colors distinguish license obligation types, with full names and category notes on hover.
+
+### Fixes
+
+- Stars sync: Prevents background grouping work from keeping refresh active; pending organization authorization writes are retried only after a manual refresh.
+- AI organization tabs: Repository grouping and tag organization tabs keep a stable size as counts change, without shifting when switching states.
+- License filter popover: Keeps its size and options stable during repeated selections and clearing, while results and counts continue to update.
+- Middle-column menus: Sort, trending period, and notification filters now show a single dropdown arrow.
+
 ## 1.9.0
 
 ### New

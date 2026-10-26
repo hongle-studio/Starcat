@@ -33,8 +33,7 @@ struct RepoRecommendButton: View {
         Button(action: action) {
             // 推荐图标保留 accentColor 语义色，背景使用 Hero 共用的中性色，
             // 避免高对比底色放大视觉体积，也避免背景与图标同色。
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-                .font(.system(size: 13, weight: .semibold))
+            BusinessIcon(.recommendations, pointSize: 16, weight: .semibold)
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 28, height: 28)
                 .heroActionIconSurface(colorScheme: colorScheme)

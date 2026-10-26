@@ -245,8 +245,7 @@ struct AwesomeSourceManagerSheet: View {
         // ContentUnavailableView 在 Sheet 的 ScrollView 中会用自带的大块留白撑开内容，
         // 这里使用紧凑空态，让用户仍能在同一视野内看到自定义来源入口。
         VStack(spacing: 8) {
-            Image(systemName: "sparkles.rectangle.stack")
-                .font(.title2)
+            BusinessIcon(.curatedCollection, pointSize: NSFont.preferredFont(forTextStyle: .title2).pointSize)
                 .foregroundStyle(.secondary)
             Text("awesome.sources.empty.title")
                 .font(.headline)

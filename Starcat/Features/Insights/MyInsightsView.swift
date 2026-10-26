@@ -476,7 +476,7 @@ struct MyInsightsView: View {
         distributionSection(
             title: "insights.section.languages",
             subtitle: "insights.section.languages.subtitle",
-            systemImage: "chevron.left.forwardslash.chevron.right",
+            iconSource: .business(.languages),
             iconColor: .purple,
             items: snapshot.languageItems,
             onDrillDown: { item in
@@ -694,7 +694,7 @@ struct MyInsightsView: View {
         distributionSection(
             title: "insights.section.topics",
             subtitle: "insights.section.topics.subtitle",
-            systemImage: "square.grid.2x2.fill",
+            iconSource: .system("square.grid.2x2.fill"),
             iconColor: .purple,
             items: snapshot.topicItems
         )
@@ -704,7 +704,7 @@ struct MyInsightsView: View {
         distributionSection(
             title: "insights.section.licenses",
             subtitle: "insights.section.licenses.subtitle",
-            systemImage: "checkmark.seal.fill",
+            iconSource: .business(.license),
             iconColor: .yellow,
             items: snapshot.licenseItems
         )
@@ -713,7 +713,7 @@ struct MyInsightsView: View {
     private func distributionSection(
         title: LocalizedStringKey,
         subtitle: LocalizedStringKey,
-        systemImage: String,
+        iconSource: BusinessIcon.Source,
         iconColor: Color,
         items: [InsightsDistributionItem],
         onDrillDown: ((InsightsDistributionItem) -> Void)? = nil
@@ -725,7 +725,7 @@ struct MyInsightsView: View {
         return InsightsSectionContainer(
             title: title,
             subtitle: subtitle,
-            systemImage: systemImage,
+            iconSource: iconSource,
             iconColor: iconColor,
             chrome: .emphasized
         ) {
@@ -868,7 +868,7 @@ struct MyInsightsView: View {
         InsightsSectionContainer(
             title: "insights.section.coverage",
             subtitle: "insights.section.coverage.subtitle",
-            systemImage: "heart.text.square.fill",
+            systemImage: BusinessIcon.Symbol.repositoryHealth.systemImage,
             iconColor: .pink,
             chrome: .emphasized
         ) {
@@ -1132,7 +1132,7 @@ enum InsightsSectionChrome: Sendable {
 struct InsightsSectionContainer<Content: View, HeaderTrailing: View>: View {
     let title: LocalizedStringKey
     let subtitle: LocalizedStringKey
-    let systemImage: String
+    let iconSource: BusinessIcon.Source
     let iconColor: Color
     let chrome: InsightsSectionChrome
     let headerTrailing: HeaderTrailing
@@ -1149,9 +1149,30 @@ struct InsightsSectionContainer<Content: View, HeaderTrailing: View>: View {
         @ViewBuilder headerTrailing: () -> HeaderTrailing,
         @ViewBuilder content: () -> Content
     ) {
+        self.init(
+            title: title,
+            subtitle: subtitle,
+            iconSource: .system(systemImage),
+            iconColor: iconColor,
+            chrome: chrome,
+            headerTrailing: headerTrailing,
+            content: content
+        )
+    }
+
+    /// 原生系统图与补充素材共用原来的图标 chip，不能因许可证改用资源而另起一套布局。
+    init(
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
+        iconSource: BusinessIcon.Source,
+        iconColor: Color = .secondary,
+        chrome: InsightsSectionChrome = .standard,
+        @ViewBuilder headerTrailing: () -> HeaderTrailing,
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
         self.subtitle = subtitle
-        self.systemImage = systemImage
+        self.iconSource = iconSource
         self.iconColor = iconColor
         self.chrome = chrome
         self.headerTrailing = headerTrailing()
@@ -1163,7 +1184,7 @@ struct InsightsSectionContainer<Content: View, HeaderTrailing: View>: View {
             // 图标 chip 与标题同行居中对齐；副标题缩进到标题文字下方，避免相对「标题+副标题」整块居中。
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .center, spacing: 8) {
-                    InsightsSectionIconChip(systemImage: systemImage, tint: iconColor)
+                    InsightsSectionIconChip(iconSource: iconSource, tint: iconColor)
                     Text(title)
                         .font(interfaceScale.font(.bodyEmphasis))
                     Spacer(minLength: 8)
@@ -1192,15 +1213,14 @@ struct InsightsSectionContainer<Content: View, HeaderTrailing: View>: View {
 
 /// 区块标题行左侧的彩色图标 chip（原型样式：圆角方块底 + 语义色图标）。
 private struct InsightsSectionIconChip: View {
-    let systemImage: String
+    let iconSource: BusinessIcon.Source
     let tint: Color
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(tint.opacity(0.15))
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
+            BusinessIcon(source: iconSource, pointSize: iconSource.isAsset ? 15 : 12, weight: .semibold)
                 .foregroundStyle(tint)
         }
         .frame(width: 22, height: 22)
@@ -1209,6 +1229,25 @@ private struct InsightsSectionIconChip: View {
 }
 
 extension InsightsSectionContainer where HeaderTrailing == EmptyView {
+    init(
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
+        iconSource: BusinessIcon.Source,
+        iconColor: Color = .secondary,
+        chrome: InsightsSectionChrome = .standard,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(
+            title: title,
+            subtitle: subtitle,
+            iconSource: iconSource,
+            iconColor: iconColor,
+            chrome: chrome,
+            headerTrailing: { EmptyView() },
+            content: content
+        )
+    }
+
     init(
         title: LocalizedStringKey,
         subtitle: LocalizedStringKey,

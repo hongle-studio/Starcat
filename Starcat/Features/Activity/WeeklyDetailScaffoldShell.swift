@@ -150,7 +150,9 @@ struct WeeklyDetailScaffoldShell: View {
             fallbackAccentColor: WeeklyVisualStyle.accentColor,
             // R-01 v1.5 / v2.0:tooltip 与 toggle 行为对齐,直接派生自 `repo.isStarred`。
             starHelpKey: starHelpKey(repo: repo),
-            onStarTapped: { try await handleStarTapped(repo: repo) },
+            onStarTapped: { cleanupScope in
+                try await handleStarTapped(repo: repo, cleanupScope: cleanupScope)
+            },
             body: { onScrollReport in
                 WeeklyDetailContent(
                     repo: repo,
@@ -359,13 +361,20 @@ struct WeeklyDetailScaffoldShell: View {
     ///
     /// - 未登录 → `authSession.signIn()` 触发设备流,return(chip 不抖)
     /// - API 抛错 → throw 让 `StarStatChipButton` 触发抖动 + 短暂红色 600ms
-    private func handleStarTapped(repo: Repo) async throws {
+    private func handleStarTapped(
+        repo: Repo,
+        cleanupScope: RepositoryUnstarCleanupScope?
+    ) async throws {
         guard authSession.state.isAuthenticated else {
             // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
             authSession.requestLoginSheet()
             return
         }
-        try await dependencies.starActionService.toggle(repo: repo)
+        if let cleanupScope {
+            try await dependencies.starActionService.unstar(repo: repo, cleanupScope: cleanupScope)
+        } else {
+            try await dependencies.starActionService.toggle(repo: repo)
+        }
 
         displayRepo = dependencies.starredRegistry.applyingDisplayState(to: repo)
 

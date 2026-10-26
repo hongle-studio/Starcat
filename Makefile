@@ -41,7 +41,7 @@ APPSTORE_ARCHIVE := $(CURDIR)/dist/appstore/Starcat-AppStore.xcarchive
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build-appstore build-direct run-appstore run-direct test test-build-scripts reset-db reset-anysearch-cache reset-chat-cache reset-all show-data clean start-supports build-dmg release-store release-dry-run package-appstore open-appstore-archive package-direct-debug package-direct-debug-signed package-direct package-direct-notarized release-direct release-direct-retry release-direct-unnotarized pr-helper bump-version linguist sync-fly-secrets setup-production-api-keys deploy-pages deploy-pages-test
+.PHONY: help build-appstore build-direct run-appstore run-direct test test-build-scripts reset-db reset-anysearch-cache reset-chat-cache reset-all show-data clean start-supports build-dmg release-store release-dry-run package-appstore open-appstore-archive package-direct-debug package-direct-debug-signed package-direct package-direct-notarized release-direct release-direct-development release-direct-retry release-direct-unnotarized pr-helper bump-version linguist sync-fly-secrets setup-production-api-keys deploy-pages deploy-pages-test
 
 help: ## 列出所有可用命令
 	@echo "Starcat 常用命令："
@@ -64,6 +64,7 @@ help: ## 列出所有可用命令
 	@echo "  make package-direct VERSION=0.1.0             生成未公证 Direct DMG，不上传"
 	@echo "  make package-direct-notarized VERSION=0.1.0   生成并公证 Direct DMG，不上传"
 	@echo "  make release-direct VERSION=0.1.0             完整正式发布 Direct 版本"
+	@echo "  make release-direct-development VERSION=0.2.0-dev.1  发布 Direct 开发版"
 	@echo "  make release-direct-retry VERSION=0.1.0 SUBMISSION_ID=<id>  续跑已有公证任务"
 	@echo "  make release-direct-unnotarized VERSION=0.1.0 临时发布未公证 Direct DMG"
 	@echo ""
@@ -184,6 +185,16 @@ release-direct:
 	@STARCAT_NOTARIZE=1 \
 	STARCAT_NOTARY_PROFILE="$(NOTARY_PROFILE)" \
 	bash scripts/release-direct.sh "$(VERSION)"
+
+## 发布 Direct 开发版（VERSION=0.2.0-dev.1）
+release-direct-development:
+	@if [ "$(origin VERSION)" = "file" ]; then \
+		echo "请显式传开发版版本号，例如：make release-direct-development VERSION=0.2.0-dev.1"; \
+		exit 1; \
+	fi
+	@STARCAT_NOTARIZE=1 \
+	STARCAT_NOTARY_PROFILE="$(NOTARY_PROFILE)" \
+	bash scripts/release-direct-development.sh "$(VERSION)"
 
 ## 使用已有 Submission ID 续跑 Direct 正式发布（VERSION=0.1.0 SUBMISSION_ID=<id>）
 release-direct-retry:

@@ -147,7 +147,7 @@ struct LocalAIModelsSection: View {
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
-                Image(systemName: type.systemImage)
+                BusinessIcon(source: type.iconSource, pointSize: type.iconSource.isAsset ? 16 : 13)
                     .foregroundStyle(.secondary)
                     .frame(width: 20)
 

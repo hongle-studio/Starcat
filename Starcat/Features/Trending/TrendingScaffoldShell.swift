@@ -104,8 +104,8 @@ struct TrendingScaffoldShell: View {
             // displayRepo 还是旧 ephemeral」的瞬间 stale 问题**(详见
             // `StarringSubsystem.swift` v2.0 修订段)。
             starHelpKey: repo.isStarred ? "repo.unstar" : "trending.star",
-            onStarTapped: {
-                try await handleStarTapped(repo: repo)
+            onStarTapped: { cleanupScope in
+                try await handleStarTapped(repo: repo, cleanupScope: cleanupScope)
             },
             heroExtension: {
                 TrendingContributorsSection(contributors: trending.contributors)
@@ -195,13 +195,20 @@ struct TrendingScaffoldShell: View {
     ///
     /// 注意签名是 `async throws`:throws 不再 catch 写日志,由 chip 统一处理失败反馈
     /// (chip 内部 catch 后会调 AppLog.sync.error)。
-    private func handleStarTapped(repo: Repo) async throws {
+    private func handleStarTapped(
+        repo: Repo,
+        cleanupScope: RepositoryUnstarCleanupScope?
+    ) async throws {
         guard authSession.state.isAuthenticated else {
             // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
             authSession.requestLoginSheet()
             return
         }
-        try await dependencies.starActionService.toggle(repo: repo)
+        if let cleanupScope {
+            try await dependencies.starActionService.unstar(repo: repo, cleanupScope: cleanupScope)
+        } else {
+            try await dependencies.starActionService.toggle(repo: repo)
+        }
 
         displayRepo = dependencies.starredRegistry.applyingDisplayState(to: repo)
 

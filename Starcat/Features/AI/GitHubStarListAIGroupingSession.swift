@@ -254,7 +254,14 @@ final class GitHubStarListAIGroupingSession {
     private(set) var isRunning = false
     /// 合作式暂停：已领取的 AI 请求继续收口，Worker 在下一次领取仓库前等待。
     private(set) var isPaused = false
-    private(set) var isApplying = false
+    private(set) var isApplying = false {
+        didSet {
+            // 新一次应用会先刷新远端关系；这时不能短暂展示上一轮的完成进度。
+            if isApplying { applicationProgress = nil }
+        }
+    }
+    /// 关闭审核窗口后仍由 Session 更新，横幅与窗口读取同一份真实应用进度。
+    private(set) var applicationProgress: GitHubStarListAIApplicationProgress?
     private(set) var contextErrorMessage: String?
     /// 开始页仓库总数。用 COUNT 查询，不订阅完整 `[Repo]`。
     private(set) var preparedRepositoryCount = 0 {
@@ -1289,6 +1296,7 @@ final class GitHubStarListAIGroupingSession {
         else { return }
 
         isApplying = true
+        applicationProgress = .init(processedRepositoryCount: 0, totalRepositoryCount: 1)
         applyTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1301,6 +1309,9 @@ final class GitHubStarListAIGroupingSession {
             } catch {
                 // 本地覆盖仍然有效；这里只反馈远端重试失败，不能把已应用状态降级为失败。
                 self.contextErrorMessage = error.localizedDescription
+            }
+            if !Task.isCancelled {
+                self.applicationProgress = .init(processedRepositoryCount: 1, totalRepositoryCount: 1)
             }
             self.flushGroupingDataChangeNotifications()
             self.isApplying = false
@@ -1680,6 +1691,8 @@ final class GitHubStarListAIGroupingSession {
     ) async {
         guard !requests.isEmpty else { return }
 
+        applicationProgress = .init(processedRepositoryCount: 0, totalRepositoryCount: requests.count)
+
         var ownerOrder: [String] = []
         var requestsByOwner: [String: [GitHubStarListMembershipApplyRequest]] = [:]
         for request in requests {
@@ -1727,6 +1740,14 @@ final class GitHubStarListAIGroupingSession {
                     )
                 } else {
                     await applyOne(repo: request.repo, allowAutomaticRetry: true)
+                }
+                // 每个仓库收口后推进一次，包含失败、幂等无变更与跳过；重试次数不重复计数。
+                // 取消中的旧 Task 不能给账号切换后新批次的进度加数。
+                if !Task.isCancelled, let progress = applicationProgress {
+                    applicationProgress = .init(
+                        processedRepositoryCount: min(progress.processedRepositoryCount + 1, progress.totalRepositoryCount),
+                        totalRepositoryCount: progress.totalRepositoryCount
+                    )
                 }
             }
         }
@@ -2054,6 +2075,7 @@ final class GitHubStarListAIGroupingSession {
         isRunning = false
         isPaused = false
         isApplying = false
+        applicationProgress = nil
         isStartingManual = false
         contextErrorMessage = nil
         mode = .idle

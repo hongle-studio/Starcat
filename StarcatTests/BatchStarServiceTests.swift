@@ -37,12 +37,22 @@ struct BatchStarServiceTests {
         let repo = GRDBRepoRepository(database: db)
         let api = MockGitHubAPIClient()
         let registry = StarredRegistry()
+        let cleanupService = RepositoryUnstarCleanupService(
+            database: db,
+            deleteChatHistory: { _ in },
+            deleteRepoContext: { _ in },
+            deleteCodeFlow: { _ in },
+            deleteCodebaseMemory: { _ in },
+            deleteReadmeTranslations: { _ in },
+            deleteWikiCache: { _ in }
+        )
         let starService = StarActionService(
             apiClient: api,
             repoRepository: repo,
             registry: registry,
             undoStarHistory: MockUndoStarHistoryRepository(),
             userIDProvider: { currentUserID },
+            cleanupService: cleanupService,
             homeRefresher: nil
         )
         let batch = BatchStarService(starActionService: starService, registry: registry)

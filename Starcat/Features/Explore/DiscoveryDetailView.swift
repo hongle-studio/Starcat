@@ -79,8 +79,8 @@ private struct DiscoveryScaffoldShell: View {
                 backendHint: nil
             ),
             starHelpKey: repo.isStarred ? "repo.unstar" : "repo.star",
-            onStarTapped: {
-                try await handleStarTapped(repo: repo)
+            onStarTapped: { cleanupScope in
+                try await handleStarTapped(repo: repo, cleanupScope: cleanupScope)
             },
             body: { onScrollReport in
                 VStack(spacing: 0) {
@@ -111,12 +111,19 @@ private struct DiscoveryScaffoldShell: View {
         )
     }
 
-    private func handleStarTapped(repo: Repo) async throws {
+    private func handleStarTapped(
+        repo: Repo,
+        cleanupScope: RepositoryUnstarCleanupScope?
+    ) async throws {
         guard authSession.state.isAuthenticated else {
             authSession.requestLoginSheet()
             return
         }
-        try await dependencies.starActionService.toggle(repo: repo)
+        if let cleanupScope {
+            try await dependencies.starActionService.unstar(repo: repo, cleanupScope: cleanupScope)
+        } else {
+            try await dependencies.starActionService.toggle(repo: repo)
+        }
 
         displayRepo = dependencies.starredRegistry.applyingDisplayState(to: repo)
 

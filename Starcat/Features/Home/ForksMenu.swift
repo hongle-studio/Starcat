@@ -139,7 +139,7 @@ struct ForksMenu: View {
         RepoStatItem(
             label: "repo.forks",
             value: repo.forksCount,
-            systemImage: "tuningfork",
+            businessIcon: .forkCount,
             tint: forkTint
         )
     }
@@ -266,7 +266,7 @@ struct ForkedFromCaption: View {
         Group {
             if let relation {
                 HStack(spacing: 6) {
-                    Image(systemName: "tuningfork")
+                    BusinessIcon(.forkedRepository, pointSize: 11 * interfaceScale.multiplier)
                         .foregroundStyle(relation.needsSync ? Color.orange : Color.secondary)
                     Button {
                         NSWorkspace.shared.open(relation.parentHTMLURL)
@@ -290,7 +290,7 @@ struct ForkedFromCaption: View {
                 .lineLimit(1)
             } else if didFinishLoad {
                 HStack(spacing: 6) {
-                    Image(systemName: "tuningfork")
+                    BusinessIcon(.forkedRepository, pointSize: 11 * interfaceScale.multiplier)
                         .foregroundStyle(.secondary)
                     Text("repo.fork.parentUnavailable")
                         .foregroundStyle(.secondary)
@@ -298,7 +298,7 @@ struct ForkedFromCaption: View {
                 .font(interfaceScale.font(.captionSmall))
             } else {
                 HStack(spacing: 6) {
-                    Image(systemName: "tuningfork")
+                    BusinessIcon(.forkedRepository, pointSize: 11 * interfaceScale.multiplier)
                         .foregroundStyle(.secondary)
                     Text("repo.fork.loading")
                         .foregroundStyle(.secondary)

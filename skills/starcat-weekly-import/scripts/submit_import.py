@@ -30,8 +30,9 @@ PRODUCTION_BASE_URL = "https://starcat-api.fly.dev"
 PRODUCTION_SERVICE_HEADER = "X-SC-Svc"
 PRODUCTION_SERVICE_NAME = "weekly"
 PRODUCTION_ADMIN_KEY_NAME = "WEEKLY_ADMIN_API_KEYS"
-# 从脚本自身定位 Starcat 根目录，避免依赖调用命令时的当前工作目录。
-STARCAT_ROOT = Path(__file__).resolve().parents[4]
+# 脚本位于 Starcat/skills/<skill>/scripts；向上三级即仓库根目录。
+# 这里不依赖调用命令时的当前工作目录，确保迁移 skill 目录后仍能找到生产配置。
+STARCAT_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTION_ENV_FILE = STARCAT_ROOT / "supports" / "starcat-api" / ".env"
 
 

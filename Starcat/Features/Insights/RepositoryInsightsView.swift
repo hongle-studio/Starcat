@@ -550,7 +550,7 @@ struct RepositoryInsightsView: View {
                 localFact(
                     title: "insights.repo.local.release",
                     caption: "insights.repo.local.release.caption",
-                    systemImage: "tag.fill",
+                    iconSource: .system("tag.fill"),
                     tintName: "blue",
                     motif: .releaseFolder,
                     value: releaseValue,
@@ -561,7 +561,7 @@ struct RepositoryInsightsView: View {
                 localFact(
                     title: "insights.repo.local.license",
                     caption: "insights.repo.local.license.caption",
-                    systemImage: "checkmark.seal.fill",
+                    iconSource: .business(.license),
                     tintName: "green",
                     motif: .licenseDocument,
                     value: repo.license ?? String.l10n("insights.repo.state.noData"),
@@ -572,7 +572,7 @@ struct RepositoryInsightsView: View {
                 localFact(
                     title: "insights.repo.local.health",
                     caption: "insights.repo.local.health.caption",
-                    systemImage: "heart.text.square.fill",
+                    iconSource: .business(.repositoryHealth),
                     tintName: "orange",
                     motif: .healthBars,
                     value: healthValue,
@@ -583,7 +583,7 @@ struct RepositoryInsightsView: View {
                 localFact(
                     title: "insights.repo.local.openssf",
                     caption: "insights.repo.local.openssf.caption",
-                    systemImage: "shield.fill",
+                    iconSource: .system("shield.fill"),
                     tintName: "purple",
                     motif: .securityShield,
                     value: openSSFValue,
@@ -599,7 +599,7 @@ struct RepositoryInsightsView: View {
     private func localFact(
         title: LocalizedStringKey,
         caption: LocalizedStringKey,
-        systemImage: String,
+        iconSource: BusinessIcon.Source,
         tintName: String,
         motif: InsightsCardIllustrationMotif,
         value: String?,
@@ -613,7 +613,7 @@ struct RepositoryInsightsView: View {
 
         return InsightsSummaryCard(
             title: title,
-            systemImage: systemImage,
+            iconSource: iconSource,
             tint: InsightsColor.resolve(tintName),
             value: value ?? "—",
             isPlaceholder: isPlaceholder,
@@ -1009,7 +1009,7 @@ struct RepositoryInsightsView: View {
         let helpText = String.l10n(activityMetricHelpKey(for: metric.id))
         return InsightsSummaryCard(
             title: LocalizedStringKey(metric.titleKey),
-            systemImage: metric.systemImage,
+            iconSource: .system(metric.systemImage),
             tint: InsightsColor.resolve(metric.tintName),
             value: metric.value.formatted(.number.locale(locale)),
             isPlaceholder: false,
@@ -2335,7 +2335,7 @@ struct RepositoryInsightsView: View {
         InsightsSectionContainer(
             title: "insights.repo.section.health",
             subtitle: "insights.repo.section.health.subtitle",
-            systemImage: "heart.text.square.fill",
+            systemImage: BusinessIcon.Symbol.repositoryHealth.systemImage,
             iconColor: .pink,
             chrome: .emphasized
         ) {
@@ -2641,7 +2641,7 @@ struct RepositoryInsightsView: View {
                             id: "community.readme",
                             title: "insights.repo.signal.readme",
                             isAvailable: community.hasReadme,
-                            systemImage: "doc.text.fill",
+                            iconSource: .system("doc.text.fill"),
                             destinationURL: communitySignalURL(
                                 isAvailable: community.hasReadme,
                                 stored: community.readmeHTMLURL,
@@ -2653,7 +2653,7 @@ struct RepositoryInsightsView: View {
                             id: "community.conduct",
                             title: "insights.repo.signal.conduct",
                             isAvailable: community.hasCodeOfConduct,
-                            systemImage: "person.2.fill",
+                            iconSource: .system("person.2.fill"),
                             destinationURL: communitySignalURL(
                                 isAvailable: community.hasCodeOfConduct,
                                 stored: community.codeOfConductHTMLURL,
@@ -2665,7 +2665,7 @@ struct RepositoryInsightsView: View {
                             id: "community.contributing",
                             title: "insights.repo.signal.contributing",
                             isAvailable: community.hasContributing,
-                            systemImage: "hand.raised.fill",
+                            iconSource: .system("hand.raised.fill"),
                             destinationURL: communitySignalURL(
                                 isAvailable: community.hasContributing,
                                 stored: community.contributingHTMLURL,
@@ -2677,7 +2677,7 @@ struct RepositoryInsightsView: View {
                             id: "community.issueTemplate",
                             title: "insights.repo.signal.issueTemplate",
                             isAvailable: community.hasIssueTemplate,
-                            systemImage: "exclamationmark.bubble.fill",
+                            iconSource: .system("exclamationmark.bubble.fill"),
                             destinationURL: communitySignalURL(
                                 isAvailable: community.hasIssueTemplate,
                                 stored: community.issueTemplateHTMLURL,
@@ -2689,7 +2689,7 @@ struct RepositoryInsightsView: View {
                             id: "community.pullRequestTemplate",
                             title: "insights.repo.signal.pullRequestTemplate",
                             isAvailable: community.hasPullRequestTemplate,
-                            systemImage: "arrow.triangle.pull",
+                            iconSource: .system("arrow.triangle.pull"),
                             destinationURL: communitySignalURL(
                                 isAvailable: community.hasPullRequestTemplate,
                                 stored: community.pullRequestTemplateHTMLURL,
@@ -2701,7 +2701,7 @@ struct RepositoryInsightsView: View {
                             id: "community.license",
                             title: "insights.repo.signal.license",
                             isAvailable: community.hasLicense,
-                            systemImage: "checkmark.seal.fill",
+                            iconSource: .business(.license),
                             destinationURL: communitySignalURL(
                                 isAvailable: community.hasLicense,
                                 stored: community.licenseHTMLURL,
@@ -2782,7 +2782,7 @@ struct RepositoryInsightsView: View {
                 title: "insights.repo.signal.openssf",
                 statusText: String(format: "%.1f / 10", locale: locale, openSSF.score),
                 statusColor: openSSF.score >= 5 ? .green : .orange,
-                systemImage: "shield.checkered",
+                iconSource: .system("shield.checkered"),
                 destinationURL: openSSFScorecardURL
             )
         case .loading, .idle:
@@ -2809,7 +2809,7 @@ struct RepositoryInsightsView: View {
                     title: "insights.repo.signal.securityAdvisories",
                     statusText: insight.advisories.count.formatted(.number.locale(locale)),
                     statusColor: insight.advisories.isEmpty ? .green : .orange,
-                    systemImage: "exclamationmark.shield.fill",
+                    iconSource: .system("exclamationmark.shield.fill"),
                     destinationURL: repositorySecurityAdvisoriesURL
                 )
                 Divider().padding(.leading, 28)
@@ -2818,7 +2818,7 @@ struct RepositoryInsightsView: View {
                     title: "insights.repo.signal.highRiskAdvisories",
                     statusText: insight.highOrCriticalCount.formatted(.number.locale(locale)),
                     statusColor: insight.highOrCriticalCount == 0 ? .green : .orange,
-                    systemImage: "exclamationmark.triangle.fill",
+                    iconSource: .system("exclamationmark.triangle.fill"),
                     destinationURL: nil
                 )
                 if let latestPublishedAt = insight.latestPublishedAt {
@@ -2828,7 +2828,7 @@ struct RepositoryInsightsView: View {
                         title: "insights.repo.signal.latestAdvisory",
                         statusText: shortDate(latestPublishedAt),
                         statusColor: .orange,
-                        systemImage: "calendar",
+                        iconSource: .system("calendar"),
                         destinationURL: insight.advisories.first?.htmlURL
                     )
                 }
@@ -2843,7 +2843,7 @@ struct RepositoryInsightsView: View {
                         title: "insights.drilldown.viewAll",
                         statusText: insight.advisories.count.formatted(.number.locale(locale)),
                         statusColor: .secondary,
-                        systemImage: "list.bullet",
+                        iconSource: .system("list.bullet"),
                         destinationURL: repositorySecurityAdvisoriesURL
                     )
                 }
@@ -3009,7 +3009,7 @@ struct RepositoryInsightsView: View {
         id: String,
         title: LocalizedStringKey,
         isAvailable: Bool,
-        systemImage: String,
+        iconSource: BusinessIcon.Source,
         destinationURL: URL?
     ) -> some View {
         localSignalRow(
@@ -3019,7 +3019,7 @@ struct RepositoryInsightsView: View {
                 isAvailable ? "insights.repo.signal.available" : "insights.repo.signal.missing"
             ),
             statusColor: isAvailable ? .green : .orange,
-            systemImage: systemImage,
+            iconSource: iconSource,
             destinationURL: destinationURL
         )
     }
@@ -3030,13 +3030,13 @@ struct RepositoryInsightsView: View {
         title: LocalizedStringKey,
         statusText: String,
         statusColor: Color,
-        systemImage: String,
+        iconSource: BusinessIcon.Source,
         destinationURL: URL?
     ) -> some View {
         let isTappable = destinationURL != nil
         let isHovered = hoveredLocalSignalID == id
         let content = HStack(spacing: 8) {
-            Image(systemName: systemImage)
+            BusinessIcon(source: iconSource, pointSize: (iconSource.isAsset ? 16 : 13) * interfaceScale.multiplier)
                 .frame(width: 18)
                 .foregroundStyle(.secondary)
             HStack(spacing: 5) {
@@ -3460,7 +3460,7 @@ private enum ActivityMetricGrade {
 /// 可选环比 / 说明行、手绘插画与 chevron 触发器。占位判断与数值格式化由调用方完成。
 private struct InsightsSummaryCard: View {
     let title: LocalizedStringKey
-    let systemImage: String
+    let iconSource: BusinessIcon.Source
     let tint: Color
     let value: String
     let isPlaceholder: Bool
@@ -3487,7 +3487,7 @@ private struct InsightsSummaryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
-                InsightsCardIconChip(systemImage: systemImage, tint: tint)
+                InsightsCardIconChip(iconSource: iconSource, tint: tint)
                 Text(title)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -205,9 +205,9 @@ struct UnifiedRepoRow: View {
                         if card.isFork {
                             // 标题行只表达 Fork 身份；数量仍在底部单独显示。
                             MetaBadge(
-                                systemImage: "tuningfork",
+                                businessIcon: .forkedRepository,
                                 text: "",
-                                tint: forkTint,
+                                tint: StatSemanticColor.forked.resolved(colorScheme: colorScheme),
                                 iconOnly: true,
                                 accessibilityLabel: "repo.fork"
                             )
@@ -363,7 +363,7 @@ struct UnifiedRepoRow: View {
                     ? "repo.card.alreadyStarred"
                     : "list.filter.starStatus.unstarred"))
             if showsSecondaryMetadata {
-                MetaBadge(systemImage: "tuningfork", text: card.forksCount.formattedShort, tint: forkTint)
+                MetaBadge(businessIcon: .forkCount, text: card.forksCount.formattedShort, tint: forkTint)
                 if hasAISummary {
                     // 与 RAG 仓库选择器复用同一 `sparkles` 语义；只显示图标，完整含义通过
                     // tooltip 与 accessibility label 提供，避免在窄栏挤占 metadata 行。
@@ -386,6 +386,7 @@ struct UnifiedRepoRow: View {
                 ArchivedBadge(iconOnly: true)
             }
             sceneBadgeChip
+            LinuxDoSourceBadge(repoID: card.ghRepoId)
             if showReadStatusBadge,
                card.isStarred,
                let readStatus = card.readStatus,

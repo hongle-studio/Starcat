@@ -180,6 +180,7 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
                     if let headerSourceBadge, headerSourceBadge.isVisible {
                         RepoDetailHeaderSourceBadgeView(badge: headerSourceBadge)
                     }
+                    LinuxDoSourceBadge(repoID: repo.id, interactive: true)
                 }
                 badgeRow
                 inlineTopicsRow
@@ -236,7 +237,7 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
                 } label: {
                     RepoRawBadgeChip(
                         text: licenseText,
-                        systemImage: "scale.3d",
+                        businessIcon: .license,
                         tint: .secondary
                     )
                 }
@@ -247,7 +248,7 @@ struct RepoMetadataHeaderView<TrailingActions: View>: View {
             } else {
                 RepoRawBadgeChip(
                     text: licenseText,
-                    systemImage: "scale.3d",
+                    businessIcon: .license,
                     tint: .secondary
                 )
             }
@@ -643,7 +644,7 @@ struct RepoAIOpenButton: View {
             )
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "sparkles")
+                Image(systemName: BusinessIcon.Symbol.ai.systemImage)
                     .font(interfaceScale.font(.iconSmall, weight: .semibold))
                 Text("AI")
                     .font(interfaceScale.font(.body, weight: .semibold))
@@ -999,7 +1000,7 @@ private struct RepoShareOwnerAIAvatar: View {
                 size: 48
             )
 
-            Image(systemName: "sparkles")
+            Image(systemName: BusinessIcon.Symbol.ai.systemImage)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 18, height: 18)
@@ -1153,13 +1154,13 @@ private extension Repo {
 
 private struct RepoRawBadgeChip: View {
     let text: String
-    let systemImage: String
+    let businessIcon: BusinessIcon.Symbol
     let tint: Color
     @Environment(\.starcatInterfaceScale) private var interfaceScale
 
     var body: some View {
         HStack(spacing: 3) {
-            Image(systemName: systemImage).font(interfaceScale.font(.captionSmall))
+            BusinessIcon(businessIcon, pointSize: 11 * interfaceScale.multiplier)
             Text(verbatim: text).font(interfaceScale.font(.captionSmall))
         }
         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -1171,16 +1172,15 @@ private struct RepoRawBadgeChip: View {
 struct RepoStatItem: View {
     let label: LocalizedStringKey
     let value: Int
-    let systemImage: String
+    let businessIcon: BusinessIcon.Symbol
     let tint: Color
     @Environment(\.starcatInterfaceScale) private var interfaceScale
 
     var body: some View {
         VStack(alignment: .center, spacing: 2) {
             HStack(spacing: 4) {
-                Image(systemName: systemImage)
+                BusinessIcon(businessIcon, pointSize: 14 * interfaceScale.multiplier)
                     .foregroundStyle(tint)
-                    .font(interfaceScale.font(.bodyEmphasis))
                 Text(value, format: .number)
                     .monospacedDigit()
                     .font(interfaceScale.font(.bodyEmphasis, weight: .medium))

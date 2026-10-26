@@ -26,10 +26,12 @@ struct AppStatusToolbarButton: View {
 
     let lastSyncedAt: Date?
     let onShowBatchAIPanel: (() -> Void)?
+    let onShowGitHubGrouping: (() -> Void)?
+    let onShowKnowledgeWorkspace: (() -> Void)?
 
     @State private var isPresented = false
     /// 先结束 popover 的展示生命周期，再交给主窗口挂载模态 sheet。
-    @State private var opensBatchAIAfterDismissal = false
+    @State private var pendingTaskWindow: (kind: AppBackgroundTask.Kind, accountID: Int64?)?
     @State private var diagnosticSummary: DiagnosticLogSummary = .empty
     /// Toolbar 与设置页必须观察同一个配置实例，端口冲突才能即时反映到全局状态。
     @State private var pluginConfiguration = CompanionConfiguration.shared
@@ -67,15 +69,9 @@ struct AppStatusToolbarButton: View {
                     lastSyncedAt: lastSyncedAt,
                     syncState: syncManager.state,
                     syncProgress: syncManager.progress,
-                    readmePrefetchService: dependencies.readmePrefetchService,
-                    readmePrefetchEnabled: settings.readmePrefetchEnabled,
-                    readmePrefetchPoller: dependencies.readmePrefetchPoller,
                     initialWarmupCoordinator: dependencies.initialWarmupCoordinator,
-                    openSSFScorePoller: dependencies.openSSFScorePoller,
-                    repoHealthPoller: dependencies.repoHealthPoller,
                     undoStarCleanup: dependencies.undoStarCleanupScheduler,
-                    batchService: dependencies.batchAIQueueService,
-                    ragIndexBuilder: dependencies.knowledgeRAGIndexBuilder,
+                    backgroundTasks: backgroundTasks,
                     mcpState: dependencies.mcpService.state,
                     mcpEnabled: settings.mcpServiceEnabled,
                     browserPluginState: pluginConfiguration.serverStatus,
@@ -94,11 +90,12 @@ struct AppStatusToolbarButton: View {
                     onOpenMCP: { openSettings(tab: "mcp") },
                     onOpenBrowserPlugin: { openSettings(tab: "integrations.browserPlugin") },
                     onOpenAIUsage: { AIUsageWindowController.show(dependencies: dependencies) },
-                    onShowBatchAIPanel: {
-                        guard onShowBatchAIPanel != nil else { return }
-                        opensBatchAIAfterDismissal = true
+                    onOpenTask: { kind in
+                        guard backgroundTasks.task(kind)?.opensWindow == true else { return }
+                        pendingTaskWindow = (kind, dependencies.authSession.state.user?.id)
                         isPresented = false
                     },
+                    onCancelTask: cancelBackgroundTask,
                     onOpenGeneralSettings: { openSettings(tab: "general") },
                     onOpenAbout: { AboutWindowController.show() },
                     onOpenStorage: { openSettings(tab: "storage") },
@@ -116,11 +113,13 @@ struct AppStatusToolbarButton: View {
             .frame(maxHeight: 640)
             .appLocaleEnvironment()
             .onDisappear {
-                guard opensBatchAIAfterDismissal else { return }
-                opensBatchAIAfterDismissal = false
+                guard let request = pendingTaskWindow else { return }
+                pendingTaskWindow = nil
                 // 不在 SwiftUI 拆除 popover 的回调栈里 beginSheet，避免重入 presentation bridge。
                 DispatchQueue.main.async {
-                    onShowBatchAIPanel?()
+                    // 浮层关闭期间若切换了账号，旧点击不能打开新账号的同类任务。
+                    guard request.accountID == dependencies.authSession.state.user?.id else { return }
+                    openTaskWindow(request.kind)
                 }
             }
             .task {
@@ -146,39 +145,34 @@ struct AppStatusToolbarButton: View {
     }
 
     private var activeTaskCount: Int {
-        let batch = dependencies.batchAIQueueService
-        let batchRemaining = (batch.isRunning || batch.isPaused) ? max(0, batch.totalCount - batch.finishedCount) : 0
-        let readme = dependencies.readmePrefetchService
-        let readmeRemaining = readme.isRunning
-            ? max(0, readme.total - readme.processed)
-            : (dependencies.readmePrefetchPoller.isDraining ? 1 : 0)
-        let warmup = dependencies.initialWarmupCoordinator
-        let warmupRemaining: Int
-        if warmup.isActive, let job = warmup.job {
-            warmupRemaining = max(0, job.readmeTotal - job.readmeCovered)
-                + max(0, warmup.openSSFTotal - warmup.openSSFCovered)
-                + max(0, job.healthTotal - job.healthCovered)
-        } else {
-            warmupRemaining = warmup.isRunning ? 1 : 0
+        backgroundTasks.count
+    }
+
+    private var backgroundTasks: AppBackgroundTaskSnapshot { .current(dependencies) }
+
+    /// 延迟到浮层消失后再复核任务，不能误开已结束任务的新开始页或抢占自动分组。
+    private func openTaskWindow(_ kind: AppBackgroundTask.Kind) {
+        guard backgroundTasks.task(kind)?.opensWindow == true else { return }
+        switch kind {
+        case .grouping: onShowGitHubGrouping?()
+        case .tags: onShowBatchAIPanel?()
+        case .indexing: onShowKnowledgeWorkspace?()
+        case .warmup, .readme, .openSSF, .health: break
         }
-        let openSSF = dependencies.openSSFScorePoller
-        let openSSFRemaining = openSSF.isRefreshing
-            ? max(1, openSSF.refreshTotal - openSSF.refreshProcessed)
-            : 0
-        let health = dependencies.repoHealthPoller
-        let healthRemaining = health.isRefreshing
-            ? max(1, health.refreshTotal - health.refreshProcessed)
-            : 0
-        let rag = dependencies.knowledgeRAGIndexBuilder.status
-        let ragRemaining: Int
-        if case let .embedding(processed, total) = rag {
-            ragRemaining = max(0, total - processed)
-        } else if rag.isActivelyIndexing {
-            ragRemaining = 1
-        } else {
-            ragRemaining = 0
+    }
+
+    /// 只停止被点击的这一轮，沿用服务取消语义，不关闭周期调度或回滚结果。
+    private func cancelBackgroundTask(_ kind: AppBackgroundTask.Kind) {
+        guard backgroundTasks.task(kind)?.canCancel == true else { return }
+        switch kind {
+        case .grouping: dependencies.githubStarListAIGroupingSession.stopAnalysis()
+        case .tags: dependencies.batchAIQueueService.cancel()
+        case .warmup: dependencies.initialWarmupCoordinator.cancel()
+        case .readme: dependencies.readmePrefetchPoller.cancelCurrentRun()
+        case .openSSF: dependencies.openSSFScorePoller.cancelCurrentRefresh()
+        case .health: dependencies.repoHealthPoller.cancelCurrentRefresh()
+        case .indexing: dependencies.knowledgeRAGIndexBuilder.cancel()
         }
-        return batchRemaining + readmeRemaining + warmupRemaining + openSSFRemaining + healthRemaining + ragRemaining
     }
 
     private var hasIssue: Bool {
@@ -188,6 +182,7 @@ struct AppStatusToolbarButton: View {
             || dependencies.githubStatusMonitor.hasRelevantIssue
             || dependencies.serviceAvailabilityMonitor.summary.hasIssue
             || dependencies.initialWarmupCoordinator.job?.phase == .paused
+            || backgroundTasks.needsAttention
     }
 
     private var isMCPFailed: Bool {
@@ -202,7 +197,8 @@ struct AppStatusToolbarButton: View {
 
     private var overallStatusIcon: String {
         if hasIssue { return "exclamationmark.circle.fill" }
-        if syncManager.isSyncing || activeTaskCount > 0 { return "arrow.triangle.2.circlepath.circle.fill" }
+        if syncManager.isSyncing || backgroundTasks.isRunning { return "arrow.triangle.2.circlepath.circle.fill" }
+        if activeTaskCount > 0 { return "clock" }
         return "checkmark.circle.fill"
     }
 
@@ -215,7 +211,7 @@ struct AppStatusToolbarButton: View {
     private var statusCaption: LocalizedStringKey {
         if hasIssue { return "toolbar.status.caption.issue" }
         if syncManager.isSyncing { return "toolbar.status.caption.syncing" }
-        if activeTaskCount > 0 { return "toolbar.status.caption.tasks" }
+        if activeTaskCount > 0 { return LocalizedStringKey(backgroundTasks.captionKey) }
         return "toolbar.status.caption.ok"
     }
 
@@ -246,15 +242,9 @@ private struct AppStatusPanel: View {
     let lastSyncedAt: Date?
     let syncState: SyncState
     let syncProgress: SyncProgress?
-    let readmePrefetchService: ReadmePrefetchService
-    let readmePrefetchEnabled: Bool
-    let readmePrefetchPoller: ReadmePrefetchPoller
     let initialWarmupCoordinator: InitialRepoWarmupCoordinator
-    let openSSFScorePoller: OpenSSFScorePoller
-    let repoHealthPoller: RepoHealthPoller
     let undoStarCleanup: UndoStarCleanupScheduler
-    let batchService: BatchAIQueueService
-    let ragIndexBuilder: KnowledgeRAGIndexBuilder
+    let backgroundTasks: AppBackgroundTaskSnapshot
     let mcpState: StarcatMCPService.State
     let mcpEnabled: Bool
     let browserPluginState: CompanionConfiguration.ServerStatus
@@ -271,7 +261,8 @@ private struct AppStatusPanel: View {
     let onOpenMCP: () -> Void
     let onOpenBrowserPlugin: () -> Void
     let onOpenAIUsage: () -> Void
-    let onShowBatchAIPanel: (() -> Void)?
+    let onOpenTask: (AppBackgroundTask.Kind) -> Void
+    let onCancelTask: (AppBackgroundTask.Kind) -> Void
     let onOpenGeneralSettings: () -> Void
     let onOpenAbout: () -> Void
     let onOpenStorage: () -> Void
@@ -279,7 +270,7 @@ private struct AppStatusPanel: View {
     let onOpenLabs: () -> Void
     let onOpenLocalAILogs: (String) -> Void
 
-    @State private var isTaskCancelHovered = false
+    @State private var tasksExpanded = false
     @State private var aiUsageSummary = AIUsageSummary.empty
     @State private var aiUsagePeakTokens = 0
     @Environment(\.starcatInterfaceScale) private var interfaceScale
@@ -289,6 +280,9 @@ private struct AppStatusPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             overviewGrid
+            if tasksExpanded, !backgroundTasks.tasks.isEmpty {
+                AppBackgroundTaskList(tasks: backgroundTasks.tasks, onOpen: onOpenTask, onCancel: onCancelTask)
+            }
             aiUsageCard
             LocalAIStatusSection(
                 onOpenSettings: onOpenLocalAI,
@@ -301,6 +295,9 @@ private struct AppStatusPanel: View {
             footer
         }
         .task { await loadAIUsageSummary() }
+        .onChange(of: backgroundTasks.tasks.isEmpty) { _, isEmpty in
+            if isEmpty { tasksExpanded = false }
+        }
     }
 
     private func loadAIUsageSummary() async {
@@ -441,20 +438,28 @@ private struct AppStatusPanel: View {
                     .accessibilityHidden(true)
             }
 
-            AppStatusOverviewCard(
-                title: "toolbar.status.tasks.title",
-                value: taskCardValue,
-                caption: taskCardCaption,
-                tint: taskTint,
-                showsChevron: true,
-                action: { onShowBatchAIPanel?() },
-                icon: { statusGlyph(taskIcon, tint: taskTint) },
-                accessory: {
-                    if hasCancellableBackgroundTask {
-                        cancellableTaskIndicator
+            // 卡片只展开列表，停止操作位于各任务行，避免整卡点击误开某种整理窗口。
+            Button {
+                tasksExpanded.toggle()
+            } label: {
+                AppStatusOverviewCard(
+                    title: "toolbar.status.tasks.title",
+                    value: taskCardValue,
+                    caption: String.l10n(backgroundTasks.captionKey),
+                    tint: taskTint,
+                    icon: { statusGlyph(taskIcon, tint: taskTint) },
+                    accessory: {
+                        if !backgroundTasks.tasks.isEmpty {
+                            Image(systemName: tasksExpanded ? "chevron.down" : "chevron.right")
+                                .font(interfaceScale.font(.captionSmall, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                }
-            )
+                )
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            .disabled(backgroundTasks.tasks.isEmpty)
         }
     }
 
@@ -596,6 +601,7 @@ private struct AppStatusPanel: View {
         if githubStatusMonitor.hasRelevantIssue { return true }
         if serviceSummary.hasIssue { return true }
         if initialWarmupCoordinator.job?.phase == .paused { return true }
+        if backgroundTasks.needsAttention { return true }
         if case .failed = mcpState { return true }
         if case .failed = browserPluginState { return true }
         if case .failed = syncState { return true }
@@ -605,8 +611,7 @@ private struct AppStatusPanel: View {
 
     private var panelIsBusy: Bool {
         if case .syncing = syncState { return true }
-        if runningTaskCount > 0 { return true }
-        return batchService.isPaused
+        return backgroundTasks.isRunning
     }
 
     private var syncCardValue: String {
@@ -670,51 +675,11 @@ private struct AppStatusPanel: View {
     }
 
     private var taskCardValue: String {
-        let count = runningTaskCount
+        let count = backgroundTasks.count
         if count == 0 {
             return String.l10n("toolbar.status.tasks.emptyShort")
         }
-        return String(format: String.l10n("toolbar.status.tasks.countFormat"), count)
-    }
-
-    private var taskCardCaption: String {
-        if hasCancellableBackgroundTask {
-            return String.l10n("toolbar.status.tasks.runningCaption")
-        }
-        return String.l10n("toolbar.status.tasks.idleCaption")
-    }
-
-    private var runningTaskCount: Int {
-        let batchRemaining = (batchService.isRunning || batchService.isPaused)
-            ? max(0, batchService.totalCount - batchService.finishedCount)
-            : 0
-        let readmeRemaining = readmePrefetchService.isRunning
-            ? max(0, readmePrefetchService.total - readmePrefetchService.processed)
-            : (readmePrefetchPoller.isDraining ? 1 : 0)
-        let warmupRemaining: Int
-        if initialWarmupCoordinator.isActive, let job = initialWarmupCoordinator.job {
-            warmupRemaining = max(0, job.readmeTotal - job.readmeCovered)
-                + max(0, initialWarmupCoordinator.openSSFTotal - initialWarmupCoordinator.openSSFCovered)
-                + max(0, job.healthTotal - job.healthCovered)
-        } else {
-            warmupRemaining = initialWarmupCoordinator.isRunning ? 1 : 0
-        }
-        let openSSFRemaining = openSSFScorePoller.isRefreshing
-            ? max(1, openSSFScorePoller.refreshTotal - openSSFScorePoller.refreshProcessed)
-            : 0
-        let healthRemaining = repoHealthPoller.isRefreshing
-            ? max(1, repoHealthPoller.refreshTotal - repoHealthPoller.refreshProcessed)
-            : 0
-        let ragRemaining: Int
-        if case let .embedding(processed, total) = ragIndexBuilder.status {
-            ragRemaining = max(0, total - processed)
-        } else if ragIndexBuilder.status.isActivelyIndexing {
-            ragRemaining = 1
-        } else {
-            ragRemaining = 0
-        }
-        return batchRemaining + readmeRemaining + warmupRemaining
-            + openSSFRemaining + healthRemaining + ragRemaining
+        return String(format: String.l10n("toolbar.status.tasks.countFormat"), locale: locale, count)
     }
 
     private var aiUsageSummaryLine: String {
@@ -810,97 +775,13 @@ private struct AppStatusPanel: View {
     }
 
     private var taskIcon: String {
-        if isInitialWarmupPaused || isReadmePrefetchWaitingForRetry || batchService.failedCount > 0 { return "exclamationmark.triangle.fill" }
-        if initialWarmupCoordinator.isRunning || openSSFScorePoller.isRefreshing || repoHealthPoller.isRefreshing || readmePrefetchService.isRunning || readmePrefetchPoller.isDraining || batchService.isRunning || ragIndexBuilder.status.isActivelyIndexing {
-            return "clock.arrow.circlepath"
-        }
-        if batchService.isPaused { return "pause.circle.fill" }
-        return "tray"
+        if backgroundTasks.needsAttention { return "exclamationmark.triangle" }
+        return backgroundTasks.tasks.isEmpty ? "tray" : "checklist"
     }
 
     private var taskTint: Color {
-        if isInitialWarmupPaused || isReadmePrefetchWaitingForRetry || readmePrefetchService.failures > 0 || batchService.failedCount > 0 { return .orange }
-        if initialWarmupCoordinator.isRunning || openSSFScorePoller.isRefreshing || repoHealthPoller.isRefreshing || readmePrefetchService.isRunning || readmePrefetchPoller.isDraining || isReadmePrefetchCoolingDown || batchService.isRunning || batchService.isPaused || ragIndexBuilder.status.isActivelyIndexing {
-            return .accentColor
-        }
-        if initialWarmupCoordinator.isCompleted || isReadmePrefetchAllFetched { return .green }
-        return .secondary
-    }
-
-    /// 状态面板只暴露“终止当前这一轮”的能力：
-    /// - 不关闭 README / OpenSSF / Health 的周期调度开关；
-    /// - 不回滚已经写入的缓存或 AI 结果；
-    /// - 对批量 AI 沿用现有 cancel 语义，当前 in-flight job 结束后停止继续取队列。
-    private var hasCancellableBackgroundTask: Bool {
-        initialWarmupCoordinator.isRunning
-            || openSSFScorePoller.isRefreshing
-            || repoHealthPoller.isRefreshing
-            || readmePrefetchService.isRunning
-            || readmePrefetchPoller.isDraining
-            || batchService.isRunning
-            || ragIndexBuilder.status.isActivelyIndexing
-    }
-
-    private var cancellableTaskIndicator: some View {
-        Button {
-            cancelCurrentBackgroundTask()
-        } label: {
-            ZStack {
-                ProgressView()
-                    .controlSize(.mini)
-                    .opacity(isTaskCancelHovered ? 0 : 1)
-                Image(systemName: "xmark.circle.fill")
-                    .font(interfaceScale.font(.caption, weight: .semibold))
-                    .foregroundStyle(.red)
-                    .opacity(isTaskCancelHovered ? 1 : 0)
-            }
-            .frame(width: 14, height: 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .help(Text("common.cancel"))
-        .onHover { isTaskCancelHovered = $0 }
-    }
-
-    private func cancelCurrentBackgroundTask() {
-        if initialWarmupCoordinator.isRunning {
-            initialWarmupCoordinator.cancel()
-        }
-        if openSSFScorePoller.isRefreshing {
-            openSSFScorePoller.cancelCurrentRefresh()
-        }
-        if repoHealthPoller.isRefreshing {
-            repoHealthPoller.cancelCurrentRefresh()
-        }
-        if readmePrefetchService.isRunning || readmePrefetchPoller.isDraining {
-            readmePrefetchPoller.cancelCurrentRun()
-        }
-        if batchService.isRunning {
-            batchService.cancel()
-        }
-        if ragIndexBuilder.status.isActivelyIndexing {
-            ragIndexBuilder.cancel()
-        }
-    }
-
-    private var isReadmePrefetchCoolingDown: Bool {
-        if case .coolingDown = readmePrefetchService.status { return true }
-        return false
-    }
-
-    private var isReadmePrefetchWaitingForRetry: Bool {
-        if case .waitingForRetry = readmePrefetchService.status { return true }
-        return false
-    }
-
-    private var isReadmePrefetchAllFetched: Bool {
-        if case .allPrefetched = readmePrefetchService.status { return true }
-        return false
-    }
-
-    private var isInitialWarmupPaused: Bool {
-        initialWarmupCoordinator.job?.phase == .paused
+        if backgroundTasks.needsAttention { return .orange }
+        return backgroundTasks.tasks.isEmpty ? .secondary : .accentColor
     }
 
     private var serviceIcon: String {
