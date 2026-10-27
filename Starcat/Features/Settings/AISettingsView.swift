@@ -30,7 +30,6 @@ import UniformTypeIdentifiers
 enum AISettingsPage: Hashable {
     case models
     case automation
-    case indexAndContext
     case externalSearch
 }
 
@@ -42,8 +41,7 @@ struct AISettingsTab: View {
     @Environment(AppSettings.self) private var settings
     /// HOM-126：「立刻手动触发一次」按钮直接调度。@Environment 注入自 StarcatApp。
     @Environment(AutoTidyScheduler.self) private var autoTidyScheduler
-    /// 2026-06-12 向量索引改进：AI 索引 Section 的"开始 / 暂停 / 全量重建"按钮需要
-    /// 直接调度 `SemanticIndexBuilder`。从 AppDependencies 拿。
+    /// 模型与自动化配置继续复用应用级服务与业务权限。
     @Environment(AppDependencies.self) private var dependencies
     /// disclosureLabel 与草稿 Provider 收放等动画在「关闭应用内动画」时跳过。
     @Environment(\.starcatReduceMotion) private var reduceMotion
@@ -100,17 +98,8 @@ struct AISettingsTab: View {
     // （模型粒度，不再按任务），不再需要 isParametersExpanded SceneStorage。
     private static let taskModelsSettingsAnchor = "settings.ai.taskModels"
     private static let embeddingSettingsAnchor = "settings.ai.sharedEmbedding"
-    private static let aiIndexSettingsAnchor = "settings.ai.index"
-    private static let knowledgeIndexSettingsAnchor = "settings.ai.knowledgeIndex"
-
-    /// "AI 索引"折叠区显示 / 隐藏具体阈值数字；预设 == `.custom` 时强制展开（写 didSet 上不易，
-    /// 这里通过 computed `effectiveAdvancedExpanded` 处理）。
-    @SceneStorage("settings.ai.aiIndex.advancedExpanded") private var isAIIndexAdvancedExpanded: Bool = false
-
     private static let externalSearchSettingsAnchor = "settings.ai.externalSearch"
 
-    /// "全量重建"二次确认。
-    @State private var pendingRebuildAllConfirm: Bool = false
     /// 免费用户点击 AI 设置页升级入口时展示统一 Pro 付费墙。
     @State private var paywallContext: ProPaywallContext?
     /// CC Switch 导入预览。确认前不写 Keychain。
@@ -121,7 +110,7 @@ struct AISettingsTab: View {
         self.page = page
     }
 
-    /// 模型、自动化与语义索引继续遵守既有 Pro / Apple Silicon Local AI 门控；
+    /// 模型与自动化继续遵守既有 Pro / Apple Silicon Local AI 门控；
     /// 免费的联网搜索和仓库上下文不使用此配置权限。
     private var hasAIConfigurationAccess: Bool {
         dependencies.entitlementGate.isProUser || LocalAIHardwareSupport.isLocalAIAvailable
@@ -134,7 +123,7 @@ struct AISettingsTab: View {
         // 本地 AI 免费（dong4j 2026-09-12）：Apple Silicon 上免费用户也必须能进入
         // 本页配置并下载本地模型；远程 provider 的消费仍由 EntitlementGate 在调用点拦截，
         // 设置页只是配置面。知识库索引配置对免费用户同样开放。
-        if page == .externalSearch || page == .indexAndContext || hasAIConfigurationAccess {
+        if page == .externalSearch || hasAIConfigurationAccess {
             aiConfigurationForm
         } else {
             lockedAISettings
@@ -169,35 +158,11 @@ struct AISettingsTab: View {
                 autoTidySection
                 githubListGroupingSection
                 automationModelsSection
-            case .indexAndContext:
-                // 语义索引沿用原 Pro / 本地 AI 条件，知识库索引保持原访问范围。
-                if hasAIConfigurationAccess {
-                    aiIndexSection
-                        .id(Self.aiIndexSettingsAnchor)
-                }
-                // 原检索页的索引操作不受仓库语义搜索的 Pro 条件影响，迁移后保留此访问范围。
-                Section {
-                    KnowledgeRAGIndexSettingsSummary(showsControls: true)
-                } header: {
-                    SettingsSectionHeader("settings.ai.models.embedding.index.knowledge", systemImage: "books.vertical")
-                }
-                .id(Self.knowledgeIndexSettingsAnchor)
             case .externalSearch:
                 // 联网搜索原本对所有用户可配置，因此独立页面不能被 AI Pro 门控隐藏。
                 ExternalSearchSettingsSection()
                     .id(Self.externalSearchSettingsAnchor)
             }
-        }
-        .alert(
-            "settings.aiIndex.rebuildAll.confirmTitle",
-            isPresented: $pendingRebuildAllConfirm
-        ) {
-            Button("settings.aiIndex.rebuildAll.confirm", role: .destructive) {
-                dependencies.semanticIndexBuilder.rebuildAll()
-            }
-            Button("general.cancel", role: .cancel) {}
-        } message: {
-            Text("settings.aiIndex.rebuildAll.confirmMessage")
         }
         .alert(
             "settings.ai.provider.importCCSwitch",
@@ -249,18 +214,6 @@ struct AISettingsTab: View {
             guard page == .models else { return }
             ensureSelection()
             loadAPIKeys()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIIndexSection)) { _ in
-            guard page == .indexAndContext else { return }
-            DispatchQueue.main.async {
-                proxy.scrollTo(Self.aiIndexSettingsAnchor, anchor: .top)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToKnowledgeIndexSection)) { _ in
-            guard page == .indexAndContext else { return }
-            DispatchQueue.main.async {
-                proxy.scrollTo(Self.knowledgeIndexSettingsAnchor, anchor: .top)
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .starcatJumpToAIEmbeddingSection)) { _ in
             guard page == .models else { return }
@@ -1382,14 +1335,6 @@ struct AISettingsTab: View {
     @ViewBuilder
     private var statusGroup: some View {
         Divider()
-        HStack {
-            Spacer()
-            Text("settings.automation.status.title")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.top, 12)
-        .padding(.bottom, 8)
 
         // 备注与执行按钮同排；长译文可截断并通过提示查看，优先保证按钮完整可见。
         HStack(spacing: 8) {
@@ -1581,421 +1526,6 @@ struct AISettingsTab: View {
                     GitHubStarListAutoGroupingSettings.clampScheduledIntervalHours(newValue)
                 self.settings.githubStarListAutoGroupingSettings = grouping
             }
-        )
-    }
-
-    // MARK: - AI 索引（向量搜索改进 2026-06-12）
-
-    /// "向量化索引" Section（原 "AI 索引"，HOM-197 2026-06-13 改名）：
-    /// README 截断长度滑杆 + 搜索结果过滤阈值滑杆 + 三档阈值预设 + 折叠区精细数字 + 预拉 / 全量重建按钮。
-    ///
-    /// UI 形态：
-    /// ```
-    /// 向量化索引 ▼
-    ///   ┌ README 截断长度 ──── 滑杆 [12000] ──── 12000 字符
-    ///   ├ 搜索结果过滤阈值 ─── 滑杆 [75%] ────── 75%      ← HOM-197 新增
-    ///   ├ 阈值预设      ── 严格 / 标准 / 宽松 / 自定义
-    ///   ├ 高级（折叠）  ── 主体阈值 Slider + 笔记阈值 Slider   ← HOM-197 Stepper→Slider
-    ///   ├ ─────────────────────
-    ///   ├ 启动自动预拉 [开关]
-    ///   ├ 进度 234 / 1801（失败 0）          [开始预拉 / 暂停]   ← 按钮右对齐
-    ///   └ 强制…会消耗配额。                 [⚠ 全量重建]       ← 文案左、按钮右
-    /// ```
-    ///
-    /// 切换预设时通过 `applyAIIndexPreset(_:)` 把 body / notes 具体数字同步过去，避免
-    /// 折叠区显示 10/20 但实际生效 5/10 的"漂移"。
-    private var aiIndexSection: some View {
-        Section {
-            // 顶级配置区始终展开；仅内部“高级”参数继续按需折叠，保留主次层级。
-            VStack(alignment: .leading, spacing: 0) {
-                truncateLengthRow
-                    .padding(.vertical, 8)
-                Divider()
-                scoreThresholdRow
-                    .padding(.vertical, 8)
-                Divider()
-                presetRow
-                    .padding(.vertical, 8)
-                Divider()
-                advancedDisclosure
-                    .padding(.vertical, 8)
-                Divider()
-                Toggle("settings.aiIndex.autoPrefetch", isOn: autoPrefetchBinding)
-                    .padding(.vertical, 8)
-                Divider()
-                builderControlsRow
-                    .padding(.vertical, 8)
-                Divider()
-                rebuildAllRow
-                    .padding(.vertical, 8)
-            }
-            .padding(.top, 4)
-        } header: {
-            SettingsSectionHeader(
-                "settings.aiIndex.section",
-                businessIcon: .aiIndex
-            )
-        }
-    }
-
-    /// 截断长度滑杆 + 数字读数。
-    /// 决策 C2：范围 2000-32000，步进 1000。
-    private var truncateLengthRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("settings.aiIndex.truncateLength")
-                    .font(.callout)
-                Spacer()
-                Text("\(settings.aiReadmeTruncateLength)")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Slider(
-                value: truncateLengthBinding,
-                in: 2000...32000,
-                step: 1000
-            )
-            Text("settings.aiIndex.truncateLength.hint")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    /// HOM-197（2026-06-13 dong4j）：搜索结果过滤阈值滑杆。
-    ///
-    /// 形态完全复用 `truncateLengthRow` 骨架（标题 + 右上百分比 + Slider + 下方 hint），
-    /// 让用户在同一组里横向看到的滑杆视觉语言一致。
-    ///
-    /// 配置：10% - 100%，步进 1%，默认 75%。生效路径见 `AppSettings
-    /// .aiSemanticSearchScoreThreshold` 文档与 `HomeViewModel.applyView()` 的语义分支。
-    private var scoreThresholdRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("settings.aiIndex.scoreThreshold")
-                    .font(.callout)
-                Spacer()
-                Text("\(Int((settings.aiSemanticSearchScoreThreshold * 100).rounded()))%")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Slider(
-                value: scoreThresholdBinding,
-                in: 0.10...1.00,
-                step: 0.01
-            )
-            Text("settings.aiIndex.scoreThreshold.hint")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    /// 三档预设 + custom：segmented picker；switch 时同步 body/notes 字段。
-    private var presetRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("settings.aiIndex.preset")
-                    .font(.callout)
-                Spacer()
-            }
-            EqualWidthSegmentedControl(
-                items: Array(AIIndexPreset.allCases),
-                selection: presetBinding,
-                title: { LocalizedStringKey($0.displayNameKey) }
-            )
-        }
-    }
-
-    /// 高级区（折叠）：body / notes 阈值滑杆（HOM-197 2026-06-13 由 Stepper 改为 Slider）。
-    /// 预设 != custom 时禁用编辑，提示用户先切到自定义。
-    @ViewBuilder
-    private var advancedDisclosure: some View {
-        let isCustom = settings.aiIndexPreset == .custom
-        DisclosureGroup(isExpanded: $isAIIndexAdvancedExpanded) {
-            VStack(alignment: .leading, spacing: 0) {
-                ratioRow(
-                    titleKey: "settings.aiIndex.bodyThreshold",
-                    value: bodyRatioBinding,
-                    enabled: isCustom
-                )
-                .padding(.vertical, 8)
-                Divider()
-                ratioRow(
-                    titleKey: "settings.aiIndex.notesThreshold",
-                    value: notesRatioBinding,
-                    enabled: isCustom
-                )
-                .padding(.vertical, 8)
-                if !isCustom {
-                    Divider()
-                    Text("settings.aiIndex.advanced.lockedHint")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            disclosureLabel("settings.aiIndex.advanced", systemImage: "slider.horizontal.3", isExpanded: $isAIIndexAdvancedExpanded)
-        }
-    }
-
-    /// 阈值行：与 `truncateLengthRow` / `scoreThresholdRow` 同款骨架——
-    /// 标题 + 右上百分比读数 + Slider（HOM-197 dong4j 反馈，2026-06-13）。
-    ///
-    /// 范围 1% - 90%、步进 1%：
-    /// - **下限 1%**：0% 意味着"任何字符差异都重建"会把 embedding 配额烧爆，
-    ///   1% 起作为安全护栏；
-    /// - **上限 90%**：现有最宽松预设 relaxed 是 20/30%，留出充足 headroom 给极端
-    ///   "几乎不重建"场景；100% 等价于"永不自动重建" 没有实用意义；
-    /// - 默认沿用 `DiffThresholds.default`（body 10% / notes 20%，即 standard 预设）。
-    ///
-    /// 预设非 `.custom` 时滑杆 `.disabled(!enabled)`；用户拖动后 binding 会自动把
-    /// 预设切到 `.custom`（在 `bodyRatioBinding` / `notesRatioBinding` 的 set 闭包内
-    /// 完成，与原 Stepper 行为一致）。
-    private func ratioRow(titleKey: String, value: Binding<Double>, enabled: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(LocalizedStringKey(titleKey))
-                    .font(.callout)
-                Spacer()
-                Text("\(Int((value.wrappedValue * 100).rounded()))%")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Slider(value: value, in: 0.01...0.90, step: 0.01)
-                .disabled(!enabled)
-        }
-    }
-
-    /// 开始 / 暂停 / 进度行。
-    ///
-    /// **布局（设置页按钮右对齐规范）**：进度 / 上次预拉记录在左，操作按钮在右。
-    /// 进程内 `.idle` 不再留空：打开设置页时读落盘的上次预拉时间和计数。
-    @ViewBuilder
-    private var builderControlsRow: some View {
-        let builder = dependencies.semanticIndexBuilder
-        HStack(spacing: 10) {
-            builderProgressView
-            Spacer()
-            switch builder.status {
-            case .idle, .completed, .alreadyUpToDate, .failed:
-                Button(String.l10n("settings.aiIndex.prefetch.start")) {
-                    builder.start()
-                }
-            case .running:
-                Button(String.l10n("settings.aiIndex.prefetch.pause")) {
-                    builder.pause()
-                }
-            case .paused:
-                Button(String.l10n("settings.aiIndex.prefetch.resume")) {
-                    builder.resume()
-                }
-            }
-        }
-    }
-
-    /// 左侧进度 / 上次预拉记录。进行中显示活进度；其余状态显示落盘快照和相对时间。
-    @ViewBuilder
-    private var builderProgressView: some View {
-        let builder = dependencies.semanticIndexBuilder
-        switch builder.status {
-        case .running:
-            prefetchLiveProgress(
-                icon: "arrow.triangle.2.circlepath",
-                processed: builder.processed,
-                total: builder.total,
-                failures: builder.failures,
-                tint: .accentColor
-            )
-        case .paused:
-            prefetchLiveProgress(
-                icon: "pause.circle.fill",
-                processed: builder.processed,
-                total: builder.total,
-                failures: builder.failures,
-                tint: RAGBackendTestStatus.warningTint
-            )
-        default:
-            lastPrefetchRecordView
-        }
-    }
-
-    /// 进行中用 accent 同步箭头，暂停用橙色暂停图标；失败数 > 0 时改警告色。
-    private func prefetchLiveProgress(
-        icon: String,
-        processed: Int,
-        total: Int,
-        failures: Int,
-        tint: Color
-    ) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(failures > 0 ? RAGBackendTestStatus.warningTint : tint)
-                .font(.callout)
-            Text(
-                String(
-                    format: String.l10n("settings.aiIndex.prefetch.progressFmt"),
-                    processed, total, failures
-                )
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
-        }
-    }
-
-    /// 打开设置页就能看到上次预拉时间和记录。没有快照时显示尚未预拉。
-    @ViewBuilder
-    private var lastPrefetchRecordView: some View {
-        if let last = settings.semanticIndexLastPrefetch {
-            let timeAgo = RelativeTimeText.pastEvent(last.finishedAt, locale: locale)
-            HStack(spacing: 6) {
-                Image(systemName: lastPrefetchIcon(last))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(lastPrefetchBadgeColor(last))
-                    .font(.callout)
-                Text(
-                    String(
-                        format: String.l10n("settings.aiIndex.prefetch.lastRunFormat"),
-                        timeAgo,
-                        lastPrefetchRecordText(last)
-                    )
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            }
-        } else {
-            HStack(spacing: 6) {
-                Image(systemName: "clock")
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-                Text("settings.aiIndex.prefetch.neverRun")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func lastPrefetchRecordText(_ last: SemanticIndexPrefetchLastRun) -> String {
-        switch last.outcome {
-        case .alreadyUpToDate:
-            return String(format: String.l10n("settings.aiIndex.prefetch.alreadyUpToDateFmt"), last.total)
-        case .completed:
-            return String(
-                format: String.l10n("settings.aiIndex.prefetch.progressFmt"),
-                last.processed, last.total, last.failures
-            )
-        case .failed:
-            return String(
-                format: String.l10n("settings.aiIndex.prefetch.failedFmt"),
-                last.failureMessage ?? ""
-            )
-        }
-    }
-
-    private func lastPrefetchIcon(_ last: SemanticIndexPrefetchLastRun) -> String {
-        switch last.outcome {
-        case .alreadyUpToDate:
-            return "checkmark.circle.fill"
-        case .completed:
-            return last.failures == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-        case .failed:
-            return "xmark.circle.fill"
-        }
-    }
-
-    private func lastPrefetchBadgeColor(_ last: SemanticIndexPrefetchLastRun) -> Color {
-        switch last.outcome {
-        case .alreadyUpToDate:
-            return RAGBackendTestStatus.successTint
-        case .completed:
-            return last.failures == 0 ? RAGBackendTestStatus.successTint : RAGBackendTestStatus.warningTint
-        case .failed:
-            return RAGBackendTestStatus.dangerTint
-        }
-    }
-
-    /// "全量重建"按钮。点击只弹确认 dialog，实际执行在 body 的 `.confirmationDialog`。
-    ///
-    /// **布局（设置页按钮右对齐规范）**：消耗配额提示在左，destructive 按钮在右。
-    private var rebuildAllRow: some View {
-        HStack(spacing: 10) {
-            Text("settings.aiIndex.rebuildAll.hint")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            Button(role: .destructive) {
-                pendingRebuildAllConfirm = true
-            } label: {
-                Label("settings.aiIndex.rebuildAll.button", systemImage: "exclamationmark.triangle.fill")
-            }
-        }
-    }
-
-    // MARK: - AI 索引 bindings
-
-    private var truncateLengthBinding: Binding<Double> {
-        Binding(
-            get: { Double(self.settings.aiReadmeTruncateLength) },
-            set: { newValue in
-                self.settings.aiReadmeTruncateLength = Int(newValue.rounded())
-            }
-        )
-    }
-
-    /// HOM-197：阈值滑杆 binding。
-    /// `set` 端 clamp 到 [0.10, 1.00]——SwiftUI Slider 在 `step` 截断 + 浮点抖动下
-    /// 偶尔会写出超出 `in:` 范围 1e-9 的值，clamp 是防御性兜底。
-    private var scoreThresholdBinding: Binding<Double> {
-        Binding(
-            get: { self.settings.aiSemanticSearchScoreThreshold },
-            set: { newValue in
-                self.settings.aiSemanticSearchScoreThreshold = max(0.10, min(1.00, newValue))
-            }
-        )
-    }
-
-    private var presetBinding: Binding<AIIndexPreset> {
-        Binding(
-            get: { self.settings.aiIndexPreset },
-            set: { self.settings.applyAIIndexPreset($0) }
-        )
-    }
-
-    private var bodyRatioBinding: Binding<Double> {
-        Binding(
-            get: { self.settings.aiIndexBodyDiffRatio },
-            set: { newValue in
-                let clamped = max(0, min(1, newValue))
-                self.settings.aiIndexBodyDiffRatio = clamped
-                // 用户在高级区改具体数字 → 自动切到 custom（避免显示"标准"但数字漂移）
-                if self.settings.aiIndexPreset != .custom {
-                    self.settings.aiIndexPreset = .custom
-                }
-            }
-        )
-    }
-
-    private var notesRatioBinding: Binding<Double> {
-        Binding(
-            get: { self.settings.aiIndexNotesDiffRatio },
-            set: { newValue in
-                let clamped = max(0, min(1, newValue))
-                self.settings.aiIndexNotesDiffRatio = clamped
-                if self.settings.aiIndexPreset != .custom {
-                    self.settings.aiIndexPreset = .custom
-                }
-            }
-        )
-    }
-
-    private var autoPrefetchBinding: Binding<Bool> {
-        Binding(
-            get: { self.settings.aiIndexAutoPrefetchEnabled },
-            set: { self.settings.aiIndexAutoPrefetchEnabled = $0 }
         )
     }
 

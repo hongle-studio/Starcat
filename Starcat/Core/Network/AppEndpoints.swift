@@ -665,6 +665,8 @@ enum AppEndpoints {
         enum Paths {
             /// `POST /v1/systemone` —— 唯一推理端点:state + questions → 类型化答案。
             static let systemOne = "/v1/systemone"
+            /// `GET /v1/models` —— 当前原生 Key 可访问的模型列表。
+            static let models = "/v1/models"
         }
 
         static func url(_ path: String) -> URL {

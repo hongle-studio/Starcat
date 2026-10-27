@@ -396,21 +396,14 @@ struct ExternalSearchSettingsSection: View {
         }
     }
 
-    /// 宽屏保持左右两列；窄窗口下整块输入区换行，不挤压标题和眼睛按钮。
+    /// 与自定义服务保持同一列宽规则：输入框最多 340pt，窄窗口让出尾部图标空间。
     private func providerAPIKeyField(_ provider: ExternalSearchProviderID) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 16) {
-                Text("settings.externalSearch.apiKey")
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                providerAPIKeyInput(provider)
-                    .frame(minWidth: 240, idealWidth: 320, maxWidth: .infinity)
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                Text("settings.externalSearch.apiKey")
-                providerAPIKeyInput(provider)
-            }
+        HStack(alignment: .center, spacing: 8) {
+            Text("settings.externalSearch.apiKey")
+                .frame(width: 72, alignment: .leading)
+            providerAPIKeyInput(provider)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func providerAPIKeyInput(_ provider: ExternalSearchProviderID) -> some View {
@@ -425,7 +418,8 @@ struct ExternalSearchSettingsSection: View {
             .labelsHidden()
             .accessibilityLabel(Text(String(format: String.l10n("settings.externalSearch.apiKey.accessibilityFormat"), provider.displayName)))
             .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: 340)
+            .frame(maxWidth: .infinity, alignment: .trailing)
 
             Button {
                 toggleAPIKeyVisibility(provider)

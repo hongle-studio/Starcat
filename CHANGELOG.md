@@ -6,6 +6,7 @@ Release notes for the Mac App Store edition of Starcat.
 
 ### New
 
+- Issue AI summaries: Open a glass panel from the floating button above the input area's divider, drag its top edge to adjust height, and read a streaming Markdown summary; generation continues when hidden or you switch Issues, and reopening restores progress or results.
 - Free source tools: Repository context packing, CodeFlow, and CodebaseMemory code graphs no longer require Pro, with existing repository and runtime limits retained.
 - Linux.do discovery: Browse verified open-source projects promoted on Linux.do, see provenance badges across repository lists, and open original discussions from repository details.
 - Quick search across lists: Expand the middle-column search field to quickly find repositories and activity items across Manage, Explore, Trending, Weekly, Awesome, Linux.do, notifications, and Undo Star.
@@ -28,6 +29,7 @@ Release notes for the Mac App Store edition of Starcat.
 
 ### Fixes
 
+- Activity timeline: Reduces repeated processing of loaded comments while scrolling the middle column, improving responsiveness with longer notification lists.
 - Unstarred repositories: Repositories no longer reappear in lists because of stale sync results or cached data after you unstar them.
 - Unstar confirmation: The single-card dialog uses a narrower width to avoid excessive empty space.
 

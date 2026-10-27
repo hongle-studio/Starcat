@@ -79,63 +79,7 @@ struct GitHubNotificationDetailView: View {
                     .padding(.horizontal, ManageListFilterBarMetrics.horizontalPadding)
                     .padding(.bottom, 6)
             }
-            if !isComposerExpanded {
-                ScrollView {
-                    // GitHub API 单次 hydration 最多返回 100 条评论，数量有界。这里故意使用
-                    // VStack 一次性确定可变高度 Markdown 卡片的位置，避免 LazyVStack 在滚动时
-                    // 反复执行 LazySubviewPlacements，导致主线程陷入 SwiftUI 布局风暴。
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let payload = item.notification {
-                            if settings.githubIssueEventTimelineEnabled,
-                               GitHubNotificationMapper.canReply(
-                                subjectType: payload.subjectType,
-                                number: payload.subjectNumber
-                               ) {
-                                GitHubNotificationIssueTimelineConversation(
-                                    payload: payload,
-                                    title: item.title,
-                                    locale: locale,
-                                    inbox: inbox,
-                                    timelineRevision: inbox.issueTimelineRevision(threadId: payload.threadId),
-                                    translation: translationVM,
-                                    document: translationDocument(payload),
-                                    onCommentsChange: { comments in
-                                        if timelineTranslationComments != comments {
-                                            timelineTranslationComments = comments
-                                        }
-                                    },
-                                    issueHTMLURL: item.htmlURL?.absoluteString
-                                )
-                            } else {
-                                conversation(
-                                    payload,
-                                    title: item.title,
-                                    issueHTMLURL: item.htmlURL?.absoluteString,
-                                    translation: translationVM
-                                )
-                            }
-                        }
-                    }
-                    .padding(18)
-                }
-            }
-            if let payload = item.notification,
-               GitHubNotificationMapper.canReply(
-                subjectType: payload.subjectType,
-                number: payload.subjectNumber
-               ) {
-                if !isComposerExpanded {
-                    Divider()
-                }
-                GitHubNotificationCommentComposer(
-                    payload: payload,
-                    issueTitle: item.title,
-                    repo: item.repo,
-                    isExpanded: $isComposerExpanded,
-                    onAIFailure: presentAIFailure
-                )
-                .frame(maxHeight: isComposerExpanded ? .infinity : nil)
-            }
+            detailBody(item)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // 语言色光晕挂在会话详情根上，和账本 / Manage 详情同一套；工具行走透明才能透出来。
@@ -145,6 +89,100 @@ struct GitHubNotificationDetailView: View {
         .navigationSubtitle(navigationSubtitle(item))
 
         withDetailObservers(content, item: item)
+    }
+
+    /// Overlay 只挂在详情正文范围，既不覆盖顶部导航，也不参与评论流的宽高测量。
+    private func detailBody(_ item: ActivityItem) -> some View {
+        VStack(spacing: 0) {
+            if !isComposerExpanded {
+                conversationScroll(item)
+            }
+            if let payload = item.notification,
+               GitHubNotificationMapper.canReply(subjectType: payload.subjectType, number: payload.subjectNumber) {
+                if !isComposerExpanded {
+                    Divider()
+                        .anchorPreference(key: GitHubNotificationIssueSummaryAnchorKey.self, value: .bounds) {
+                            .init(divider: $0)
+                        }
+                }
+                commentComposer(item, payload: payload)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .overlayPreferenceValue(GitHubNotificationIssueSummaryAnchorKey.self) { bounds in
+            if let composerAnchor = bounds.composer, let dividerAnchor = bounds.divider,
+               let payload = item.notification, payload.subjectType == "Issue", !isComposerExpanded {
+                issueSummaryOverlay(item, payload: payload, composerAnchor: composerAnchor, dividerAnchor: dividerAnchor)
+            }
+        }
+        .clipped()
+    }
+
+    /// 评论卡仍一次性排版；总结由独立浮层按批次渲染，不参与评论流的布局。
+    private func conversationScroll(_ item: ActivityItem) -> some View {
+        ScrollView {
+            // 单次 hydration 最多 100 条，保留 VStack，避免 LazySubviewPlacements 布局风暴。
+            VStack(alignment: .leading, spacing: 12) {
+                if let payload = item.notification {
+                    if settings.githubIssueEventTimelineEnabled,
+                       GitHubNotificationMapper.canReply(subjectType: payload.subjectType, number: payload.subjectNumber) {
+                        GitHubNotificationIssueTimelineConversation(
+                            payload: payload,
+                            title: item.title,
+                            locale: locale,
+                            inbox: inbox,
+                            timelineRevision: inbox.issueTimelineRevision(threadId: payload.threadId),
+                            translation: translationVM,
+                            document: translationDocument(payload),
+                            onCommentsChange: { comments in
+                                if timelineTranslationComments != comments { timelineTranslationComments = comments }
+                            },
+                            issueHTMLURL: item.htmlURL?.absoluteString
+                        )
+                    } else {
+                        conversation(payload, title: item.title, issueHTMLURL: item.htmlURL?.absoluteString, translation: translationVM)
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    /// 总结入口浮在输入区分割线上方，不在右侧占用输入宽度。
+    private func commentComposer(_ item: ActivityItem, payload: ActivityNotificationPayload) -> some View {
+        GitHubNotificationCommentComposer(
+            payload: payload,
+            issueTitle: item.title,
+            repo: item.repo,
+            isExpanded: $isComposerExpanded,
+            onAIFailure: presentAIFailure
+        )
+        .frame(maxHeight: isComposerExpanded ? .infinity : nil)
+    }
+
+    /// 切帖重建展示态，原生成会话由 AppDependencies 持有，回来重开可恢复。
+    private func issueSummaryOverlay(
+        _ item: ActivityItem,
+        payload: ActivityNotificationPayload,
+        composerAnchor: Anchor<CGRect>,
+        dividerAnchor: Anchor<CGRect>
+    ) -> some View {
+        var summaryPayload = payload
+        // 关闭 / 重开后的内存态比列表持有的快照更新，总结不能继续声称旧状态。
+        summaryPayload.issueState = inbox.resolvedIssueState(
+            threadId: payload.threadId,
+            persisted: payload.issueState
+        )
+
+        return GitHubNotificationIssueSummaryButton(
+            title: item.title,
+            payload: summaryPayload,
+            timeline: settings.githubIssueEventTimelineEnabled
+                ? inbox.cachedIssueTimeline(threadId: payload.threadId) ?? [] : [],
+            composerAnchor: composerAnchor,
+            dividerAnchor: dividerAnchor
+        )
+        .id("\(dependencies.databaseScopeRevision)|\(payload.threadId)|\(RepoAIInsightService.outputLanguageDescriptor())")
     }
 
     /// populatedDetail 的观察者与 toast 挂载（切条目重置、翻译预热、错误 / 复制 toast）。
@@ -1977,6 +2015,10 @@ private struct GitHubNotificationCommentComposer: View {
                 .opacity(isGenerating ? 0 : 1)
                 .animation(.easeInOut(duration: StarcatAIHaloMetrics.fadeDuration(reduceMotion)), value: isGenerating)
         )
+        // 卡片边界只控制入口的水平对齐；垂直位置单独读取输入区上方的分割线。
+        .anchorPreference(key: GitHubNotificationIssueSummaryAnchorKey.self, value: .bounds) {
+            .init(composer: payload.subjectType == "Issue" && !isExpanded ? $0 : nil)
+        }
         // 光晕铺在 clip 外面的一圈 gutter 里，加大 blur 才不会被圆角裁掉。
         .padding(StarcatAIHaloMetrics.glowBleed)
         .overlay {
@@ -3232,8 +3274,8 @@ private struct GitHubNotificationRemoteImage: View {
     }
 }
 
-/// 与 README 翻译同一套：缺 provider / API Key / 无效 URL / 鉴权失败，toast 给「前往设置」。
-private func notificationAIErrorNeedsSettings(_ error: Error) -> Bool {
+/// 通知翻译、评论和 Issue 总结共用：配置 / 鉴权问题提供「前往设置」，暂时性故障仅重试。
+func notificationAIErrorNeedsSettings(_ error: Error) -> Bool {
     if let insight = error as? RepoAIInsightError {
         switch insight {
         case .missingProvider, .missingAPIKey:

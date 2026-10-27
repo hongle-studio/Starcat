@@ -450,7 +450,7 @@ struct SettingsView: View {
         case .aiAutomation:
             AISettingsTab(page: .automation)
         case .aiIndexContext:
-            AISettingsTab(page: .indexAndContext)
+            SearchIndexSettingsView()
         case .externalSearch:
             AISettingsTab(page: .externalSearch)
         case .mcp:
@@ -510,15 +510,15 @@ struct SettingsView: View {
                                keywords: ["对话", "任务模型", "chat", "model"]),
             SettingsSearchItem("ai.prompt", titleKey: "settings.ai.prompt.title", tab: .aiModels,
                                keywords: ["提示词", "prompt", "system", "user"]),
-            SettingsSearchItem("ai.embedding", titleKey: "settings.ai.taskModels.title", tab: .aiModels, target: "ai.embedding",
+            SettingsSearchItem("ai.embedding", titleKey: "settings.ai.models.embedding.title", tab: .aiModels, target: "ai.embedding",
                                keywords: ["向量模型", "向量化模型", "embedding", "model"]),
             SettingsSearchItem("ai.automation", titleKey: "settings.automation.title", tab: .aiAutomation,
                                keywords: ["自动整理", "仓库分组", "github lists", "automation"]),
             SettingsSearchItem("ai.indexContext", titleKey: "settings.navigation.item.searchIndex", tab: .aiIndexContext,
                                keywords: ["全文索引", "语义搜索", "索引", "index", "search"]),
-            SettingsSearchItem("ai.index", titleKey: "settings.aiIndex.section", tab: .aiIndexContext, target: "ai.index",
+            SettingsSearchItem("ai.index", titleKey: "settings.searchIndex.repository.title", tab: .aiIndexContext, target: "ai.index",
                                keywords: ["向量", "向量化", "索引", "embedding", "vector"]),
-            SettingsSearchItem("ai.knowledgeIndex", titleKey: "settings.ai.models.embedding.index.knowledge", tab: .aiIndexContext, target: "ai.knowledgeIndex",
+            SettingsSearchItem("ai.knowledgeIndex", titleKey: "settings.searchIndex.knowledge.title", tab: .aiIndexContext, target: "ai.knowledgeIndex",
                                keywords: ["知识库索引", "重建", "knowledge", "rag", "index"]),
             SettingsSearchItem("ai.repoContext", titleKey: "ai.context.settings.title", tab: .localTools, target: "ai.repoContext",
                                keywords: ["代码上下文", "仓库上下文", "context", "token"]),
@@ -1574,145 +1574,13 @@ private struct FlowLayout: Layout {
     }
 }
 
-// MARK: - 诊断 Tab（2026-06-20）
-
-/// 调试日志导出面板。
-///
-/// 这里不是“日志清理”功能：系统 OSLog 仍由 Console.app 管理。本 Tab 只负责把 Starcat
-/// 自己记录的关键诊断事件打包，便于用户遇到外部服务不可用、AI provider 异常或本地
-/// 数据问题时，把最小必要证据交给 dong4j 排查。
-private struct DiagnosticsSettingsTab: View {
-
-    @Environment(AppSettings.self) private var settings
-
-    @State private var isExporting = false
-    @State private var lastExportMessage: String?
-    @State private var exportError: String?
-
-    var body: some View {
-        Form {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .center, spacing: 12) {
-                        // 导出入口需要和说明文字保持同一行；窗口较窄时优先截断说明，
-                        // 避免按钮被 Form 布局挤到第二行。
-                        Text("settings.diagnostics.export.description")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        Spacer()
-
-                        Button {
-                            Task { await exportDiagnostics() }
-                        } label: {
-                            Label("diagnostics.export.button", systemImage: "square.and.arrow.up")
-                                .lineLimit(1)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.regular)
-                        .disabled(isExporting)
-                        .fixedSize(horizontal: true, vertical: false)
-                    }
-
-                    if isExporting {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("settings.diagnostics.export.running")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else if let lastExportMessage {
-                        Text(verbatim: lastExportMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .truncationMode(.middle)
-                    }
-                }
-            } header: {
-                SettingsSectionHeader(
-                    "settings.diagnostics.export.section",
-                    systemImage: "square.and.arrow.up"
-                )
-            }
-
-            // 这段说明约束的是导出产物本身，紧跟导出入口比放在全局隐私页更容易理解。
-            Section {
-                Text("settings.diagnostics.privacy.description")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } header: {
-                SettingsSectionHeader(
-                    "settings.diagnostics.bundleContents.section",
-                    systemImage: "doc.text.magnifyingglass"
-                )
-            }
-
-        }
-        .formStyle(.grouped)
-        .alert(
-            "diagnostics.export.failed.title",
-            isPresented: Binding(
-                get: { exportError != nil },
-                set: { if !$0 { exportError = nil } }
-            )
-        ) {
-            Button("general.ok") { exportError = nil }
-        } message: {
-            Text(exportError ?? "")
-        }
-    }
-
-    @MainActor
-    private func exportDiagnostics() async {
-        isExporting = true
-        defer { isExporting = false }
-
-        switch await DiagnosticBundleExporter.exportFromPanel(settings: settings) {
-        case .exported(_):
-            // 导出器成功后已经标记诊断问题为已处理；这里用固定反馈同步告知状态已重置。
-            lastExportMessage = String.l10n("settings.diagnostics.export.successMessage")
-        case .cancelled:
-            break
-        case .failed(let message):
-            exportError = message
-        }
-    }
-}
-
-// MARK: - 存储 Tab（HOM-68 v3 / 2026-06-15 大重构）
+// MARK: - 数据与存储
 //
-// 重构背景（dong4j 2026-06-15 拍板）：
-//   原设计把"缓存用量"（只读统计）和"清理操作"（按钮列表）做成两个独立 Section，
-//   导致用户必须在两个分组之间来回比对：先看用量决定要不要清，再去下一个分组找对应的按钮。
-//   同时 AI 代码上下文产物管理整段又在 storage Tab 占了一大块（输出目录 + 项目列表），
-//   而 CodeFlow 的同类面板放在 集成 Tab，两边职责不一致。
-//
-// 重构后职责划分：
-//   - 存储 Tab → 缓存用量：**全局汇总 + 总闸**。每行 = 一类缓存，行内显示用量数字 +
-//     "清理"按钮；底部一个"清除全部缓存" destructive 总按钮。覆盖 7 类：
-//     README / 图片 / ZIP / 翻译 / AnySearch / AI 代码上下文 / CodeFlow。
-//   - AI 设置 → AI 代码上下文(实验)：**这一类的精细化操作**（输出目录、单项目删除、
-//     在 Finder 显示）。"一键清除"按钮搬到存储 Tab，本地不再保留。
-//   - 集成 → CodeFlow：同上，"一键清除"按钮也搬到存储 Tab。
-//
-// 关键设计约束：
-//   1. 行内"清理"按钮统一走 confirmationDialog（PendingAction enum 驱动），
-//      所有类目共享一套确认/失败处理代码，避免每类一套独立 alert 像旧实现那样。
-//   2. 翻译 / AnySearch 原本各自走独立 alert，本次合并到 PendingAction.translation /
-//      .anySearch——视觉一致 + 代码量减半。
-//   3. 日志行删除（dong4j q3 拍板）：既然系统 Console.app 管理、用户无法操作，
-//      就别放在"缓存用量"里假装可清理，反而误导。
-//   4. ZIP 行保留 Finder 显示按钮（dong4j q2）：放在"清理"按钮左边。
-//   5. AI 上下文 / CodeFlow 行用量基于各自单例 @Observable 的 `projects.count` /
-//      `totalBytes`，不再走 CacheStatistics——CacheCleaner 不感知这两类（它们各自
-//      的 storage 单例管理生命周期，CacheCleaner 不应越权依赖单例）。
+// 页面按存储概览、缓存与生成物、草稿与会话历史、后台维护、维护与重置组织。
+// 四类用量统计沿用原组件与汇总口径；15 类明细只重新分组，不改变清理和 Finder 路由。
+// 草稿与会话历史有独立分组，但“删除全部缓存”继续使用原来的执行范围，并如实说明影响。
 
-/// 缓存统计与清理面板。
+/// 缓存统计、分类清理与后台维护；视图不直接拼接路径或改变数据生命周期。
 private struct StorageSettingsTab: View {
 
     @Environment(AppSettings.self) private var settings
@@ -1735,6 +1603,11 @@ private struct StorageSettingsTab: View {
     @State private var isTriggeringReadmePrefetch = false
     @State private var ragIndexBytes: Int64 = 0
     @State private var ragConversationStats: RAGConversationStatistics = .empty
+    @State private var isRefreshingStorageStatistics = false
+    @State private var isContentCacheExpanded = false
+    @State private var isGeneratedExpanded = false
+    @State private var isIndexExpanded = false
+    @State private var isHistoryExpanded = false
 
     /// AI 代码上下文产物（精细化面板已搬到 AISettingsView，本 Tab 仅消费汇总数字
     /// + "清除全部"入口）。`@Observable` 单例直接订阅，外部 storage 写入立即反映。
@@ -1868,7 +1741,7 @@ private struct StorageSettingsTab: View {
     /// 未登录时禁止 Storage 页里的实际操作控件，但不能禁用 Form 根视图。
     /// SwiftUI 会把 `.disabled` 环境传给滚动容器；若挂在 Form 上，未登录提示页也会无法滚动。
     private var shouldDisableStorageActions: Bool {
-        isResettingAllData || !isLoggedIn
+        isResettingAllData || !isLoggedIn || chatHistoryStore.isMigrating
     }
 
     private var shouldDisableReadmePrefetchRunNow: Bool {
@@ -1884,6 +1757,13 @@ private struct StorageSettingsTab: View {
         let cleaner = CacheCleaner(readmeRepository: readmeRepository)
         @Bindable var settings = settings
         return Form {
+            SettingsPageIntroduction(
+                title: "settings.navigation.item.dataStorage",
+                systemImage: BusinessIcon.Symbol.storage.rawValue,
+                description: "settings.storage.layout.introduction.description",
+                context: "settings.storage.layout.introduction.context"
+            )
+
             if !isLoggedIn {
                 Section {
                     Text("settings.storage.loginRequired")
@@ -1892,9 +1772,220 @@ private struct StorageSettingsTab: View {
                 }
             }
 
+            // 总览独立常驻，保留四类占比、颜色及原有汇总口径，折叠明细不会隐藏统计。
             Section {
-                Toggle("settings.storage.readmePrefetch.enabled", isOn: $settings.readmePrefetchEnabled)
-                    .disabled(shouldDisableStorageActions)
+                StorageCacheUsageOverviewCard(snapshot: cacheUsageOverviewSnapshot)
+                HStack(spacing: 8) {
+                    Text("settings.storage.refinement.overviewNote")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if isRefreshingStorageStatistics {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button {
+                        Task { await reloadStorageStatistics(using: cleaner) }
+                    } label: {
+                        Label("settings.storage.layout.refresh", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(shouldDisableStorageActions || isWorking || isRefreshingStorageStatistics)
+                }
+            }
+
+            Section {
+                storageDisclosure(
+                    "settings.storage.layout.content.title",
+                    summary: "settings.storage.layout.content.summary",
+                    isExpanded: $isContentCacheExpanded
+                ) {
+                    usageRow(
+                        titleKey: "settings.storage.readme",
+                        usageText: readmeUsageText,
+                        isEmpty: stats.readmeCount == 0,
+                        action: .readme,
+                        helpKey: "settings.storage.refinement.readme",
+                        revealItem: .readmeDatabase
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.image",
+                        usageText: Int64(stats.imageDiskBytes).formattedByteSize,
+                        isEmpty: stats.imageDiskBytes == 0,
+                        action: .image,
+                        helpKey: "settings.storage.refinement.image",
+                        revealItem: .imageCache
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.archive",
+                        usageText: archiveUsageText,
+                        isEmpty: stats.archiveCount == 0,
+                        action: .archive,
+                        helpKey: "settings.storage.refinement.archive",
+                        revealItem: .archives
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.translation",
+                        usageText: translationUsageText,
+                        isEmpty: translationCache.itemCount == 0,
+                        action: .translation,
+                        helpKey: "settings.storage.refinement.translation",
+                        revealItem: .translation
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.anySearch",
+                        usageText: externalSearchUsageText,
+                        isEmpty: externalSearchCache.itemCount == 0,
+                        action: .anySearch,
+                        helpKey: "settings.storage.refinement.anySearch",
+                        revealItem: .externalSearch
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.wiki",
+                        usageText: wikiUsageText,
+                        isEmpty: wikiCache.itemCount == 0,
+                        action: .wiki,
+                        helpKey: "settings.storage.refinement.wiki",
+                        revealItem: .wiki
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.issueTimeline",
+                        usageText: issueTimelineUsageText,
+                        isEmpty: issueTimelineCache.itemCount == 0,
+                        action: .issueTimeline,
+                        helpKey: "settings.storage.refinement.issueTimeline",
+                        revealItem: .issueTimeline
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.recommendation",
+                        usageText: recommendationUsageText,
+                        isEmpty: recommendationCache.itemCount == 0,
+                        action: .recommendation,
+                        helpKey: "settings.storage.refinement.recommendation",
+                        revealItem: .recommendation
+                    )
+                }
+                storageDisclosure(
+                    "settings.storage.layout.generated.title",
+                    summary: "settings.storage.layout.generated.summary",
+                    isExpanded: $isGeneratedExpanded
+                ) {
+                    usageRow(
+                        titleKey: "settings.storage.aiContext",
+                        usageText: aiContextUsageText,
+                        isEmpty: aiContextStorage.projectCount == 0,
+                        action: .aiContext,
+                        helpKey: "settings.storage.refinement.aiContext",
+                        revealItem: .aiContext
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.codeFlow",
+                        usageText: codeFlowUsageText,
+                        isEmpty: codeFlowStorage.projectCount == 0,
+                        action: .codeFlow,
+                        helpKey: "settings.storage.refinement.codeFlow",
+                        revealItem: .codeFlow
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.codebaseMemory",
+                        usageText: codebaseMemoryUsageText,
+                        isEmpty: codebaseMemoryStorage.projectCount == 0,
+                        action: .codebaseMemory,
+                        helpKey: "settings.storage.refinement.codebaseMemory",
+                        revealItem: .codebaseMemory
+                    )
+                }
+                storageDisclosure(
+                    "settings.storage.layout.index.title",
+                    summary: "settings.storage.layout.index.summary",
+                    isExpanded: $isIndexExpanded
+                ) {
+                    usageRow(
+                        titleKey: "settings.storage.ragIndex",
+                        usageText: ragIndexBytes.formattedByteSize,
+                        isEmpty: ragIndexBytes == 0,
+                        action: .ragIndex,
+                        helpKey: "settings.storage.refinement.ragIndex",
+                        revealItem: .ragDatabase
+                    )
+                    Divider()
+                    HStack {
+                        Spacer(minLength: 8)
+                        Button("settings.storage.layout.openIndex") {
+                            NotificationCenter.default.post(name: .starcatJumpToSettingsTab, object: "ai.knowledgeIndex")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                    }
+                }
+            } header: {
+                SettingsSectionHeader("settings.storage.layout.caches.title", systemImage: "archivebox")
+            }
+
+            Section {
+                storageDisclosure(
+                    "settings.storage.layout.history.title",
+                    summary: "settings.storage.layout.history.summary",
+                    isExpanded: $isHistoryExpanded
+                ) {
+                    usageRow(
+                        titleKey: "settings.storage.issueCommentDraft",
+                        usageText: issueCommentDraftUsageText,
+                        isEmpty: issueCommentDraftCache.itemCount == 0,
+                        action: .issueCommentDraft,
+                        helpKey: "settings.storage.refinement.issueCommentDraft",
+                        revealItem: .issueCommentDraft
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.chatHistory",
+                        usageText: chatHistoryUsageText,
+                        isEmpty: chatHistoryStore.sessionCount == 0,
+                        action: .chatHistory,
+                        helpKey: "settings.storage.refinement.chatHistory",
+                        revealItem: .repoAIChatHistory
+                    )
+                    Divider()
+                    usageRow(
+                        titleKey: "settings.storage.ragHistory",
+                        usageText: ragHistoryUsageText,
+                        isEmpty: ragConversationStats.conversationCount == 0,
+                        action: .ragHistory,
+                        helpKey: "settings.storage.refinement.ragHistory",
+                        revealItem: .ragDatabase
+                    )
+                }
+            } header: {
+                SettingsSectionHeader("settings.storage.layout.histories.title", systemImage: "bubble.left.and.bubble.right")
+            }
+
+            Section {
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.storage.refinement.prefetchTitle")
+                        Text("settings.storage.refinement.prefetchNote")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityHidden(true)
+                    Toggle("settings.storage.refinement.prefetchTitle", isOn: $settings.readmePrefetchEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .accessibilityHint(Text("settings.storage.refinement.prefetchNote"))
+                }
+                .disabled(shouldDisableStorageActions)
 
                 ReadmePrefetchSettingsStatusView(
                     service: dependencies.readmePrefetchService,
@@ -1902,188 +1993,61 @@ private struct StorageSettingsTab: View {
                     nextRunAt: dependencies.readmePrefetchPoller.nextRunAt
                 ) {
                     Button("settings.storage.readmePrefetch.runNow") {
-                        Task {
-                            await triggerReadmePrefetch(using: cleaner)
-                        }
+                        Task { await triggerReadmePrefetch(using: cleaner) }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
                     .disabled(shouldDisableReadmePrefetchRunNow)
                 }
 
-                Text("settings.storage.readmePrefetch.help")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                SettingsSectionHeader(
-                    "settings.storage.readmePrefetch.section",
-                    systemImage: "doc.text.magnifyingglass"
-                )
-            }
+                UndoStarRetentionSettings(retentionDays: $settings.undoStarRetentionDays)
+                    .disabled(shouldDisableStorageActions)
 
-            Section {
-                Picker("settings.storage.chatHistoryBackend.title", selection: $settings.chatHistoryStorageKind) {
+                // 选择只发起迁移；原偏好必须等校验、切换成功后再持久化。
+                Picker(selection: Binding(
+                    get: { chatHistoryStore.storageKind },
+                    set: { kind in
+                        Task {
+                            do {
+                                try await chatHistoryStore.migrate(to: kind)
+                                settings.chatHistoryStorageKind = chatHistoryStore.storageKind
+                            } catch {
+                                storageActionError = String(format: String.l10n("settings.storage.refinement.migrationFailed"), error.localizedDescription)
+                            }
+                        }
+                    }
+                )) {
                     ForEach(ChatHistoryStorageKind.allCases) { kind in
-                        Text(LocalizedStringKey(kind.displayNameKey))
-                            .tag(kind)
+                        Text(LocalizedStringKey(kind.displayNameKey)).tag(kind)
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("settings.storage.chatHistoryBackend.section")
+                        Text("settings.storage.refinement.backendNote")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .pickerStyle(.menu)
-                .disabled(shouldDisableStorageActions)
+                .disabled(shouldDisableStorageActions || isWorking)
 
-                Text("settings.storage.chatHistoryBackend.help")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if settings.chatHistoryStorageKind != chatHistoryStore.storageKind {
-                    Text("settings.storage.chatHistoryBackend.restartRequired")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if chatHistoryStore.isMigrating {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("settings.storage.refinement.migrating")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } header: {
-                SettingsSectionHeader(
-                    "settings.storage.chatHistoryBackend.section",
-                    systemImage: "bubble.left.and.bubble.right"
-                )
-            }
-
-            Section {
-                StorageCacheUsageOverviewCard(snapshot: cacheUsageOverviewSnapshot)
-
-                usageRow(
-                    titleKey: "settings.storage.readme",
-                    usageText: readmeUsageText,
-                    isEmpty: stats.readmeCount == 0,
-                    action: .readme,
-                    revealItem: .readmeDatabase
-                )
-                usageRow(
-                    titleKey: "settings.storage.image",
-                    usageText: Int64(stats.imageDiskBytes).formattedByteSize,
-                    isEmpty: stats.imageDiskBytes == 0,
-                    action: .image,
-                    revealItem: .imageCache
-                )
-                usageRow(
-                    titleKey: "settings.storage.archive",
-                    usageText: archiveUsageText,
-                    isEmpty: stats.archiveCount == 0,
-                    action: .archive,
-                    revealItem: .archives
-                )
-                usageRow(
-                    titleKey: "settings.storage.translation",
-                    usageText: translationUsageText,
-                    isEmpty: translationCache.itemCount == 0,
-                    action: .translation,
-                    helpKey: "settings.storage.translation.help",
-                    revealItem: .translation
-                )
-                usageRow(
-                    titleKey: "settings.storage.anySearch",
-                    usageText: externalSearchUsageText,
-                    isEmpty: externalSearchCache.itemCount == 0,
-                    action: .anySearch,
-                    helpKey: "settings.storage.anySearch.help",
-                    revealItem: .externalSearch
-                )
-                usageRow(
-                    titleKey: "settings.storage.wiki",
-                    usageText: wikiUsageText,
-                    isEmpty: wikiCache.itemCount == 0,
-                    action: .wiki,
-                    helpKey: "settings.storage.wiki.help",
-                    revealItem: .wiki
-                )
-                usageRow(
-                    titleKey: "settings.storage.issueTimeline",
-                    usageText: issueTimelineUsageText,
-                    isEmpty: issueTimelineCache.itemCount == 0,
-                    action: .issueTimeline,
-                    helpKey: "settings.storage.issueTimeline.help",
-                    revealItem: .issueTimeline
-                )
-                usageRow(
-                    titleKey: "settings.storage.issueCommentDraft",
-                    usageText: issueCommentDraftUsageText,
-                    isEmpty: issueCommentDraftCache.itemCount == 0,
-                    action: .issueCommentDraft,
-                    helpKey: "settings.storage.issueCommentDraft.help",
-                    revealItem: .issueCommentDraft
-                )
-                usageRow(
-                    titleKey: "settings.storage.recommendation",
-                    usageText: recommendationUsageText,
-                    isEmpty: recommendationCache.itemCount == 0,
-                    action: .recommendation,
-                    helpKey: "settings.storage.recommendation.help",
-                    revealItem: .recommendation
-                )
-                usageRow(
-                    titleKey: "settings.storage.chatHistory",
-                    usageText: chatHistoryUsageText,
-                    isEmpty: chatHistoryStore.sessionCount == 0,
-                    action: .chatHistory,
-                    helpKey: "settings.storage.chatHistory.help",
-                    revealItem: .repoAIChatHistory
-                )
-                usageRow(
-                    titleKey: "settings.storage.ragIndex",
-                    usageText: ragIndexBytes.formattedByteSize,
-                    isEmpty: ragIndexBytes == 0,
-                    action: .ragIndex,
-                    helpKey: "settings.storage.ragIndex.help",
-                    revealItem: .ragDatabase
-                )
-                usageRow(
-                    titleKey: "settings.storage.ragHistory",
-                    usageText: ragHistoryUsageText,
-                    isEmpty: ragConversationStats.conversationCount == 0,
-                    action: .ragHistory,
-                    helpKey: "settings.storage.ragHistory.help",
-                    revealItem: .ragDatabase
-                )
-                usageRow(
-                    titleKey: "settings.storage.aiContext",
-                    usageText: aiContextUsageText,
-                    isEmpty: aiContextStorage.projectCount == 0,
-                    action: .aiContext,
-                    revealItem: .aiContext
-                )
-                usageRow(
-                    titleKey: "settings.storage.codeFlow",
-                    usageText: codeFlowUsageText,
-                    isEmpty: codeFlowStorage.projectCount == 0,
-                    action: .codeFlow,
-                    revealItem: .codeFlow
-                )
-                usageRow(
-                    titleKey: "settings.storage.codebaseMemory",
-                    usageText: codebaseMemoryUsageText,
-                    isEmpty: codebaseMemoryStorage.projectCount == 0,
-                    action: .codebaseMemory,
-                    revealItem: .codebaseMemory
-                )
-            } header: {
-                SettingsSectionHeader(
-                    "settings.storage.cacheUsage",
-                    systemImage: "internaldrive"
-                )
-            }
-
-            // Undo Star 历史保留设置（2026-07-05）
-            Section {
-                UndoStarRetentionSlider(retentionDays: $settings.undoStarRetentionDays)
-            } header: {
-                SettingsSectionHeader(
-                    "activity.category.undoStar",
-                    systemImage: "arrow.uturn.backward.circle"
-                )
+                SettingsSectionHeader("settings.storage.layout.background.title", systemImage: "clock")
             }
 
             Section {
                 dangerActionBlock(
-                    descriptionKey: "settings.storage.clearAll.description",
+                    titleKey: "settings.storage.clearAll",
+                    descriptionKey: "settings.storage.layout.clearAll.help",
                     buttonTint: Color(nsColor: .systemYellow),
                     buttonForeground: .black,
                     isDisabled: shouldDisableStorageActions || isWorking || isAllCachesEmpty
@@ -2091,25 +2055,26 @@ private struct StorageSettingsTab: View {
                     Button {
                         isShowingClearAllCachesSheet = true
                     } label: {
-                        Label("settings.storage.clearAll", systemImage: "exclamationmark.triangle.fill")
+                        Label("settings.storage.layout.action.clear", systemImage: "exclamationmark.triangle.fill")
                     }
                 }
 
                 dangerActionBlock(
+                    titleKey: "settings.storage.resetAll",
                     descriptionKey: "settings.storage.resetAll.description",
                     buttonTint: .red,
                     buttonForeground: .white,
-                    isDisabled: isWorking || isResettingAllData || currentResetTarget == nil
+                    isDisabled: isWorking || isResettingAllData || currentResetTarget == nil || chatHistoryStore.isMigrating
                 ) {
                     Button(role: .destructive) {
                         resetTarget = currentResetTarget
                     } label: {
-                        Label("settings.storage.resetAll", systemImage: "trash")
+                        Label("settings.storage.layout.action.reset", systemImage: "trash")
                     }
                 }
             } header: {
                 SettingsSectionHeader(
-                    "settings.storage.dangerZone",
+                    "settings.storage.layout.maintenanceActions.title",
                     systemImage: "exclamationmark.triangle.fill"
                 )
             }
@@ -2129,6 +2094,9 @@ private struct StorageSettingsTab: View {
             guard isLoggedIn else {
                 stats = .empty
                 return
+            }
+            if !chatHistoryStore.isMigrating {
+                settings.chatHistoryStorageKind = chatHistoryStore.storageKind
             }
             await refreshCacheStatistics(using: cleaner)
         }
@@ -2221,28 +2189,53 @@ private struct StorageSettingsTab: View {
 
     // MARK: - 行视图 helpers
 
+    /// 各类明细共用整行折叠入口；展开内容用显式分割线维持原生表单的行边界。
+    private func storageDisclosure<Content: View>(
+        _ title: LocalizedStringKey,
+        summary: LocalizedStringKey,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        DisclosureGroup(isExpanded: isExpanded, content: content) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(.primary)
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .disclosureGroupStyle(SettingsDisclosureGroupStyle(accessibilityLabel: Text(title)))
+    }
+
     /// 危险区操作块：说明在左，按钮右对齐。黄色缓存删除与红色本地数据重置共用布局，
     /// 避免两个高风险入口在同一分组里产生不同的视觉节奏。
     private func dangerActionBlock<Action: View>(
+        titleKey: LocalizedStringKey,
         descriptionKey: LocalizedStringKey,
         buttonTint: Color,
         buttonForeground: Color,
         isDisabled: Bool,
         @ViewBuilder action: () -> Action
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(descriptionKey)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                action()
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .tint(buttonTint)
-                    .foregroundStyle(buttonForeground)
-                    .disabled(isDisabled)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(titleKey)
+                    .foregroundStyle(.primary)
+                Text(descriptionKey)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer(minLength: 8)
+            action()
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .tint(buttonTint)
+                .foregroundStyle(buttonForeground)
+                .fixedSize()
+                .disabled(isDisabled)
         }
     }
 
@@ -2257,7 +2250,17 @@ private struct StorageSettingsTab: View {
         helpKey: LocalizedStringKey? = nil,
         revealItem: CacheDirectoryLocator.Item? = nil
     ) -> some View {
-        let row = LabeledContent {
+        let row = HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(titleKey)
+                if let helpKey {
+                    Text(helpKey)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
             HStack(spacing: 8) {
                 Text(usageText)
                     .foregroundStyle(.secondary)
@@ -2272,8 +2275,7 @@ private struct StorageSettingsTab: View {
                 .controlSize(.regular)
                 .disabled(shouldDisableStorageActions || isWorking || isEmpty)
             }
-        } label: {
-            Text(titleKey)
+            .fixedSize()
         }
 
         return Group {
@@ -2490,6 +2492,26 @@ private struct StorageSettingsTab: View {
     /// 打开时读一次，否则用户会看到“预拉进行中但用量不变”的割裂状态。
     private func refreshCacheStatistics(using cleaner: CacheCleaner) async {
         stats = await cleaner.loadStatistics()
+    }
+
+    /// 手动重新统计只重读现有缓存和生成物，不触发下载、索引构建或任何清理动作。
+    @MainActor
+    private func reloadStorageStatistics(using cleaner: CacheCleaner) async {
+        guard !shouldDisableStorageActions, !isWorking, !isRefreshingStorageStatistics else { return }
+        isRefreshingStorageStatistics = true
+        defer { isRefreshingStorageStatistics = false }
+        aiContextStorage.reload()
+        codeFlowStorage.reload()
+        codebaseMemoryStorage.reload()
+        translationCache.reload()
+        externalSearchCache.reload()
+        wikiCache.reload()
+        issueTimelineCache.reload()
+        issueCommentDraftCache.reload()
+        chatHistoryStore.reload()
+        await recommendationCache.reload()
+        await refreshCacheStatistics(using: cleaner)
+        await refreshRAGStorageStatistics()
     }
 
     /// README 预拉每个 repo 完成都会推进进度；这里做轻量 debounce，避免设置页为每个
@@ -2850,7 +2872,7 @@ private struct StorageClearAllCachesSheet: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.primary)
 
-                Text("settings.storage.clearAll.sheet.subtitle")
+                Text("settings.storage.layout.clearAll.subtitle")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2878,7 +2900,7 @@ private struct StorageClearAllCachesSheet: View {
                 }
             }
 
-            Text("settings.storage.clearAll.sheet.note")
+            Text("settings.storage.layout.clearAll.note")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2916,11 +2938,12 @@ private struct StorageClearAllCachesSheet: View {
 
     private var clearAllCacheScopeItems: [String] {
         [
-            "settings.storage.clearAll.scope.readme",
-            "settings.storage.clearAll.scope.media",
-            "settings.storage.clearAll.scope.searchWiki",
-            "settings.storage.clearAll.scope.generated",
-            "settings.storage.clearAll.scope.localDataSafe"
+            "settings.storage.layout.clearAll.content",
+            "settings.storage.layout.clearAll.discovery",
+            "settings.storage.layout.clearAll.generated",
+            "settings.storage.layout.clearAll.index",
+            "settings.storage.layout.clearAll.histories",
+            "settings.storage.layout.clearAll.preserved"
         ]
     }
 }

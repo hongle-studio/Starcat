@@ -24,10 +24,7 @@ struct IntegrationSettingsTab: View {
 
     let page: IntegrationSettingsPage
 
-    @Environment(AppSettings.self) private var settings
     @Environment(\.starcatInterfaceScale) private var interfaceScale
-    /// Foundation date formatter 默认跟系统 locale；必须注入 App 语言，否则英文 UI 下仍可能显示「2026年7月10日」。
-    @Environment(\.locale) private var locale
     /// CodeFlow 生成物不进数据库，设置页直接观察文件系统扫描结果。
     @State private var storage = CodeFlowStorage.shared
     @State private var codebaseMemoryStorage = CodebaseMemoryStorage.shared
@@ -67,14 +64,16 @@ struct IntegrationSettingsTab: View {
                     SettingsPageIntroduction(
                         title: "settings.navigation.item.codeAndLocalTools",
                         systemImage: BusinessIcon.Symbol.codeContext.rawValue,
-                        description: "settings.integration.tools.introduction.description",
-                        context: "settings.integration.tools.introduction.context"
+                        description: "settings.integration.tools.configuration.description",
+                        context: "settings.integration.tools.configuration.context"
                     )
                 }
 
                 if page == .localTools {
-                    RepoContextSettingsSection()
+                    // 沿用原跳转身份，其他工具的 ZIP「调整」入口仍定位到共享限制。
+                    RepositorySourceDownloadSettingsSection()
                         .id(Self.repoContextAnchor)
+                    RepoContextSettingsSection()
                 }
 
                 if page == .localTools,
@@ -99,143 +98,17 @@ struct IntegrationSettingsTab: View {
                 }
 
                 if page == .localTools {
-                    Section {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("settings.integration.codeFlow.outputDir.subtitle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                RepositoryArchiveLimitNotice(
-                    maximumArchiveMB: settings.aiRepoContextMaximumArchiveMB
-                )
-
-                HStack(spacing: 8) {
-                    Text(storage.outputDirectoryDisplayPath)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .layoutPriority(-1)
-                    Spacer()
-                    Button("settings.integration.codeFlow.outputDir.choose") { chooseOutputDirectory() }
+                    codeFlowSection
+                    codebaseMemorySection
+                        .id(Self.codebaseMemoryAnchor)
+                    HStack {
+                        Spacer()
+                        Button("settings.integration.tools.openStorage") {
+                            AppDelegate.openSettingsWindow(target: "storage")
+                        }
                         .buttonStyle(.bordered)
                         .controlSize(.regular)
-                        .fixedSize()
-                    RevealInFinderIconButton(help: Text("settings.integration.codeFlow.outputDir.revealHelp")) {
-                        revealOutputDirectory()
                     }
-                    .fixedSize()
-                    ResetIconButton(help: Text("settings.integration.codeFlow.outputDir.resetHelp")) {
-                        resetOutputDirectory()
-                    }
-                    .disabled(!storage.hasCustomOutputDirectory)
-                    .fixedSize()
-                }
-
-                HStack(spacing: 18) {
-                    stat(titleKey: "settings.integration.codeFlow.stat.projects", value: "\(storage.projectCount)")
-                    stat(titleKey: "settings.integration.codeFlow.stat.usage", value: ByteCountFormatter.string(fromByteCount: storage.totalBytes, countStyle: .file))
-                    stat(
-                        titleKey: "settings.integration.codeFlow.stat.totalGenerated",
-                        value: String(format: String.l10n("settings.integration.codeFlow.stat.totalGeneratedFormat"), storage.totalGenerationCount)
-                    )
-                    if let date = storage.latestGeneratedAt {
-                        stat(
-                            titleKey: "settings.integration.codeFlow.stat.lastGenerated",
-                            value: date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale))
-                        )
-                    }
-                    Spacer()
-                }
-
-                if let message = storage.lastErrorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                } else if storage.projectCount == 0 {
-                    Text("settings.integration.codeFlow.empty")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                    } header: {
-                        SettingsSectionHeader(
-                            verbatim: "CodeFlow",
-                            systemImage: "point.3.connected.trianglepath.dotted"
-                        )
-                    }
-                    Section {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("settings.integration.codebaseMemory.subtitle")
-                        .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
-                CodebaseMemoryExecutableSettingsView()
-
-                RepositoryArchiveLimitNotice(
-                    maximumArchiveMB: settings.aiRepoContextMaximumArchiveMB
-                )
-
-                HStack(spacing: 8) {
-                    Text(codebaseMemoryStorage.outputDirectoryDisplayPath)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .layoutPriority(-1)
-                    Spacer()
-                    Button("settings.integration.codeFlow.outputDir.choose") { chooseCodebaseMemoryOutputDirectory() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.regular)
-                        .fixedSize()
-                    RevealInFinderIconButton(help: Text("settings.integration.codeFlow.outputDir.revealHelp")) {
-                        revealCodebaseMemoryOutputDirectory()
-                    }
-                    .fixedSize()
-                    ResetIconButton(help: Text("settings.integration.codeFlow.outputDir.resetHelp")) {
-                        resetCodebaseMemoryOutputDirectory()
-                    }
-                    .disabled(!codebaseMemoryStorage.hasCustomOutputDirectory)
-                    .fixedSize()
-                }
-
-                HStack(spacing: 18) {
-                    stat(titleKey: "settings.integration.codeFlow.stat.projects", value: "\(codebaseMemoryStorage.projectCount)")
-                    stat(titleKey: "settings.integration.codeFlow.stat.usage", value: ByteCountFormatter.string(fromByteCount: codebaseMemoryStorage.totalBytes, countStyle: .file))
-                    stat(
-                        titleKey: "settings.integration.codeFlow.stat.totalGenerated",
-                        value: String(format: String.l10n("settings.integration.codeFlow.stat.totalGeneratedFormat"), codebaseMemoryStorage.totalGenerationCount)
-                    )
-                    if let date = codebaseMemoryStorage.latestGeneratedAt {
-                        stat(
-                            titleKey: "settings.integration.codeFlow.stat.lastGenerated",
-                            value: date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale))
-                        )
-                    }
-                    Spacer()
-                }
-
-                if codebaseMemoryStorage.needsDirectoryReauthorization {
-                    codebaseMemoryReauthorizationPrompt
-                } else if let message = codebaseMemoryStorage.lastErrorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                } else if codebaseMemoryStorage.projectCount == 0 {
-                    Text("settings.integration.codeFlow.empty")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                    } header: {
-                        SettingsSectionHeader(
-                            verbatim: "CodebaseMemory",
-                            systemImage: "point.3.filled.connected.trianglepath.dotted"
-                        )
-                    }
-                    .id(Self.codebaseMemoryAnchor)
                 }
             }
             .formStyle(.grouped)
@@ -304,6 +177,68 @@ struct IntegrationSettingsTab: View {
         .sheet(item: $browserSetupGuide) { browser in
             BrowserExtensionSetupGuide(browser: browser)
                 .appLocaleEnvironment()
+        }
+    }
+
+    /// 三个工具共享相同的路径和单行统计布局，实际存储与操作继续各自独立。
+    private var codeFlowSection: some View {
+        Section {
+            LocalToolOutputDirectoryRow(
+                path: storage.outputDirectoryDisplayPath,
+                hasCustomDirectory: storage.hasCustomOutputDirectory,
+                onChoose: chooseOutputDirectory,
+                onReveal: revealOutputDirectory,
+                onReset: resetOutputDirectory
+            )
+            LocalToolStorageSummary(
+                projectCount: storage.projectCount,
+                totalBytes: storage.totalBytes,
+                generationCount: storage.totalGenerationCount,
+                latestGeneratedAt: storage.latestGeneratedAt
+            )
+            if let message = storage.lastErrorMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else if storage.projectCount == 0 {
+                Text("settings.integration.codeFlow.empty")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            SettingsSectionHeader(verbatim: "CodeFlow", systemImage: "point.3.connected.trianglepath.dotted")
+        }
+    }
+
+    private var codebaseMemorySection: some View {
+        Section {
+            CodebaseMemoryExecutableSettingsView()
+            LocalToolOutputDirectoryRow(
+                path: codebaseMemoryStorage.outputDirectoryDisplayPath,
+                hasCustomDirectory: codebaseMemoryStorage.hasCustomOutputDirectory,
+                onChoose: chooseCodebaseMemoryOutputDirectory,
+                onReveal: revealCodebaseMemoryOutputDirectory,
+                onReset: resetCodebaseMemoryOutputDirectory
+            )
+            LocalToolStorageSummary(
+                projectCount: codebaseMemoryStorage.projectCount,
+                totalBytes: codebaseMemoryStorage.totalBytes,
+                generationCount: codebaseMemoryStorage.totalGenerationCount,
+                latestGeneratedAt: codebaseMemoryStorage.latestGeneratedAt
+            )
+            if codebaseMemoryStorage.needsDirectoryReauthorization {
+                codebaseMemoryReauthorizationPrompt
+            } else if let message = codebaseMemoryStorage.lastErrorMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else if codebaseMemoryStorage.projectCount == 0 {
+                Text("settings.integration.codeFlow.empty")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            SettingsSectionHeader(verbatim: "CodebaseMemory", systemImage: "point.3.filled.connected.trianglepath.dotted")
         }
     }
 
@@ -627,13 +562,13 @@ struct IntegrationSettingsTab: View {
     private var codebaseMemoryReauthorizationPrompt: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label {
-                Text(verbatim: "需要重新授权 CodebaseMemory 保存目录")
+                Text("settings.integration.tools.directory.reauthorizeTitle")
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
             }
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.red)
-            Text(verbatim: "当前目录授权已失效或无法访问。重新选择同一个目录即可恢复写入权限，已有索引数据不会被清除。")
+            Text("settings.integration.tools.directory.reauthorizeHelp")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -641,18 +576,11 @@ struct IntegrationSettingsTab: View {
                 Button {
                     chooseCodebaseMemoryOutputDirectory()
                 } label: {
-                    Text(verbatim: "重新授权目录")
+                    Text("settings.integration.tools.directory.reauthorizeAction")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
             }
-        }
-    }
-
-    private func stat(titleKey: LocalizedStringKey, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(titleKey).font(.caption2).foregroundStyle(.secondary)
-            Text(value).font(.caption.weight(.medium))
         }
     }
 
