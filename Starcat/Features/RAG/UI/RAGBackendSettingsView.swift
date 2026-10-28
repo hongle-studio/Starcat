@@ -18,11 +18,9 @@ struct RAGBackendSettingsView: View {
     @Environment(AppDependencies.self) private var dependencies
     @State private var isStorageExpanded = false
 
-    @State private var meilisearchAPIKey = ""
-    @State private var qdrantAPIKey = ""
-    @State private var testingBackends: Set<String> = []
-    @State private var meilisearchStatus: RAGBackendTestStatus?
-    @State private var qdrantStatus: RAGBackendTestStatus?
+    @State private var connections = RAGBackendConnectionSettingsModel()
+    @State private var keywordNeedsRebuild = false
+    @State private var vectorNeedsRebuild = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -59,7 +57,11 @@ struct RAGBackendSettingsView: View {
                 storageFields
             }
         }
-        .task { loadBackendKeys() }
+        .task { connections.load(settings: settings) }
+        .onDisappear {
+            connections.keywordTest.invalidate()
+            connections.vectorTest.invalidate()
+        }
     }
 
     private var storageSummary: String {
@@ -69,7 +71,7 @@ struct RAGBackendSettingsView: View {
         return "\(keyword) · \(vector)"
     }
 
-    /// 保留原字段绑定、凭据存储及测试顺序，只改变它们所在的容器。
+    /// 连接字段编辑草稿，后端选择与 SQLite 回退保留原有即时生效行为。
     private var storageFields: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
@@ -96,15 +98,15 @@ struct RAGBackendSettingsView: View {
                 Divider()
                 RAGSettingsConnectionField(
                     titleKey: "settings.services.apiKey",
-                    text: $meilisearchAPIKey,
+                    text: Binding(get: { connections.meilisearchAPIKey }, set: { connections.meilisearchAPIKey = $0 }),
                     isSecure: true
                 )
                 .padding(.vertical, 8)
                 Divider()
                 backendActionRow(
                     id: "meilisearch",
-                    label: "settings.rag.backends.testAndSave",
-                    status: meilisearchStatus
+                    label: "settings.connection.testAndSave",
+                    status: backendStatus(connections.keywordTest, needsRebuild: keywordNeedsRebuild)
                 ) {
                     await testMeilisearch()
                 }
@@ -144,15 +146,15 @@ struct RAGBackendSettingsView: View {
                 Divider()
                 RAGSettingsConnectionField(
                     titleKey: "settings.services.apiKey",
-                    text: $qdrantAPIKey,
+                    text: Binding(get: { connections.qdrantAPIKey }, set: { connections.qdrantAPIKey = $0 }),
                     isSecure: true
                 )
                 .padding(.vertical, 8)
                 Divider()
                 backendActionRow(
                     id: "qdrant",
-                    label: "settings.rag.backends.testAndSave",
-                    status: qdrantStatus
+                    label: "settings.connection.testAndSave",
+                    status: backendStatus(connections.vectorTest, needsRebuild: vectorNeedsRebuild)
                 ) {
                     await testQdrant()
                 }
@@ -164,6 +166,7 @@ struct RAGBackendSettingsView: View {
                 .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .disabled(connections.keywordTest.isSaving || connections.vectorTest.isSaving)
     }
 
     private func backendActionRow(
@@ -172,20 +175,26 @@ struct RAGBackendSettingsView: View {
         status: RAGBackendTestStatus?,
         action: @escaping @MainActor () async -> Void
     ) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            backendStatusLabel(status)
+        let test = id == "meilisearch" ? connections.keywordTest : connections.vectorTest
+        return HStack(alignment: .center, spacing: 8) {
+            if test.isTesting {
+                ProgressView().controlSize(.small)
+                Text("settings.services.summary.checking")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                backendStatusLabel(status)
+            }
             Spacer(minLength: 8)
-            if testingBackends.contains(id) {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Button(label) {
+            Button {
                 Task { await action() }
+            } label: {
+                Text(label)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .controlSize(.regular)
             .fixedSize()
-            .disabled(testingBackends.contains(id))
+            .disabled(test.isTesting)
         }
     }
 
@@ -214,7 +223,8 @@ struct RAGBackendSettingsView: View {
                 var configuration = settings.ragBackendConfiguration
                 configuration.keywordBackend = value
                 settings.ragBackendConfiguration = configuration
-                meilisearchStatus = value == .meilisearch ? .rebuildRequired : nil
+                connections.keywordTest.invalidate()
+                keywordNeedsRebuild = value == .meilisearch
             }
         )
     }
@@ -226,7 +236,8 @@ struct RAGBackendSettingsView: View {
                 var configuration = settings.ragBackendConfiguration
                 configuration.vectorBackend = value
                 settings.ragBackendConfiguration = configuration
-                qdrantStatus = value == .qdrant ? .rebuildRequired : nil
+                connections.vectorTest.invalidate()
+                vectorNeedsRebuild = value == .qdrant
             }
         )
     }
@@ -236,23 +247,23 @@ struct RAGBackendSettingsView: View {
     }
 
     private var meilisearchEndpointBinding: Binding<String> {
-        backendBinding(\.meilisearch.endpoint)
+        Binding(get: { connections.meilisearch.endpoint }, set: { connections.meilisearch.endpoint = $0 })
     }
 
     private var meilisearchIndexBinding: Binding<String> {
-        backendBinding(\.meilisearch.indexName)
+        Binding(get: { connections.meilisearch.indexName }, set: { connections.meilisearch.indexName = $0 })
     }
 
     private var qdrantEndpointBinding: Binding<String> {
-        backendBinding(\.qdrant.endpoint)
+        Binding(get: { connections.qdrant.endpoint }, set: { connections.qdrant.endpoint = $0 })
     }
 
     private var qdrantCollectionBinding: Binding<String> {
-        backendBinding(\.qdrant.collectionName)
+        Binding(get: { connections.qdrant.collectionName }, set: { connections.qdrant.collectionName = $0 })
     }
 
     private var qdrantVectorNameBinding: Binding<String> {
-        backendBinding(\.qdrant.vectorName)
+        Binding(get: { connections.qdrant.vectorName }, set: { connections.qdrant.vectorName = $0 })
     }
 
     private func backendBinding<Value>(
@@ -268,52 +279,27 @@ struct RAGBackendSettingsView: View {
         )
     }
 
-    private func loadBackendKeys() {
-        meilisearchAPIKey = (try? KeychainManager.shared.loadAIKey(
-            forProvider: RAGBackendConfiguration.meilisearchKeychainID
-        )) ?? ""
-        qdrantAPIKey = (try? KeychainManager.shared.loadAIKey(
-            forProvider: RAGBackendConfiguration.qdrantKeychainID
-        )) ?? ""
+    private func backendStatus(_ test: SettingsConnectionTest<Void>, needsRebuild: Bool) -> RAGBackendTestStatus? {
+        if let message = test.errorMessage { return .failure(message) }
+        if test.result != nil { return .success }
+        return needsRebuild ? .rebuildRequired : nil
     }
 
     private func testMeilisearch() async {
-        testingBackends.insert("meilisearch")
-        defer { testingBackends.remove("meilisearch") }
-        do {
-            try KeychainManager.shared.storeAIKey(
-                meilisearchAPIKey,
-                forProvider: RAGBackendConfiguration.meilisearchKeychainID
-            )
-            let provider = MeilisearchRAGProvider(
-                configuration: settings.ragBackendConfiguration.meilisearch,
-                apiKey: meilisearchAPIKey,
+        await connections.testMeilisearch(settings: settings) { configuration, key in
+            try await MeilisearchRAGProvider(
+                configuration: configuration, apiKey: key,
                 repository: dependencies.ragChunkRepository
-            )
-            try await provider.testConnection()
-            meilisearchStatus = .success
-        } catch {
-            meilisearchStatus = .failure(error.localizedDescription)
+            ).testConnection()
         }
     }
 
     private func testQdrant() async {
-        testingBackends.insert("qdrant")
-        defer { testingBackends.remove("qdrant") }
-        do {
-            try KeychainManager.shared.storeAIKey(
-                qdrantAPIKey,
-                forProvider: RAGBackendConfiguration.qdrantKeychainID
-            )
-            let provider = QdrantRAGProvider(
-                configuration: settings.ragBackendConfiguration.qdrant,
-                apiKey: qdrantAPIKey,
+        await connections.testQdrant(settings: settings) { configuration, key in
+            try await QdrantRAGProvider(
+                configuration: configuration, apiKey: key,
                 repository: dependencies.ragChunkRepository
-            )
-            try await provider.testConnection()
-            qdrantStatus = .success
-        } catch {
-            qdrantStatus = .failure(error.localizedDescription)
+            ).testConnection()
         }
     }
 }
