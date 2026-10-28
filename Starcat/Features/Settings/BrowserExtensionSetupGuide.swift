@@ -67,7 +67,7 @@ struct BrowserExtensionSetupGuide: View {
             HStack {
                 Spacer(minLength: 8)
                 Link(destination: browser.repositoryURL) {
-                    Label("settings.integration.browser.install.source", systemImage: "arrow.up.right.square")
+                    Text("settings.integration.browser.install.source")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)

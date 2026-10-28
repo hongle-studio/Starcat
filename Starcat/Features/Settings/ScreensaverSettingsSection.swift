@@ -21,7 +21,7 @@ struct ScreensaverSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // 固定三个图标入口，翻译长度只影响标题区，不再把整个操作组挤到下一行。
+            // 安装与移除用文字说明动作；帮助保留含义明确的行尾图标。
             HStack(spacing: 16) {
                 overview
                 actionButtons
@@ -83,20 +83,15 @@ struct ScreensaverSettingsSection: View {
 
     private var actionButtons: some View {
         HStack(spacing: 8) {
-            SettingsActionIconButton(
-                title: installButtonTitle,
-                systemImage: "square.and.arrow.down",
-                action: performInstallAction
-            )
-            .disabled(isBusy || installer == nil)
+            Button(installButtonTitle, action: performInstallAction)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .disabled(isBusy || installer == nil)
 
-            DestructiveIconButton(
-                help: Text("settings.general.screensaver.remove"),
-                font: SettingsIconMetrics.standardGlyph,
-                frameSize: SettingsIconMetrics.actionFrameSize,
-                action: remove
-            )
-            .disabled(isBusy || installer == nil || !showsRemoveButton)
+            Button("settings.general.screensaver.remove", role: .destructive, action: remove)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .disabled(isBusy || installer == nil || !showsRemoveButton)
 
             SettingsActionIconButton(
                 title: "settings.general.screensaver.guide.title",

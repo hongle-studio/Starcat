@@ -62,7 +62,7 @@ struct DiagnosticsSettingsTab: View {
                     Button {
                         Task { await exportDiagnostics() }
                     } label: {
-                        Label("settings.diagnostics.layout.export.button", systemImage: "square.and.arrow.up")
+                        Text("settings.diagnostics.layout.export.button")
                             .lineLimit(1)
                     }
                     .buttonStyle(.bordered)
@@ -175,7 +175,7 @@ struct DiagnosticsSettingsTab: View {
                 Button {
                     isLogGuidePresented = true
                 } label: {
-                    Label("settings.diagnostics.layout.logs.open", systemImage: "text.book.closed")
+                    Text("settings.diagnostics.layout.logs.open")
                         .lineLimit(1)
                 }
                 .buttonStyle(.bordered)

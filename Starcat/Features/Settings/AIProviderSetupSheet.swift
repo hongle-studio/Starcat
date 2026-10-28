@@ -211,14 +211,13 @@ struct AIProviderSetupSheet: View {
         viewModel.hasExistingAPIKey ? "settings.ai.provider.edit.keepAPIKey" : "API Key"
     }
 
-    /// 示例收为原生图标菜单，为长译文保留空间；取消与提交右对齐且测试时宽度不变。
+    /// 操作使用文字表达含义；进度留在按钮外，提交标题和宽度不随测试状态变化。
     private var footer: some View {
         HStack(spacing: 12) {
             Menu {
                 Button("settings.ai.provider.setup.presets.applyDefaults", action: applyProviderDefaults)
             } label: {
-                Label("settings.ai.provider.setup.presets.title", systemImage: "globe")
-                    .labelStyle(.iconOnly)
+                Text("settings.ai.provider.setup.presets.title")
             }
             .menuStyle(.button)
             .buttonStyle(.bordered)
@@ -228,6 +227,11 @@ struct AIProviderSetupSheet: View {
             .help(Text("settings.ai.provider.setup.presets.help"))
             .disabled(viewModel.isTesting)
 
+            if viewModel.isTesting {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(Text("settings.ai.provider.setup.testing"))
+            }
             Spacer(minLength: 8)
 
             Button("general.cancel", action: close)
@@ -244,28 +248,9 @@ struct AIProviderSetupSheet: View {
                     }
                 }
             } label: {
-                ZStack {
-                    Label(submitKey, systemImage: "network")
-                        .hidden()
-                        .accessibilityHidden(true)
-                    HStack(spacing: 6) {
-                        Color.clear.frame(width: 12, height: 12)
-                        Text("settings.ai.provider.setup.testing")
-                    }
-                    .hidden()
-                    .accessibilityHidden(true)
-
-                    HStack(spacing: 6) {
-                        if viewModel.isTesting {
-                            ProgressView().controlSize(.small)
-                            Text("settings.ai.provider.setup.testing")
-                        } else {
-                            Label(submitKey, systemImage: "network")
-                        }
-                    }
-                }
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                Text(submitKey)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)

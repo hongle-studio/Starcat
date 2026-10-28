@@ -78,7 +78,7 @@ struct UndoStarRetentionSettings: View {
                 Button(role: .destructive) {
                     showDeleteNowConfirm = true
                 } label: {
-                    Label("settings.undoStar.deleteNow", systemImage: "trash")
+                    Text("settings.undoStar.deleteNow")
                 }
                 .disabled(dependencies.undoStarCleanupScheduler.isCleaning)
                 .help("settings.undoStar.deleteNow.help")

@@ -298,7 +298,7 @@ struct AISettingsTab: View {
                             message: String.l10n("settings.ai.locked.paywallMessage")
                         )
                     } label: {
-                        Label("settings.ai.locked.upgrade", systemImage: "crown.fill")
+                        Text("settings.ai.locked.upgrade")
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.regular)
@@ -545,7 +545,7 @@ struct AISettingsTab: View {
     private var modelManagementAdvancedSection: some View {
         Section {
             centeredModelSettingRow {
-                Button("settings.ai.models.management.open", systemImage: "list.bullet.rectangle") {
+                Button("settings.ai.models.management.open") {
                     // 只确定本次管理对象；编辑仍通过原模型绑定即时写回。
                     modelManagementProfile = selectedProfile
                 }
@@ -613,7 +613,7 @@ struct AISettingsTab: View {
             }
 
             centeredModelSettingRow {
-                Button("settings.ai.models.prompt.edit", systemImage: "text.quote") {
+                Button("settings.ai.models.prompt.edit") {
                     promptEditingTask = taskModelTask
                 }
                 .buttonStyle(.bordered)
@@ -730,7 +730,7 @@ struct AISettingsTab: View {
             }
 
             centeredModelSettingRow {
-                Button("settings.ai.models.prompt.edit", systemImage: "text.quote") {
+                Button("settings.ai.models.prompt.edit") {
                     promptEditingTask = .embedding
                 }
                 .buttonStyle(.bordered)
@@ -896,17 +896,12 @@ struct AISettingsTab: View {
                 Group {
                     Divider()
                     VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent("settings.githubListGrouping.threshold.label") {
-                            Text(verbatim: githubListGroupingThresholdPercentString)
-                                .font(.callout.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(.tint)
-                        }
-                        Slider(
+                        SettingsSliderRow(
+                            title: "settings.githubListGrouping.threshold.label",
                             value: githubListGroupingBinding(\.confidenceThreshold),
-                            in: 0.5...1.0,
-                            step: 0.05
+                            range: 0.5...1.0, step: 0.05,
+                            readout: githubListGroupingThresholdPercentString
                         )
-                        .controlSize(.mini)
                         Text(String(
                             format: String.l10n("settings.githubListGrouping.threshold.hintFormat"),
                             githubListGroupingThresholdPercentString
@@ -1311,16 +1306,11 @@ struct AISettingsTab: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("settings.autoTidy.threshold.label")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(verbatim: thresholdPercentString)
-                        .font(.callout.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.tint)
-                }
-                Slider(value: autoTidyBinding(\.confidenceThreshold), in: 0.5...1.0, step: 0.05)
-                    .controlSize(.mini)
+                SettingsSliderRow(
+                    title: "settings.autoTidy.threshold.label",
+                    value: autoTidyBinding(\.confidenceThreshold), range: 0.5...1.0,
+                    step: 0.05, readout: thresholdPercentString
+                )
                 Text(String(format: String.l10n("settings.autoTidy.threshold.hintFormat"), thresholdPercentString))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -1361,7 +1351,7 @@ struct AISettingsTab: View {
             Button {
                 autoTidyScheduler.triggerManually()
             } label: {
-                Label("settings.automation.triggerNow", systemImage: "play.fill")
+                Text("settings.automation.triggerNow")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)

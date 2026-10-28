@@ -282,8 +282,7 @@ struct IntegrationSettingsTab: View {
                 Spacer(minLength: 8)
                 CopyFeedbackButton(
                     providesContent: { localAPIKeyStore.apiKey },
-                    tooltip: "settings.integration.localAPIKey.copy",
-                    style: .bordered
+                    tooltip: "settings.integration.localAPIKey.copy"
                 ) { didCopy in
                     Label(
                         LocalizedStringKey(
@@ -291,7 +290,10 @@ struct IntegrationSettingsTab: View {
                         ),
                         systemImage: didCopy ? "checkmark.circle.fill" : "doc.on.doc"
                     )
-                    .foregroundStyle(didCopy ? Color.green : Color.primary)
+                    .labelStyle(.iconOnly)
+                    .font(SettingsIconMetrics.standardGlyph)
+                    .foregroundStyle(didCopy ? Color.green : Color.secondary)
+                    .frame(width: SettingsIconMetrics.actionFrameSize, height: SettingsIconMetrics.actionFrameSize)
                 }
                 .fixedSize()
                 Button("settings.integration.browser.key.regenerate") {

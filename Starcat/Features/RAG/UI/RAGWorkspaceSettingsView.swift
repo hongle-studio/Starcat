@@ -442,17 +442,11 @@ struct RAGWorkspaceSettingsView: View {
             isDefaultPromptPopoverPresented = false
             isPlaceholderPopoverPresented.toggle()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "curlybraces")
-                    .font(.caption2.weight(.semibold))
-                Text("settings.ai.prompt.placeholders.open")
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                Image(systemName: "info.circle")
-                    .font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
+            Text("settings.ai.prompt.placeholders.open")
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -494,7 +488,7 @@ struct RAGWorkspaceSettingsView: View {
             HStack {
                 promptCompatibilityBadge(for: promptSummaryState)
                 Spacer(minLength: 12)
-                Button("settings.ai.models.prompt.edit", systemImage: "text.quote") {
+                Button("settings.ai.models.prompt.edit") {
                     isPromptEditorPresented = true
                 }
                 .buttonStyle(.bordered)
@@ -822,26 +816,11 @@ struct RAGWorkspaceSettingsView: View {
     private var retrievalCommonSection: some View {
         // 自定义卡片没有 Form 自动分隔线；行间显式 Divider + 统一竖向 padding。
         VStack(alignment: .leading, spacing: 0) {
-            // 标题、滑块和读数同排；百分比保留独立宽度，拖动时不挤动滑块。
-            HStack(alignment: .center, spacing: interfaceScale.scaled(12)) {
-                Text("rag.workspace.retrieval.minimumSimilarity")
-                    .font(ragFont(.body, scale: interfaceScale))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .help(Text("rag.workspace.retrieval.minimumSimilarity"))
-                    .layoutPriority(1)
-                Slider(value: similarityBinding, in: 0.00...1.00, step: 0.01) {
-                    Text("rag.workspace.retrieval.minimumSimilarity")
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(minWidth: interfaceScale.scaled(120), maxWidth: .infinity)
-                Text(minimumVectorSimilarity.formatted(.percent.precision(.fractionLength(0)).locale(locale)))
-                    .font(ragFont(.body, scale: interfaceScale, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(width: interfaceScale.scaled(48), alignment: .trailing)
-            }
+            SettingsSliderRow(
+                title: "rag.workspace.retrieval.minimumSimilarity", value: similarityBinding,
+                range: 0.00...1.00, step: 0.01,
+                readout: minimumVectorSimilarity.formatted(.percent.precision(.fractionLength(0)).locale(locale))
+            )
             .padding(.vertical, interfaceScale.scaled(8))
 
             Divider()

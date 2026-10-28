@@ -127,17 +127,11 @@ struct TranslationPromptSheet: View {
         Button {
             isPlaceholderHelpPresented.toggle()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "curlybraces")
-                    .font(.caption2.weight(.semibold))
-                Text("settings.ai.prompt.placeholders.open")
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                Image(systemName: "info.circle")
-                    .font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
+            Text("settings.ai.prompt.placeholders.open")
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()

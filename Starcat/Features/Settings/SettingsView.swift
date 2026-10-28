@@ -276,12 +276,14 @@ struct SettingsView: View {
                         Label("settings.navigation.back", systemImage: "chevron.left")
                             .labelStyle(.iconOnly)
                     }
+                    .help(Text("settings.navigation.back"))
                     .disabled(backwardHistory.isEmpty)
 
                     Button(action: goForward) {
                         Label("settings.navigation.forward", systemImage: "chevron.right")
                             .labelStyle(.iconOnly)
                     }
+                    .help(Text("settings.navigation.forward"))
                     .disabled(forwardHistory.isEmpty)
                 }
                 .controlGroupStyle(.navigation)
@@ -1036,7 +1038,7 @@ struct SettingsView: View {
                     Button {
                         isShowingGitHubPermissions = true
                     } label: {
-                        Label("settings.privacy.github.scopes.show", systemImage: "checkmark.shield")
+                        Text("settings.privacy.github.scopes.show")
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
@@ -1787,7 +1789,7 @@ private struct StorageSettingsTab: View {
                     Button {
                         Task { await reloadStorageStatistics(using: cleaner) }
                     } label: {
-                        Label("settings.storage.layout.refresh", systemImage: "arrow.triangle.2.circlepath")
+                        Text("settings.storage.layout.refresh")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
@@ -2055,7 +2057,7 @@ private struct StorageSettingsTab: View {
                     Button {
                         isShowingClearAllCachesSheet = true
                     } label: {
-                        Label("settings.storage.layout.action.clear", systemImage: "exclamationmark.triangle.fill")
+                        Text("settings.storage.layout.action.clear")
                     }
                 }
 
@@ -2069,7 +2071,7 @@ private struct StorageSettingsTab: View {
                     Button(role: .destructive) {
                         resetTarget = currentResetTarget
                     } label: {
-                        Label("settings.storage.layout.action.reset", systemImage: "trash")
+                        Text("settings.storage.layout.action.reset")
                     }
                 }
             } header: {

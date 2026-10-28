@@ -150,11 +150,11 @@ struct KnowledgeRAGIndexSettingsSummary: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if dependencies.knowledgeRAGIndexBuilder.status.isActivelyIndexing {
-                    Button("settings.searchIndex.knowledge.stop", systemImage: "stop.fill") {
+                    Button("settings.searchIndex.knowledge.stop") {
                         dependencies.knowledgeRAGIndexBuilder.cancel()
                     }
                 } else {
-                    Button("settings.searchIndex.layout.rebuild", systemImage: "arrow.triangle.2.circlepath") {
+                    Button("settings.searchIndex.layout.rebuild") {
                         confirmsRebuild = true
                     }
                 }

@@ -57,24 +57,12 @@ struct RepoContextSettingsSection: View {
 
     /// 保留原 Slider 范围与步进，右侧只显示数字，单位在说明中出现一次。
     private var repoContextTokenBudgetRow: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("settings.integration.tools.context.length")
-                Text("settings.integration.tools.context.lengthHelp")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
-            HStack(spacing: 8) {
-                Slider(value: tokenBudgetBinding, in: 4000...32000, step: 2000)
-                    .frame(width: interfaceScale.scaled(160))
-                    .accessibilityLabel(Text("settings.integration.tools.context.length"))
-                Text(settings.aiRepoContextTokenBudget, format: .number)
-                    .monospacedDigit()
-                    .frame(width: interfaceScale.scaled(60), alignment: .trailing)
-            }
-        }
+        SettingsSliderRow(
+            title: "settings.integration.tools.context.length", value: tokenBudgetBinding,
+            range: 4000...32000, step: 2000,
+            readout: settings.aiRepoContextTokenBudget.formatted(.number),
+            description: "settings.integration.tools.context.lengthHelp"
+        )
         .disabled(!settings.aiRepoContextEnabled)
     }
 

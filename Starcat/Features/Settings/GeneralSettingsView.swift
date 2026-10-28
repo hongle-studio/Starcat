@@ -401,7 +401,7 @@ struct GeneralSettingsView: View {
                 Button {
                     updateController.checkForUpdates()
                 } label: {
-                    Label("settings.pro.direct.updates.check", systemImage: "arrow.triangle.2.circlepath")
+                    Text("settings.pro.direct.updates.check")
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 }

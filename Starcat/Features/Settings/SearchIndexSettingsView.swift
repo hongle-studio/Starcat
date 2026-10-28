@@ -250,7 +250,7 @@ struct SearchIndexSettingsView: View {
         }
     }
 
-    /// 所有滑条固定相同轨道和读数列；标题独占剩余宽度，可换行但不会挤短滑条。
+    /// 与其他主设置页共用同行滑条和读数列，保持同组轨道长度一致。
     private func sliderRow(
         _ title: LocalizedStringKey,
         value: Binding<Double>,
@@ -258,18 +258,7 @@ struct SearchIndexSettingsView: View {
         step: Double,
         readout: String
     ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(title)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-            Slider(value: value, in: range, step: step) { Text(title) }
-                .labelsHidden()
-                .frame(width: 200)
-            Text(readout)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .trailing)
-        }
+        SettingsSliderRow(title: title, value: value, range: range, step: step, readout: readout)
     }
 
     /// 非自定义预设只读，避免显示固定预设时写入一份不生效的自定义数字。

@@ -109,14 +109,14 @@ struct RepositoryIndexSettingsSection: View {
             .disabled(!hasModel || isActive)
             switch builder.status {
             case .running:
-                Button("settings.aiIndex.prefetch.pause", systemImage: "pause.fill") { builder.pause() }
+                Button("settings.aiIndex.prefetch.pause") { builder.pause() }
                     .buttonStyle(.bordered)
             case .paused:
-                Button("settings.aiIndex.prefetch.resume", systemImage: "play.fill") { builder.resume() }
+                Button("settings.aiIndex.prefetch.resume") { builder.resume() }
                     .buttonStyle(.bordered)
                     .disabled(!hasModel)
             default:
-                Button("settings.aiIndex.prefetch.start", systemImage: "arrow.triangle.2.circlepath") {
+                Button("settings.aiIndex.prefetch.start") {
                     builder.start()
                 }
                 .buttonStyle(.borderedProminent)

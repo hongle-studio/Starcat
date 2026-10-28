@@ -55,7 +55,7 @@ struct LabsSettingsTab: View {
         .onDisappear { jevConnection?.invalidateTest() }
         .alert("settings.labs.layout.deleteTitle", isPresented: $showsDeleteLayaConfirmation) {
             Button("general.cancel", role: .cancel) {}
-            Button("settings.labs.laya.delete", role: .destructive) {
+            Button("settings.localai.model.action.delete", role: .destructive) {
                 layaTestState = .idle
                 layaManager.delete()
             }
@@ -160,14 +160,9 @@ struct LabsSettingsTab: View {
                 Button {
                     testLayaModel()
                 } label: {
-                    HStack(spacing: 6) {
-                        if layaTestState == .testing {
-                            ProgressView().controlSize(.small)
-                        }
-                        Text("settings.labs.laya.test")
-                    }
+                    Text("settings.labs.laya.test")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .fixedSize()
                 .disabled(layaManager.installedDirectoryURL == nil || layaTestState == .testing)
             }
@@ -246,7 +241,7 @@ struct LabsSettingsTab: View {
             }
             .buttonStyle(.bordered)
         case .installed, .deleteFailed:
-            Button("settings.labs.laya.delete", role: .destructive) {
+            Button("settings.localai.model.action.delete", role: .destructive) {
                 showsDeleteLayaConfirmation = true
             }
             .buttonStyle(.bordered)
@@ -258,8 +253,15 @@ struct LabsSettingsTab: View {
     @ViewBuilder
     private var layaTestFeedback: some View {
         switch layaTestState {
-        case .idle, .testing:
+        case .idle:
             EmptyView()
+        case .testing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("settings.services.summary.checking")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         case let .succeeded(milliseconds, noul):
             Label {
                 Text(verbatim: String(

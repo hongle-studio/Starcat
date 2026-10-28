@@ -11,7 +11,6 @@ import SwiftUI
 /// 模型状态由设置页持有，本视图切换显示时不丢失凭据草稿或测试结果。
 struct JevConnectionSettingsView: View {
     @Bindable var model: JevConnectionSettingsModel
-    @State private var revealAPIKey = false
 
     private static let labelWidth: CGFloat = 150
     private static let consoleKeysURL = URL(string: "https://console.typesafe.ai/settings/keys")!
@@ -20,28 +19,11 @@ struct JevConnectionSettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             Label("settings.labs.typesafe.section", systemImage: "network")
                 .font(.callout.weight(.semibold))
+            // 嵌套配置共用一个 Form 行，内部配置项需显式分隔。
+            Divider()
             apiKeyRows
+            Divider()
             modelRow
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    testFeedback
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Spacer(minLength: 8)
-                Button {
-                    Task { await model.testConnection() }
-                } label: {
-                    HStack(spacing: 6) {
-                        if model.testState == .testing {
-                            ProgressView().controlSize(.small)
-                        }
-                        Text("settings.labs.typesafe.test")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .fixedSize()
-                .disabled(!model.canTest)
-            }
             Divider()
             connectionStatus
         }
@@ -57,37 +39,14 @@ struct JevConnectionSettingsView: View {
     /// 两行使用相同标题列与输入列；标题按整行中心对齐，长语言允许自然增高。
     private var apiKeyRows: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 12) {
-                fieldLabel("settings.labs.typesafe.apiKey.optional")
-                HStack(spacing: 8) {
-                    Group {
-                        if revealAPIKey {
-                            TextField("", text: $model.draftAPIKey, prompt: Text("settings.labs.typesafe.apiKey.placeholder"))
-                        } else {
-                            SecureField("", text: $model.draftAPIKey, prompt: Text("settings.labs.typesafe.apiKey.placeholder"))
-                        }
-                    }
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityLabel(Text("settings.labs.typesafe.apiKey.optional"))
-                    Button {
-                        revealAPIKey.toggle()
-                    } label: {
-                        Image(systemName: revealAPIKey ? "eye.slash" : "eye")
-                            .font(SettingsIconMetrics.standardGlyph)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .focusEffectDisabled()
-                    .help(revealAPIKey ? "settings.labs.typesafe.apiKey.hide" : "settings.labs.typesafe.apiKey.reveal")
-                    .accessibilityLabel(Text(revealAPIKey ? "settings.labs.typesafe.apiKey.hide" : "settings.labs.typesafe.apiKey.reveal"))
-                }
-            }
+            SettingsAPIKeyField(
+                title: "settings.labs.typesafe.apiKey", text: $model.draftAPIKey,
+                prompt: Text("settings.labs.typesafe.apiKey.placeholder")
+            )
             HStack(alignment: .center, spacing: 12) {
                 Color.clear.frame(width: Self.labelWidth, height: 1).accessibilityHidden(true)
                 Spacer(minLength: 0)
-                Link("settings.labs.typesafe.apiKey.get", destination: Self.consoleKeysURL)
+                Link("settings.connection.getAPIKey", destination: Self.consoleKeysURL)
                     .font(.caption)
                     .fixedSize()
             }
@@ -125,6 +84,14 @@ struct JevConnectionSettingsView: View {
                 }
                 .accessibilityLabel(Text("settings.labs.models.refresh"))
                 .frame(width: 28, height: 28)
+                Button {
+                    Task { await model.testConnection() }
+                } label: {
+                    Text("settings.connection.testAndSave")
+                }
+                .buttonStyle(.borderedProminent)
+                .fixedSize()
+                .disabled(!model.canTest)
             }
             if model.modelListFailed {
                 Text("settings.labs.models.loadFailed")
@@ -132,6 +99,8 @@ struct JevConnectionSettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // 测试操作与模型同行，反馈按需在下方展开，避免空闲时占位或长错误挤压控件。
+            testFeedback
         }
     }
 
@@ -145,8 +114,15 @@ struct JevConnectionSettingsView: View {
             )
         }
         switch model.testState {
-        case .idle, .testing:
+        case .idle:
             EmptyView()
+        case .testing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("settings.services.summary.checking")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         case let .succeeded(source, milliseconds, noul):
             feedback(title: successFeedback(source, milliseconds: milliseconds, noul: noul), success: true)
         case .failed(let message):
@@ -204,7 +180,7 @@ struct JevConnectionSettingsView: View {
             }
             HStack {
                 Spacer(minLength: 8)
-                Button("settings.labs.layout.manageProviders") {
+                Button("settings.translation.layout.ai.manageProviders") {
                     NotificationCenter.default.post(name: .starcatJumpToSettingsTab, object: "ai.models")
                 }
                 .buttonStyle(.bordered)

@@ -220,15 +220,12 @@ struct AgentRuntimeInfoButton: View {
     @State private var isPresented = false
 
     var body: some View {
-        Button("settings.integration.agentRuntime.info.button", systemImage: "exclamationmark.circle") {
+        SettingsActionIconButton(
+            title: "settings.integration.agentRuntime.info.button",
+            systemImage: "info.circle"
+        ) {
             isPresented.toggle()
         }
-        .labelStyle(.iconOnly)
-        .foregroundStyle(.secondary)
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .pressableHover()
-        .help("settings.integration.agentRuntime.info.button")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             AgentRuntimeInfoPopover(kind: kind)
                 .appLocaleEnvironment()

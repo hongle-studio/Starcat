@@ -18,7 +18,6 @@ struct TranslationSettingsTab: View {
     @State private var systemLanguageCatalog = SystemTranslationLanguageCatalog()
     @State private var isSystemLanguageManagerPresented = false
     @State private var googleAPIKey = ""
-    @State private var isGoogleAPIKeyVisible = false
     @State private var isTestingGoogleKey = false
     @State private var googleKeyError: String?
     @State private var isGoogleKeyApplied = false
@@ -173,7 +172,7 @@ struct TranslationSettingsTab: View {
                 }
             }
             centeredRow {
-                Button("settings.translation.layout.system.view", systemImage: "character.bubble") {
+                Button("settings.translation.layout.system.view") {
                     isSystemLanguageManagerPresented = true
                 }
                 .buttonStyle(.bordered)
@@ -214,35 +213,17 @@ struct TranslationSettingsTab: View {
 
     private var googleSection: some View {
         Section {
-            // 按整行垂直居中，标签只占自然宽度，避免 Form 标签列压缩 Key 输入框。
-            HStack(alignment: .center, spacing: 12) {
-                Text("settings.translation.google.apiKey.field")
-                    .fixedSize(horizontal: true, vertical: false)
-                HStack(alignment: .center, spacing: 8) {
-                    Group {
-                        if isGoogleAPIKeyVisible {
-                            TextField("settings.translation.google.apiKey.field", text: googleAPIKeyBinding)
-                        } else {
-                            SecureField("settings.translation.google.apiKey.field", text: googleAPIKeyBinding)
-                        }
-                    }
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .multilineTextAlignment(.leading)
-                    .accessibilityLabel("settings.translation.google.apiKey.field")
-                    .frame(maxWidth: .infinity)
-                    SettingsActionIconButton(
-                        title: isGoogleAPIKeyVisible
-                            ? "settings.translation.google.apiKey.hide" : "settings.translation.google.apiKey.show",
-                        systemImage: isGoogleAPIKeyVisible ? "eye.slash" : "eye"
-                    ) {
-                        isGoogleAPIKeyVisible.toggle()
-                    }
-                }
-            }
+            SettingsAPIKeyField(
+                title: "settings.translation.google.apiKey.field", text: googleAPIKeyBinding
+            )
 
             HStack(spacing: 8) {
-                if let googleKeyError {
+                if isTestingGoogleKey {
+                    ProgressView().controlSize(.small)
+                    Text("settings.services.summary.checking")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let googleKeyError {
                     Label {
                         Text(verbatim: googleKeyError)
                             .lineLimit(2)
@@ -258,25 +239,14 @@ struct TranslationSettingsTab: View {
                         .foregroundStyle(.green)
                 }
                 Spacer(minLength: 8)
-                SettingsActionIconButton(
-                    title: "settings.translation.google.openConsole",
-                    systemImage: "arrow.up.forward.square"
-                ) {
+                Button("settings.connection.getAPIKey") {
                     openGoogleConsole()
                 }
+                .buttonStyle(.link)
+                .font(.caption)
+                .fixedSize()
                 Button(action: startGoogleKeyTest) {
-                    // 验证前后预留同一个图标位置，测试状态不改变按钮宽度。
-                    HStack(spacing: 6) {
-                        Group {
-                            if isTestingGoogleKey {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: "network")
-                            }
-                        }
-                        .frame(width: 16, height: 16)
-                        Text("settings.translation.layout.google.testApply")
-                    }
+                    Text("settings.translation.layout.google.testApply")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
@@ -318,7 +288,7 @@ struct TranslationSettingsTab: View {
                 }
             }
             centeredRow {
-                Button("settings.ai.models.prompt.edit", systemImage: "text.quote") {
+                Button("settings.ai.models.prompt.edit") {
                     isPromptEditorPresented = true
                 }
                 .buttonStyle(.bordered)
@@ -341,7 +311,8 @@ struct TranslationSettingsTab: View {
                 Button("settings.translation.layout.ai.manageProviders") {
                     NotificationCenter.default.post(name: .starcatJumpToSettingsTab, object: "ai.models")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
                 .lineLimit(1)
                 .help(Text("settings.translation.layout.ai.manageProviders"))
             }
