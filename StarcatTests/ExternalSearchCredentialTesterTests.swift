@@ -68,7 +68,7 @@ struct ExternalSearchCredentialTesterTests {
             return
         }
         #expect(settings.externalSearchAPIKey(for: providerID) == "old-key")
-        #expect(!settings.externalSearchSettings(for: providerID).hasVerifiedCredential)
+        #expect(settings.externalSearchSettings(for: providerID).hasVerifiedCredential)
         #expect(!settings.externalSearchSettings(for: providerID).isEnabled)
         #expect(failure.friendlyMessage == ExternalSearchError.invalidCredential(provider: providerID, statusCode: 401, message: nil).friendlyMessage)
         #expect(failure.technicalDetails?.contains("httpStatus=401") == true)
@@ -76,11 +76,83 @@ struct ExternalSearchCredentialTesterTests {
         #expect(failure.technicalDetails?.contains("new-secret-key") == false)
     }
 
-    private func makeSettings() -> AppSettings {
+    @Test("编辑后旧请求成功或失败均不改变已存连接", arguments: [false, true])
+    func supersededProbeDoesNotCommit(fails: Bool) async throws {
+        let settings = makeSettings()
+        settings.setExternalSearchAPIKey("saved-key", for: .tavily)
+        settings.markExternalSearchCredentialVerified(for: .tavily)
+        let original = settings.externalSearchSettings(for: .tavily)
+        let gate = CredentialProbeGate()
+        var isCurrent = true
+        let tester = ExternalSearchCredentialTester(settings: settings, providerFactory: { provider, _, _ in
+            DeferredCredentialProvider(providerID: provider, gate: gate)
+        })
+        let task = Task {
+            await tester.test(provider: .tavily, candidateKey: "draft", isCurrent: { isCurrent })
+        }
+        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
+        let pending = try #require(gate.continuation)
+        isCurrent = false
+        if fails { pending.resume(throwing: URLError(.notConnectedToInternet)) }
+        else { pending.resume() }
+        let result = await task.value
+        #expect(result == .superseded)
+        #expect(settings.externalSearchAPIKey(for: .tavily) == "saved-key")
+        #expect(settings.externalSearchSettings(for: .tavily) == original)
+    }
+
+    @Test("已存 Key 重测失败才撤销该 Key 的验证")
+    func failedSavedKeyLosesVerification() async {
+        let settings = makeSettings()
+        settings.setExternalSearchAPIKey("saved-key", for: .tavily)
+        settings.markExternalSearchCredentialVerified(for: .tavily)
+        let tester = ExternalSearchCredentialTester(settings: settings, providerFactory: { provider, _, _ in
+            StubCredentialProvider(providerID: provider, error: URLError(.notConnectedToInternet))
+        })
+        _ = await tester.test(provider: .tavily, candidateKey: "saved-key")
+        #expect(!settings.externalSearchSettings(for: .tavily).hasVerifiedCredential)
+        #expect(settings.externalSearchAPIKey(for: .tavily) == "saved-key")
+    }
+
+    @Test("Key 保存失败不标记已验证或启用")
+    func keychainFailureDoesNotEnableProvider() async {
+        let settings = makeSettings(keychain: InMemoryKeychain(rejectsServiceKeyWrites: true))
+        let tester = ExternalSearchCredentialTester(settings: settings, providerFactory: { provider, _, _ in
+            StubCredentialProvider(providerID: provider)
+        })
+        let outcome = await tester.test(provider: .tavily, candidateKey: "draft")
+        #expect(outcome == .saveFailed)
+        #expect(!settings.externalSearchSettings(for: .tavily).hasVerifiedCredential)
+        #expect(!settings.externalSearchSettings(for: .tavily).isEnabled)
+    }
+
+    private func makeSettings(keychain: InMemoryKeychain = InMemoryKeychain()) -> AppSettings {
         let suite = "ExternalSearchCredentialTesterTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
-        return AppSettings(defaults: defaults, keychain: InMemoryKeychain())
+        return AppSettings(defaults: defaults, keychain: keychain)
+    }
+}
+
+/// 在 MainActor 上精确控制完成顺序，避免依赖延时或访问真实服务。
+@MainActor
+private final class CredentialProbeGate {
+    var continuation: CheckedContinuation<Void, Error>?
+
+    func wait() async throws {
+        try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+}
+
+private struct DeferredCredentialProvider: ExternalSearchProvider {
+    let providerID: ExternalSearchProviderID
+    let gate: CredentialProbeGate
+    var id: ExternalSearchProviderID { providerID }
+    var capabilities: ExternalSearchCapabilities { .capabilities(for: providerID) }
+
+    func search(_ request: ExternalSearchRequest) async throws -> ExternalSearchResponse {
+        try await gate.wait()
+        return ExternalSearchResponse(hits: [], metadata: ExternalSearchMetadata(provider: providerID))
     }
 }
 

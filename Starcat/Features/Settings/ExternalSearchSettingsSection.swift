@@ -20,10 +20,10 @@ struct ExternalSearchSettingsSection: View {
 
     @State private var isExternalContextAdvancedExpanded = false
     @State private var externalSearchAPIKeys: [ExternalSearchProviderID: String] = [:]
-    @State private var visibleExternalSearchAPIKeys: Set<ExternalSearchProviderID> = []
     @State private var expandedExternalSearchProviders: Set<ExternalSearchProviderID> = []
     @State private var expandedExternalSearchTechnicalDetails: Set<ExternalSearchProviderID> = []
     @State private var externalSearchAPIKeyTestStates: [ExternalSearchProviderID: APIKeyTestState] = [:]
+    @State private var externalSearchTestRevisions: [ExternalSearchProviderID: UUID] = [:]
     /// 仅记录用户尝试启用但尚未验证的服务商，不提前写入启用状态或凭据。
     @State private var providersRequiringVerification: Set<ExternalSearchProviderID> = []
 
@@ -38,6 +38,9 @@ struct ExternalSearchSettingsSection: View {
         }
         .task {
             loadExternalSearchAPIKeys()
+        }
+        .onDisappear {
+            for provider in ExternalSearchProviderID.allCases { invalidateTest(provider) }
         }
     }
 
@@ -373,22 +376,20 @@ struct ExternalSearchSettingsSection: View {
             Divider()
             // 错误摘要与操作同排；长错误在左侧换行，按钮保持固有宽度与右对齐。
             HStack(alignment: .center, spacing: 8) {
-                externalSearchAPIKeyErrorSummary(provider)
+                externalSearchAPIKeySummary(provider)
                 Spacer(minLength: 8)
-                Link("settings.externalSearch.copy.getKey", destination: externalSearchAPIKeyURL(for: provider))
+                Link("settings.connection.getAPIKey", destination: externalSearchAPIKeyURL(for: provider))
                     .font(.caption)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                 Button {
                     testExternalSearchAPIKey(provider)
                 } label: {
-                    if externalSearchAPIKeyTestStates[provider] == .testing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("settings.externalSearch.copy.testConnection")
-                    }
+                    Text("settings.connection.testAndSave")
                 }
-                .buttonStyle(.bordered)
+                // 折叠区域内显式使用设置行正文，避免按钮继承容器的强调字号或字重。
+                .font(.body)
+                .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
                 .fixedSize()
                 .disabled(!canTestExternalSearchKey(provider))
@@ -396,44 +397,12 @@ struct ExternalSearchSettingsSection: View {
         }
     }
 
-    /// 与自定义服务保持同一列宽规则：输入框最多 340pt，窄窗口让出尾部图标空间。
     private func providerAPIKeyField(_ provider: ExternalSearchProviderID) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text("settings.externalSearch.apiKey")
-                .frame(width: 72, alignment: .leading)
-            providerAPIKeyInput(provider)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func providerAPIKeyInput(_ provider: ExternalSearchProviderID) -> some View {
-        HStack(spacing: 8) {
-            Group {
-                if visibleExternalSearchAPIKeys.contains(provider) {
-                    TextField("", text: apiKeyBinding(provider), prompt: Text(String(format: String.l10n("settings.externalSearch.apiKey.placeholderFormat"), provider.displayName)))
-                } else {
-                    SecureField("", text: apiKeyBinding(provider), prompt: Text(String(format: String.l10n("settings.externalSearch.apiKey.placeholderFormat"), provider.displayName)))
-                }
-            }
-            .labelsHidden()
-            .accessibilityLabel(Text(String(format: String.l10n("settings.externalSearch.apiKey.accessibilityFormat"), provider.displayName)))
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 340)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-
-            Button {
-                toggleAPIKeyVisibility(provider)
-            } label: {
-                Image(systemName: visibleExternalSearchAPIKeys.contains(provider) ? "eye.slash" : "eye")
-                    .font(SettingsIconMetrics.standardGlyph)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .help(visibleExternalSearchAPIKeys.contains(provider) ? "settings.externalSearch.apiKey.hide" : "settings.externalSearch.apiKey.show")
-            .accessibilityLabel(Text(visibleExternalSearchAPIKeys.contains(provider) ? "settings.externalSearch.apiKey.hide" : "settings.externalSearch.apiKey.show"))
-        }
+        SettingsAPIKeyField(
+            title: "settings.externalSearch.apiKey", text: apiKeyBinding(provider),
+            prompt: Text(String(format: String.l10n("settings.externalSearch.apiKey.placeholderFormat"), provider.displayName))
+        )
+        .accessibilityLabel(Text(String(format: String.l10n("settings.externalSearch.apiKey.accessibilityFormat"), provider.displayName)))
     }
 
     private var aggregateExternalContextBinding: Binding<Bool> {
@@ -456,6 +425,7 @@ struct ExternalSearchSettingsSection: View {
                     return
                 }
                 providersRequiringVerification.remove(provider)
+                invalidateTest(provider)
                 providerSettings.isEnabled = newValue
                 settings.setExternalSearchSettings(providerSettings, for: provider)
             }
@@ -466,6 +436,8 @@ struct ExternalSearchSettingsSection: View {
         Binding(
             get: { settings.externalSearchSettings(for: provider).anonymousMode },
             set: { newValue in
+                guard settings.externalSearchSettings(for: provider).anonymousMode != newValue else { return }
+                invalidateTest(provider)
                 var providerSettings = settings.externalSearchSettings(for: provider)
                 providerSettings.anonymousMode = newValue
                 settings.setExternalSearchSettings(providerSettings, for: provider)
@@ -488,12 +460,11 @@ struct ExternalSearchSettingsSection: View {
         Binding(
             get: { externalSearchAPIKeys[provider] ?? "" },
             set: { newValue in
+                guard externalSearchAPIKeys[provider] != newValue else { return }
                 externalSearchAPIKeys[provider] = newValue
-                externalSearchAPIKeyTestStates[provider] = .idle
+                invalidateTest(provider)
                 if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     settings.setExternalSearchAPIKey(nil, for: provider)
-                } else {
-                    settings.clearExternalSearchCredentialVerification(for: provider)
                 }
             }
         )
@@ -502,7 +473,9 @@ struct ExternalSearchSettingsSection: View {
     private func canToggleProviderOn(_ provider: ExternalSearchProviderID) -> Bool {
         let providerSettings = settings.externalSearchSettings(for: provider)
         if provider.supportsAnonymous, providerSettings.anonymousMode { return true }
-        return providerSettings.hasVerifiedCredential && settings.externalSearchAPIKey(for: provider)?.isEmpty == false
+        return providerSettings.hasVerifiedCredential
+            && !apiKeyDraft(for: provider).isEmpty
+            && settings.externalSearchAPIKey(for: provider) == apiKeyDraft(for: provider)
     }
 
     private func apiKeyDraft(for provider: ExternalSearchProviderID) -> String {
@@ -525,14 +498,6 @@ struct ExternalSearchSettingsSection: View {
             return URL(string: "https://api-dashboard.search.brave.com")!
         case .firecrawl:
             return URL(string: "https://www.firecrawl.dev/app/api-keys")!
-        }
-    }
-
-    private func toggleAPIKeyVisibility(_ provider: ExternalSearchProviderID) {
-        if visibleExternalSearchAPIKeys.contains(provider) {
-            visibleExternalSearchAPIKeys.remove(provider)
-        } else {
-            visibleExternalSearchAPIKeys.insert(provider)
         }
     }
 
@@ -562,9 +527,18 @@ struct ExternalSearchSettingsSection: View {
         guard anonymous || !candidate.isEmpty else { return }
 
         externalSearchAPIKeyTestStates[provider] = .testing
+        let revision = UUID()
+        externalSearchTestRevisions[provider] = revision
         Task {
             let tester = ExternalSearchCredentialTester(settings: settings)
-            switch await tester.test(provider: provider, candidateKey: candidate, anonymous: anonymous) {
+            let outcome = await tester.test(
+                provider: provider, candidateKey: candidate, anonymous: anonymous,
+                isCurrent: { externalSearchTestRevisions[provider] == revision }
+            )
+            guard externalSearchTestRevisions[provider] == revision else { return }
+            switch outcome {
+            case .superseded:
+                externalSearchAPIKeyTestStates[provider] = .idle
             case .succeeded:
                 providersRequiringVerification.remove(provider)
                 externalSearchAPIKeys[provider] = candidate
@@ -580,20 +554,34 @@ struct ExternalSearchSettingsSection: View {
         }
     }
 
+    /// 在绑定写入时同步撤销请求资格，避免异步 onChange 晚于网络回调导致旧 Key 落盘。
+    private func invalidateTest(_ provider: ExternalSearchProviderID) {
+        externalSearchTestRevisions[provider] = UUID()
+        externalSearchAPIKeyTestStates[provider] = .idle
+        expandedExternalSearchTechnicalDetails.remove(provider)
+    }
+
     /// 仅展示已有测试状态，不发起请求；详情仍留在操作栏上方独立折叠。
-    private func externalSearchAPIKeyErrorSummary(_ provider: ExternalSearchProviderID) -> some View {
+    private func externalSearchAPIKeySummary(_ provider: ExternalSearchProviderID) -> some View {
         Group {
             switch externalSearchAPIKeyTestStates[provider] ?? .idle {
             case .failed(let message, _):
                 Label(message, systemImage: "xmark.circle.fill")
             case .saveFailed:
                 Label("settings.externalSearch.apiKey.saveFailed", systemImage: "xmark.circle.fill")
-            case .idle, .testing, .succeeded:
+            case .testing:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("settings.services.summary.checking")
+                }
+            case .succeeded:
+                Label("settings.externalSearch.layout.testSucceeded", systemImage: "checkmark.circle.fill")
+            case .idle:
                 EmptyView()
             }
         }
         .font(.caption)
-        .foregroundStyle(.red)
+        .foregroundStyle(feedbackColor(provider))
         .fixedSize(horizontal: false, vertical: true)
         .textSelection(.enabled)
     }
@@ -601,14 +589,8 @@ struct ExternalSearchSettingsSection: View {
     @ViewBuilder
     private func externalSearchAPIKeyTestFeedback(_ provider: ExternalSearchProviderID) -> some View {
         switch externalSearchAPIKeyTestStates[provider] ?? .idle {
-        case .idle, .testing, .saveFailed:
+        case .idle, .testing, .saveFailed, .succeeded:
             EmptyView()
-        case .succeeded:
-            Divider()
-            Label("settings.externalSearch.layout.testSucceeded", systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
-                .fixedSize(horizontal: false, vertical: true)
         case .failed(_, let details):
             if let details {
                 Divider()
@@ -635,6 +617,14 @@ struct ExternalSearchSettingsSection: View {
                 ))
                 .font(.caption)
             }
+        }
+    }
+
+    private func feedbackColor(_ provider: ExternalSearchProviderID) -> Color {
+        switch externalSearchAPIKeyTestStates[provider] ?? .idle {
+        case .succeeded: return .green
+        case .failed, .saveFailed: return .red
+        case .idle, .testing: return .secondary
         }
     }
 
