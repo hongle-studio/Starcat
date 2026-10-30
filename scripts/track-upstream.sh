@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # track-upstream.sh
-# 自动跟踪 Starcat 官方上游 (upstream) 源码更新并发送 macOS 原生系统通知。
+# 自动跟踪 Starcat 官方上游 (upstream) 与 个人 Fork (origin) 源码更新并发送 macOS 原生系统通知。
 #
 
 set -uo pipefail
@@ -29,10 +29,10 @@ if ! git remote get-url upstream >/dev/null 2>&1; then
     git remote add upstream https://github.com/starcat-app/Starcat.git
 fi
 
-# 抓取上游最新提交和 tags（带重试与容错）
+# 抓取上游和远端最新提交和 tags（带重试与容错）
 FETCH_SUCCESS=0
 for i in 1 2; do
-    if git fetch upstream --tags --quiet 2>/dev/null; then
+    if git fetch upstream --tags --quiet 2>/dev/null && git fetch origin --quiet 2>/dev/null; then
         FETCH_SUCCESS=1
         break
     fi
@@ -40,8 +40,15 @@ for i in 1 2; do
 done
 
 if [ "$FETCH_SUCCESS" -ne 1 ]; then
-    echo "[${TIMESTAMP}] 警告：连接 GitHub 抓取上游更新超时或失败，本次跳过。" >> "$LOG_FILE"
+    echo "[${TIMESTAMP}] 警告：连接 GitHub 抓取更新超时，本次跳过。" >> "$LOG_FILE"
     exit 0
+fi
+
+# 如果云端 origin 有更新且本地工作区干净，自动快进同步本地
+BEHIND_ORIGIN="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
+if [ "$BEHIND_ORIGIN" -gt 0 ] && git diff-index --quiet HEAD -- 2>/dev/null; then
+    git merge --ff-only origin/main >/dev/null 2>&1 || true
+    echo "[${TIMESTAMP}] 检测到云端 Fork (origin/main) 有更新，已自动快进同步到本地。" >> "$LOG_FILE"
 fi
 
 # 获取当前分支与 upstream/main 的差距
@@ -66,7 +73,7 @@ CURRENT_STATE="UPSTREAM_HEAD=${UPSTREAM_HEAD}|STABLE=${OFFICIAL_LATEST_STABLE}|A
 # 如果 upstream 领先，或者官方发布了高于本地的正式 tag
 if [ "$BEHIND_COUNT" -gt 0 ] || [ "$LOCAL_TAG" != "$OFFICIAL_LATEST_STABLE" ]; then
     if [ "$CURRENT_STATE" != "$LAST_STATE" ]; then
-        DETAILS="官方主干领先 ${BEHIND_COUNT} 个提交，最新正式版: ${OFFICIAL_LATEST_STABLE} (本地: ${LOCAL_TAG})。"
+        DETAILS="官方上游领先 ${BEHIND_COUNT} 个提交，最新正式版: ${OFFICIAL_LATEST_STABLE} (本地: ${LOCAL_TAG})。"
         
         {
             echo "=========================================="
