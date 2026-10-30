@@ -264,3 +264,7 @@ CHANGELOG-ZH/
 # 其他
 *.mp4
 OfferCodeOneTimeUseCodes.md
+
+# 上游跟踪状态与日志
+.upstream-tracker.log
+.upstream-tracker.state
