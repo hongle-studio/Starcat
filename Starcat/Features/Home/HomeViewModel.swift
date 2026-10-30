@@ -343,9 +343,16 @@ final class HomeViewModel {
     /// 由 `ensureRepoVisible(repoId:)` 负责把 currentPage 推到对应页。
     var selectedRepo: Repo? {
         if let external = externalSelectedRepo { return external }
-        // 临时置顶优先于列表选中：置顶仓即使 selectedRepoID 被 reload / 筛选清理，
-        // 详情也保持指向它，避免 applyManageDetailSelectionPolicy 抢选列表第一条。
-        if let pinned = temporaryPinnedRepo { return pinned }
+        if let pinned = temporaryPinnedRepo {
+            // 列表已有同一仓时改用列表真源。搜索打开未 Star 仓再 Star 后，
+            // 置顶快照仍是旧的 isStarred=false，但 All Stars 已含新行；
+            // 列表会隐藏置顶卡改画列表行，详情必须跟着切过去，否则星星空心。
+            // 仓还不在列表里时继续用置顶快照，挡住抢选第一条。
+            if let live = filteredSorted.first(where: { $0.id == pinned.id }) {
+                return live
+            }
+            return pinned
+        }
         guard let id = selectedRepoID else { return nil }
         return filteredSorted.first { $0.id == id }
     }
@@ -400,6 +407,7 @@ final class HomeViewModel {
         let library: String
         let language: String
         let selectedLanguages: Set<String>
+        let license: RepoLicenseFilter
         let excludedLanguages: Set<String>
         let healthAvailability: String
         let openSSFAvailability: String
@@ -489,8 +497,19 @@ final class HomeViewModel {
 
     /// 是否正在构建 / 刷新语义索引。
     private(set) var isSemanticIndexing: Bool = false
-    /// 工具栏进度环用：已写入向量的仓数 / 本轮总仓数。空闲时为 nil。
+    /// 刷新任务进度：已处理仓数 / 本轮总仓数。空闲时为 nil。
     private(set) var semanticIndexProgress: (processed: Int, total: Int)?
+    /// 当前模型在候选仓里的向量覆盖率。Search Center 打开或刷新结束后更新。
+    private(set) var semanticIndexCoverage: SemanticIndexCoverage?
+
+    /// Search Center 底栏向量 chip：刷新中看进度，空闲看覆盖率。
+    var semanticIndexFooterPhase: SemanticIndexFooterPhase {
+        SemanticIndexFooterPhase.resolve(
+            isIndexing: isSemanticIndexing,
+            progress: semanticIndexProgress,
+            coverage: semanticIndexCoverage
+        )
+    }
 
     /// 最近一次语义搜索结果的 repo id → 命中信息。
     /// UI 行只通过 `semanticHit(for:)` 读取，不直接操作字典，避免把语义搜索状态扩散到 View。
@@ -586,6 +605,20 @@ final class HomeViewModel {
         return sidebarFacetSnapshot?.counts
     }
 
+    /// 许可证候选来自完整来源，不依赖当前筛选后的计数。
+    /// 计数必须在条件改变时立即失效，但不能因此把仍有效的标签清空再异步补回，
+    /// 否则标签墙会收缩、重排并丢失滚动位置。这里只放宽候选项的展示有效性，
+    /// 不复用旧计数；切换分类、搜索或真实数据版本后仍拒绝旧来源。
+    var sidebarLicenseOptions: [String] {
+        let query = sidebarFacetQuery
+        guard let snapshot = sidebarFacetSnapshot,
+              snapshot.query.selection == query.selection,
+              snapshot.query.scope == query.scope,
+              snapshot.query.searchQuery == query.searchQuery,
+              snapshot.query.dataRevision == query.dataRevision else { return [] }
+        return snapshot.counts.licenses
+    }
+
     /// 复用仍有效的标签计数，避免每次勾选都经历「数字 → 占位 → 同一个数字」。
     /// 无标签范围只禁用交互，数字仍展示全账号 Star 标签总量，避免置灰时误显示为 0。
     var sidebarTagCounts: [String: Int]? {
@@ -640,7 +673,7 @@ final class HomeViewModel {
                 for repo in tagRepos {
                     for tagID in repoTagsMap[repo.id] ?? [] { tags[tagID, default: 0] += 1 }
                 }
-                counts = RepoListFacetCounts(languages: languages, tags: tags)
+                counts = RepoListFacetCounts(languages: languages, tags: tags, licenses: RepoLicenseFilter.options(rawItems.map(\.license)))
             }
             guard !Task.isCancelled, sidebarFacetQuery == query else { return }
             sidebarFacetSnapshot = (query, counts)
@@ -935,6 +968,14 @@ final class HomeViewModel {
         }
     }
 
+    /// 许可证在 SQL 分页和完整候选集派生中都生效；修改时按新身份重查。
+    var licenseFilter: RepoLicenseFilter = .all {
+        didSet {
+            guard oldValue != licenseFilter, !isHydratingManageFilters, !isApplyingGlobalFilterState else { return }
+            reloadOrApplyCurrentManageView()
+        }
+    }
+
     /// 设置页「感兴趣的语言」镜像。左侧语言分类与 `.other` 过滤都依赖它；
     /// 由 HomeView 从 AppSettings 单向同步（启动 + onChange），ViewModel 本身不持有 settings。
     /// 变化时只有左侧语言筛选是 `.other` 才 refilter——排除集合变了，列表结果才可能变。
@@ -1216,7 +1257,8 @@ final class HomeViewModel {
             readmeAvailabilityFilter: .unknown,
             indexableSourceAvailabilityFilter: .unknown,
             ragIndexStateFilter: .unknown,
-            insightsRiskFilter: .unknown
+            insightsRiskFilter: .unknown,
+            licenseFilter: licenseFilter
         )
     }
 
@@ -1236,6 +1278,7 @@ final class HomeViewModel {
             || filters.libraryFilter != .all
             || filters.repoLanguageFilter != .all
             || !filters.globalFilterLanguages.isEmpty
+            || filters.licenseFilter.isActive
             || filters.wikiAvailabilityFilter != .unknown
             || filters.healthAvailabilityFilter != .unknown
             || filters.openSSFAvailabilityFilter != .unknown
@@ -1449,6 +1492,7 @@ final class HomeViewModel {
         libraryFilter = filters.libraryFilter
         repoLanguageFilter = filters.repoLanguageFilter
         globalFilterLanguages = filters.globalFilterLanguages
+        licenseFilter = filters.licenseFilter
         wikiAvailabilityFilter = filters.wikiAvailabilityFilter
         healthAvailabilityFilter = filters.healthAvailabilityFilter
         openSSFAvailabilityFilter = filters.openSSFAvailabilityFilter
@@ -1773,6 +1817,7 @@ final class HomeViewModel {
         isRefreshing = false
         isSemanticIndexing = false
         semanticIndexProgress = nil
+        semanticIndexCoverage = nil
         isLoading = true
     }
 
@@ -1926,6 +1971,58 @@ final class HomeViewModel {
             }
         } catch {
             AppLog.database.error("refreshSidebar failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// GitHub Lists 写入后的窄刷新入口。
+    ///
+    /// membership mutation 不会改变标签、语言、项目或 Release 等侧栏数据；如果仍走
+    /// `refreshSidebar()`，批量应用期间会反复触发十余个无关查询。这里仅更新 Lists 相关投影，
+    /// 并只在当前正查看 GitHub Lists 时重查中栏。
+    func refreshGitHubStarListData(reloadCurrentList: Bool) async {
+        defer { sidebarFacetDataRevision &+= 1 }
+        let previousListCounts = githubStarListCounts
+        let previousUngroupedCount = githubStarListUngroupedCount
+        let previousAssignments = githubStarListIDsByRepo
+
+        do {
+            async let listsResult = fetchGitHubStarLists()
+            async let countsResult = fetchGitHubStarListCounts()
+            async let ungroupedCountResult = fetchGitHubStarListUngroupedCount()
+            async let assignmentsResult = fetchGitHubStarListAssignments()
+            async let rulesResult = fetchGitHubStarListAIRules()
+            async let autoIgnoredResult = fetchGitHubStarListAIAutoIgnoredRepos()
+
+            githubStarLists = try await listsResult
+            githubStarListCounts = try await countsResult
+            githubStarListUngroupedCount = try await ungroupedCountResult
+            let assignments = try await assignmentsResult
+            githubStarListIDsByRepo = assignments.mapValues { Set($0.map(\.id)) }
+            githubStarListAIRulesByListID = Dictionary(
+                uniqueKeysWithValues: try await rulesResult.map { ($0.listId, $0) }
+            )
+            githubStarListAIAutoIgnoredRepoIDs = Set(
+                try await autoIgnoredResult.map(\.repoId)
+            )
+
+            if previousListCounts != githubStarListCounts ||
+                previousUngroupedCount != githubStarListUngroupedCount ||
+                previousAssignments != githubStarListIDsByRepo {
+                removeDatabaseSnapshots { key in
+                    switch key.selection {
+                    case .githubStarList, .githubStarListUngrouped:
+                        return true
+                    default:
+                        return false
+                    }
+                }
+            }
+
+            if reloadCurrentList, selection.isGitHubStarListContext {
+                await reloadItems(forceRefresh: true)
+            }
+        } catch {
+            AppLog.database.error("refreshGitHubStarListData failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -2321,6 +2418,7 @@ final class HomeViewModel {
             library: filters.library.rawValue,
             language: filters.language.persistedRawValue,
             selectedLanguages: filters.selectedLanguages,
+            license: filters.license,
             excludedLanguages: filters.excludedLanguages,
             healthAvailability: filters.healthAvailability.rawValue,
             openSSFAvailability: filters.openSSFAvailability.rawValue,
@@ -3326,6 +3424,27 @@ final class HomeViewModel {
             AppLog.database.error("refreshSemanticIndex failed: \(error.localizedDescription, privacy: .public)")
             friendly.record(category: "home", operation: "refreshSemanticIndex", service: "semantic-search")
         }
+        await reloadSemanticIndexCoverage()
+    }
+
+    /// 刷新 Search Center 底栏用的向量覆盖率。
+    ///
+    /// 候选范围与补缺刷新一致（Star + 知识库）。打开搜索浮层和刷新结束时调用，
+    /// 不跟输入框走，避免每个字符打 COUNT。
+    func reloadSemanticIndexCoverage() async {
+        do {
+            let repos = try await fetchSearchCandidates(scope: .all)
+            let ids = repos.map(\.id)
+            let indexed: Int
+            if let semanticSearchService {
+                indexed = (try? await semanticSearchService.indexedCount(repoIDs: ids)) ?? 0
+            } else {
+                indexed = 0
+            }
+            semanticIndexCoverage = SemanticIndexCoverage(indexed: indexed, total: repos.count)
+        } catch {
+            AppLog.database.error("reloadSemanticIndexCoverage failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// 从缓存条目加载数据到 UI（立即展示，无加载指示）。
@@ -3661,6 +3780,9 @@ final class HomeViewModel {
 
     private func applyGlobalRepoFilters(to repos: inout [Repo]) {
         let filters = effectiveGlobalFilterState
+        if filters.licenseFilter.isActive {
+            repos.removeAll { !filters.licenseFilter.matches($0.license) }
+        }
         if filters.starFilter != .all {
             repos.removeAll { repo in
                 !filters.starFilter.matches(isStarred: repo.isStarred)

@@ -31,6 +31,7 @@ struct GitHubStarListAIGroupingResultList: View, Equatable {
     let onIgnore: (Int64) -> Void
     let onRetryAnalysis: (Int64) -> Void
     let onRetryApply: (Int64) -> Void
+    let onRetryLocalSync: (Int64) -> Void
     let onDiscardAppliedChanges: (Int64) -> Void
     let onRetryAutomaticallyIgnored: (Int64) -> Void
     let onLoadMore: () -> Void
@@ -90,6 +91,7 @@ struct GitHubStarListAIGroupingResultList: View, Equatable {
                             onIgnore: { onIgnore(item.id) },
                             onRetryAnalysis: { onRetryAnalysis(item.id) },
                             onRetryApply: { onRetryApply(item.id) },
+                            onRetryLocalSync: { onRetryLocalSync(item.id) },
                             onDiscardAppliedChanges: { onDiscardAppliedChanges(item.id) },
                             onRetryAutomaticallyIgnored: { onRetryAutomaticallyIgnored(item.id) }
                         )
@@ -168,6 +170,7 @@ private struct GitHubStarListAIGroupingResultRow: View, Equatable {
     let onIgnore: () -> Void
     let onRetryAnalysis: () -> Void
     let onRetryApply: () -> Void
+    let onRetryLocalSync: () -> Void
     let onDiscardAppliedChanges: () -> Void
     let onRetryAutomaticallyIgnored: () -> Void
 
@@ -470,6 +473,19 @@ private struct GitHubStarListAIGroupingResultRow: View, Equatable {
 
     private var appliedMembershipEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if item.isLocallyApplied {
+                HStack(spacing: 8) {
+                    Image(systemName: "externaldrive.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                    Text("githubStarLists.aiGrouping.localFallback.detail")
+                        .font(interfaceScale.font(.caption))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("action.retry", action: onRetryLocalSync)
+                        .controlSize(.small)
+                }
+            }
             GitHubStarListAIGroupingChipBar(
                 lists: availableLists,
                 item: item,
@@ -514,6 +530,10 @@ private struct GitHubStarListAIGroupingResultRow: View, Equatable {
             ProgressView()
                 .controlSize(.mini)
                 .accessibilityLabel("githubStarLists.aiGrouping.applying")
+        } else if item.isLocallyApplied {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .foregroundStyle(.orange)
+                .accessibilityLabel("githubStarLists.aiGrouping.status.appliedLocally")
         } else if item.isApplied {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
@@ -559,6 +579,8 @@ private struct GitHubStarListAIGroupingResultRow: View, Equatable {
     private var statusLabel: some View {
         if item.isApplying {
             Text("githubStarLists.aiGrouping.applying")
+        } else if item.isLocallyApplied {
+            Text("githubStarLists.aiGrouping.status.appliedLocally")
         } else if item.isApplied {
             Text("githubStarLists.aiGrouping.status.applied")
         } else if item.automaticallyIgnoredFailure != nil {

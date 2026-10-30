@@ -467,6 +467,29 @@ struct GitHubStarListAIGroupingPresentationTests {
         #expect(!item.matches(filter: .suggestions, searchText: ""))
     }
 
+    @Test("展示快照区分本地已应用与 GitHub 已确认")
+    func snapshotPreservesLocallyAppliedStatus() throws {
+        var job = GitHubStarListAIGroupingJob(
+            repo: makeRepo(id: 10),
+            status: .completed,
+            applyState: .applied(["swift"]),
+            isLocallyApplied: true
+        )
+        job.suggestions = [GitHubStarListAISuggestion(listId: "swift", confidence: 0.96, reason: "Swift")]
+
+        let snapshot = GitHubStarListAIGroupingPresentationSnapshot(
+            jobs: [job],
+            availableLists: [swiftList],
+            existingListIDsByRepo: [10: ["swift"]],
+            selectedListIDsByRepo: [:],
+            ignoredRepoIDs: []
+        )
+
+        let item = try #require(snapshot.items.first)
+        #expect(item.reviewState == .applied)
+        #expect(item.isLocallyApplied)
+    }
+
     private var suggestion: GitHubStarListAISuggestionDisplay {
         GitHubStarListAISuggestionDisplay(
             list: swiftList,
@@ -482,6 +505,7 @@ struct GitHubStarListAIGroupingPresentationTests {
         suggestions: [GitHubStarListAISuggestionDisplay] = [],
         selectedListIDs: Set<String> = [],
         applyState: GitHubStarListAIApplyState = .idle,
+        isLocallyApplied: Bool = false,
         hasAppliedMembershipDraft: Bool = false,
         finishedAt: Date? = nil
     ) -> GitHubStarListAIReviewItem {
@@ -499,6 +523,7 @@ struct GitHubStarListAIGroupingPresentationTests {
             appliedGroupSummaries: [],
             applyState: applyState,
             isIgnoredByUser: false,
+            isLocallyApplied: isLocallyApplied,
             hasAppliedMembershipDraft: hasAppliedMembershipDraft,
             analysisFailureMessage: nil,
             finishedAt: finishedAt

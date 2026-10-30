@@ -713,6 +713,21 @@ final class RepoAIInsightSessionStore {
         }
     }
 
+    /// 取消单仓库仍在运行的生成，并等待它真正退出后再允许删除持久化结果。
+    ///
+    /// 只从字典移除 Task 不够：生成协程可能已经越过最后一个取消点，随后把摘要重新写回。
+    /// 因此取消 Star 的清理链必须 await 任务结束，再删除该仓库的摘要与分析缓存。
+    func remove(repoID: Repo.ID) async {
+        let runningTask = runningTasks.removeValue(forKey: repoID)?.task
+        viewModels.removeValue(forKey: repoID)?.invalidateForSessionStoreReset()
+        finishedTasks[repoID] = nil
+        finishedExpiryTasks.removeValue(forKey: repoID)?.cancel()
+        visiblePanelCounts[repoID] = nil
+        lruOrder.removeAll { $0 == repoID }
+        runningTask?.cancel()
+        await runningTask?.value
+    }
+
     /// 测试与诊断用：当前进程内会话数（含正在生成的仓）。
     var retainedSessionCount: Int { viewModels.count }
 

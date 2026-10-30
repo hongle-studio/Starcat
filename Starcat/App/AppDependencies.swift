@@ -14,6 +14,7 @@
 //
 
 import AppIntents
+import AppKit
 import Foundation
 
 @MainActor
@@ -42,8 +43,14 @@ final class AppDependencies {
     let oauthService: any GithubOAuthServiceProtocol
     let authSession: AuthSession
     let syncManager: SyncManager
+    /// Stars 完成后的后台工作拥有独立生命周期，不延长主窗口同步状态。
+    @ObservationIgnored private var starsSyncFollowUp: StarsSyncFollowUpCoordinator?
+    /// 前台探测外部新增 star，只提示不写库。点击后复用 `syncManager` 增量同步。
+    let externalStarInbox: ExternalStarInbox
     /// 主应用唯一的 Widget 快照发布器；负责账户隔离、去抖与 WidgetCenter 刷新。
     let widgetRefreshCoordinator: WidgetRefreshCoordinator
+    /// Direct 屏保快照发布器。App Store 构建内部 isEnabled = false，保持 no-op。
+    let screensaverRefreshCoordinator: ScreensaverRefreshCoordinator
     /// “我的项目”独立 GitHub App 授权状态，不复用主 OAuth 登录状态。
     let projectAccessSession: ProjectAccessSession
     /// 当前用户项目关系与同步代际仓储。
@@ -245,6 +252,9 @@ final class AppDependencies {
     /// 当前“趋势”仍使用 `trendingRepository`，不从 discovery 新趋势候选切换数据源。
     let discoveryRepository: any DiscoveryRepositoryProtocol
 
+    /// 与用户 Stars、普通 Discovery 和 Awesome 目录隔离的 Linux.do 公共来源缓存。
+    let linuxDoStore: LinuxDoStore
+
     /// Awesome 精选目录、账户订阅、自定义来源和来源证据的本地优先仓储。
     /// 与普通 Discovery bulk 分开，避免用户按需订阅的长清单进入全量探索缓存。
     let awesomeRepository: any AwesomeRepositoryProtocol
@@ -440,6 +450,8 @@ final class AppDependencies {
 
     /// star / unstar 唯一权威服务（写入 registry 的唯一路径）。
     let starActionService: StarActionService
+    /// GitHub unstar 成功后统一删除单仓库私有整理、派生分析与可选知识库数据。
+    let repositoryUnstarCleanupService: RepositoryUnstarCleanupService
 
     /// owner 卡片（详情页 hero owner 名入口弹出）的数据与关注动作服务。
     ///
@@ -539,7 +551,7 @@ final class AppDependencies {
         settings.aiProviderProfiles
             .filter(\.isVerifiedConfiguration)
             .flatMap(\.models)
-            .filter { $0.isEnabled && $0.capability != .embedding }
+            .filter { $0.isEnabled && $0.capability != .embedding && $0.capability != .rerank }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
@@ -551,7 +563,7 @@ final class AppDependencies {
     ) throws -> KnowledgeRAGService {
         // 工作台可在非 Pro 状态下打开以查看历史和索引覆盖，但创建服务就意味着将发起模型调用，
         // 因此必须在装配边界再校验一次，避免未来新增调用方绕过 ViewModel 门禁。
-        try entitlementGate.requirePro(.knowledgeRAG)
+        try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         let configuredBackend = settings.ragInferenceBackend
         // App Store 与 Direct 可能读到同一份迁移偏好。不可用的 CLI 偏好必须在装配时
         // 回退 API，既不启动外部进程，也不能让 App Store 的 RAG 因旧值整体失效。
@@ -674,7 +686,7 @@ final class AppDependencies {
     /// Agent 只复用 RAG 检索层，不构造 Planner / Generator，也不装配 GitHub 或 Web
     /// 临时上下文 Provider。范围由 `AgentRunContext` 冻结，执行期无法通过 tool 参数扩权。
     func makeAgentKnowledgeCapabilityAdapter(selectedModelID: String?) throws -> AgentKnowledgeCapabilityAdapter {
-        try entitlementGate.requirePro(.knowledgeRAG)
+        try entitlementGate.requirePro(.knowledgeRAG, usesLocalOnly: settings.isRAGPipelineResolvedToLocalAI)
         let chatSelection = try resolveRAGChatSelection(selectedModelID: selectedModelID)
         let embeddingSelection = try? settings.resolveEmbeddingSelection()
         let retriever = try makeKnowledgeRAGRetriever(
@@ -765,6 +777,10 @@ final class AppDependencies {
                 reranker = HuggingFaceTEIRAGReranker(configuration: rerankConfiguration, apiKey: apiKey)
             case .cohereCompatible:
                 reranker = CohereCompatibleRAGReranker(configuration: rerankConfiguration, apiKey: apiKey)
+            case .localMLX:
+                reranker = LocalMLXRAGReranker(
+                    configuration: rerankConfiguration,
+                    model: settings.selectedLocalAIModel(for: .reranker))
             }
         } else {
             reranker = nil
@@ -792,11 +808,13 @@ final class AppDependencies {
     private func resolveRAGChatSelection(selectedModelID: String?) throws -> RAGModelSelection {
         if let selectedModelID {
             for profile in settings.aiProviderProfiles where profile.isEnabled {
-                if let model = profile.models.first(where: { $0.id == selectedModelID && $0.isEnabled && $0.capability != .embedding }) {
+                if let model = profile.models.first(where: {
+                    $0.id == selectedModelID && $0.isEnabled && $0.capability != .embedding && $0.capability != .rerank
+                }) {
                     return RAGModelSelection(
                         profile: profile,
                         modelName: model.name,
-                        parameters: model.parameters ?? settings.effectiveParameters(for: settings.aiChatTask)
+                        parameters: model.effectiveParameters
                     )
                 }
             }
@@ -805,6 +823,7 @@ final class AppDependencies {
     }
 
     private func resolveRAGTaskSelection(task: AIModelTaskConfiguration) throws -> RAGModelSelection {
+        let task = settings.resolvedAITask(task)
         guard let profile = settings.aiProviderProfiles.first(where: { $0.id == task.providerID && $0.isEnabled }) else {
             throw SemanticSearchError.missingAPIKey
         }
@@ -813,7 +832,7 @@ final class AppDependencies {
         return RAGModelSelection(
             profile: profile,
             modelName: modelName,
-            parameters: settings.effectiveParameters(for: task)
+            parameters: task.parameters
         )
     }
 
@@ -830,7 +849,7 @@ final class AppDependencies {
         guard !apiKey.isEmpty || profile.provider.allowsEmptyAPIKey else {
             throw missingAPIKeyError
         }
-        return try OpenAIClient(configuration: AIClientConfiguration(
+        return try AIClientFactory.make(configuration: AIClientConfiguration(
             providerID: profile.id,
             provider: profile.provider,
             apiKey: apiKey,
@@ -929,6 +948,12 @@ final class AppDependencies {
         // D-01：构造时用具体类型 GRDBRepoRepository，字段类型是协议 any RepoRepositoryProtocol
         let repo = GRDBRepoRepository(database: db)
         self.repoRepository = repo
+        self.screensaverRefreshCoordinator = ScreensaverRefreshCoordinator(
+            repository: repo,
+            userIDProvider: { [weak session] in
+                session?.state.user?.id
+            }
+        )
         let dataContributionCoordinator = DataContributionCoordinator(
             repository: DataContributionRepository(database: db),
             repoRepository: repo,
@@ -943,6 +968,9 @@ final class AppDependencies {
         self.agentRunRepository = GRDBAgentRunRepository(database: db)
         let settings = AppSettings.shared
         self.settings = settings
+        // 本地 AI：启动时扫描磁盘安装状态，seed / 刷新内置 profile（模型→任务配置的桥）。
+        // 内部已做 TestEnvironment 门控：测试期不扫描、不初始化 MLX。
+        LocalAIModelManager.shared.syncBuiltInProfile()
         let repositorySpotlightService = RepositorySpotlightService(database: db, settings: settings)
         self.repositorySpotlightService = repositorySpotlightService
         repositorySpotlightService.registerAppIntentDependency()
@@ -965,6 +993,15 @@ final class AppDependencies {
             userNameProvider: { [weak session] in
                 session?.state.user?.login
             }
+        )
+        self.externalStarInbox = ExternalStarInbox(
+            apiClient: api,
+            repository: repo,
+            syncManager: self.syncManager,
+            userIDProvider: { [weak session] in
+                session?.state.user?.id
+            },
+            isAppActive: { NSApp.isActive }
         )
         let projectAccessSession = ProjectAccessSession()
         self.projectAccessSession = projectAccessSession
@@ -1077,6 +1114,22 @@ final class AppDependencies {
         let summaryRepo = GRDBAISummaryRepository(database: db)
         self.aiSummaryRepository = summaryRepo
 
+        // Labs 决策引擎：业务服务只依赖注册表，Jev（含 OpenRouter 承载路径）与
+        // Laya（进程内 MLX）是并列实现。用户只选择一个实现，不做跨引擎自动故障切换。
+        let decisionEngineRegistry = DecisionEngineRegistry(engines: [
+            JevDecisionEngine(client: TypeSafeClient(), settings: self.settings),
+            LayaDecisionEngine(),
+        ])
+        let repositoryDecisionService = RepositoryDecisionService(
+            engineRegistry: decisionEngineRegistry,
+            settings: self.settings,
+            readmeRepository: readmeRepo
+        )
+        let decisionTagSuggestionRouter = DecisionTagSuggestionRouter(
+            decisionProvider: repositoryDecisionService,
+            settings: self.settings
+        )
+
         // 2026-06-13 W4：RepoContextPacker 客户端接入三件套装配。
         // 顺序：① SharedSnapshotService（无依赖，单 struct 实例 OK）
         //      ② RepoContextStorage（单例，从此 root 走 storage.shared 即 W6 决议）
@@ -1098,7 +1151,8 @@ final class AppDependencies {
             readmeRepository: readmeRepo,
             settings: self.settings,
             repoAIContextProvider: repoAIContextProvider,
-            entitlementGate: self.entitlementGate
+            entitlementGate: self.entitlementGate,
+            tagSuggestionRouter: decisionTagSuggestionRouter
         )
         self.repoAIInsightService = aiInsight
         self.diskChatHistoryStore = .shared
@@ -1149,6 +1203,15 @@ final class AppDependencies {
         // HOM-52：批量整理服务装在 AI insight + 标签 + 标签关联 + AI 摘要 Repo 之后。
         // 注：onTagsChanged 由 HomeView 在 environment 注入后挂接，刷新 Sidebar 计数。
         let aiOrganizationDraftRepository = GRDBAIOrganizationDraftRepository(database: db)
+
+        // 分组保留独立路由：手动与后台自动分组统一使用所选决策引擎，但候选校验、
+        // 阈值与 GitHub Lists 写入边界仍由 GitHubStarListAIGroupingSession 负责。
+        let decisionGroupingRouter = DecisionGitHubListSuggestionRouter(
+            llmProvider: aiInsight,
+            decisionProvider: repositoryDecisionService,
+            settings: self.settings
+        )
+
         let batchSvc = BatchAIQueueService(
             insightService: aiInsight,
             tagRepository: tagRepo,
@@ -1163,7 +1226,7 @@ final class AppDependencies {
         self.githubStarListAIGroupingSession = GitHubStarListAIGroupingSession(
             repoRepository: repo,
             listService: self.githubStarListSyncService,
-            insightService: aiInsight,
+            insightService: decisionGroupingRouter,
             entitlementGate: self.entitlementGate,
             draftRepository: aiOrganizationDraftRepository
         )
@@ -1223,6 +1286,41 @@ final class AppDependencies {
             entitlementGate: self.entitlementGate
         )
 
+        let repositoryUnstarCleanupService = RepositoryUnstarCleanupService(
+            database: db,
+            cancelAISession: { [weak sessionStore = self.repoAIInsightSessionStore] repoID in
+                await sessionStore?.remove(repoID: repoID)
+            },
+            prepareKnowledgeIndexRemoval: { [weak ragIndexBuilder = self.knowledgeRAGIndexBuilder] repoID in
+                try await ragIndexBuilder?.prepareRepositoryRemoval(repoID: repoID)
+            },
+            finishKnowledgeIndexRemoval: { [weak ragIndexBuilder = self.knowledgeRAGIndexBuilder] repoID in
+                ragIndexBuilder?.finishRepositoryRemoval(repoID: repoID)
+            }
+        )
+        self.repositoryUnstarCleanupService = repositoryUnstarCleanupService
+
+        // Star 写入核心必须先于 MCP 门面装配：MCP 的 star/unstar 只能复用这条业务路径，
+        // 才能同步维护本地缓存、Undo 历史、活动账本和 Home 刷新。
+        let registry = StarredRegistry()
+        self.starredRegistry = registry
+        let starActionSvc = StarActionService(
+            apiClient: api,
+            repoRepository: repo,
+            registry: registry,
+            undoStarHistory: self.undoStarHistoryRepository,
+            userIDProvider: { [weak session] in
+                session?.state.user?.id
+            },
+            userNameProvider: { [weak session] in
+                session?.state.user?.login
+            },
+            cleanupService: repositoryUnstarCleanupService,
+            homeRefresher: nil,
+            activityRepository: self.userRepoActivityRepository
+        )
+        self.starActionService = starActionSvc
+
         // Alfred 等外部启动器复用与 Search Center 相同的两个 Provider。服务保持长生命周期，
         // 这样 GitHub Provider 的 5 分钟会话缓存不会因每次 MCP 调用重建而失效。
         let globalRepositorySearchService = GlobalRepositorySearchService(
@@ -1276,6 +1374,7 @@ final class AppDependencies {
             repoRepository: repo,
             metadataCapability: repositoryMetadataCapability,
             tagCapability: repositoryTagCapability,
+            starMutationService: starActionSvc,
             settings: self.settings,
             entitlementGate: self.entitlementGate
         )
@@ -1356,6 +1455,7 @@ final class AppDependencies {
         self.repoStarHistoryRepository = repoStarHistoryRepository
         let discoveryRepo = DiscoveryRepository(api: discoveryAPIInstance, database: db)
         self.discoveryRepository = discoveryRepo
+        self.linuxDoStore = LinuxDoStore(repository: LinuxDoRepository(api: discoveryAPIInstance))
         self.exploreCatalogStore = ExploreCatalogStore(repository: discoveryRepo)
         let awesomeRepository = AwesomeRepository(api: discoveryAPIInstance, database: db)
         self.awesomeRepository = awesomeRepository
@@ -1492,6 +1592,14 @@ final class AppDependencies {
         )
         self.repositoryInsightsContextCoordinator = repositoryInsightsContextCoordinator
         aiInsight.setRepositoryInsightsContextProvider(repositoryInsightsContextCoordinator)
+        repositoryUnstarCleanupService.attachKnowledgeArtifactCleanup {
+            [repositoryInsightsCache, knowledgeBaseMetadataSnapshotCache, readmeAvailability = self.readmeAvailability]
+            repo in
+            try await repositoryInsightsContextCoordinator.deleteArtifact(for: repo)
+            await repositoryInsightsCache.clearTransientState()
+            await knowledgeBaseMetadataSnapshotCache.removeAll()
+            readmeAvailability.clearNotFound(repoId: repo.id)
+        }
         let healthService = RepoHealthService(
             repository: healthRepo,
             releaseRepository: releaseRecordRepo,
@@ -1606,30 +1714,9 @@ final class AppDependencies {
         self.developerLanguageService = developerLanguageSvc
 
         // ────────────────────────────────────────────────────────────────────
-        // R-01「三场景共用架构」装配（2026-06-09）
+        // R-01「三场景共用架构」其余装配（2026-06-09）
+        // StarActionService 已在 MCP 之前创建，以下服务继续复用同一实例。
         // ────────────────────────────────────────────────────────────────────
-
-        let registry = StarredRegistry()
-        self.starredRegistry = registry
-
-        // userIDProvider 闭包：从 authSession 取当前用户 id（未登录时 nil）
-        // weak self 不需要 —— closure 只引用 session（已经是 self.authSession 强持），
-        // 但避免 closure 长期持有可能导致的延迟释放，明确 capture session。
-        let starActionSvc = StarActionService(
-            apiClient: api,
-            repoRepository: repo,
-            registry: registry,
-            undoStarHistory: self.undoStarHistoryRepository,
-            userIDProvider: { [weak session] in
-                session?.state.user?.id
-            },
-            userNameProvider: { [weak session] in
-                session?.state.user?.login
-            },
-            homeRefresher: nil,           // HomeView 在 .task 时通过 attachHomeRefresher 挂接
-            activityRepository: self.userRepoActivityRepository
-        )
-        self.starActionService = starActionSvc
 
         // owner 卡片服务：公开 profile 缓存 + 关注动作。无需 AuthSession 双向引用。
         self.ownerFollowService = OwnerFollowService(apiClient: api)
@@ -1675,14 +1762,42 @@ final class AppDependencies {
 
         // SyncManager 全量 / 增量同步成功完成 → bootstrapper.reload() 同步 registry 到 DB
         // 注：weak 不需要，bootstrapper 与 syncManager 都由 self 强持（生命周期一致）
-        self.syncManager.onSyncCompleted = { [bootstrapper, starListSyncService = self.githubStarListSyncService, session, ragIndexBuilder = self.knowledgeRAGIndexBuilder, widgetRefreshCoordinator = self.widgetRefreshCoordinator, repositorySpotlightService] in
+        self.syncManager.onSyncCompleted = { [bootstrapper] in
             await bootstrapper.reload()
-            if let login = session.state.user?.login {
+        }
+        // 只有本地 Stars 与注册表属于主同步。网络分组、RAG 和图片快照均为旁路，
+        // 两个独立 lane 合并在途请求；每个 await 后校验账号，切库前还必须取消并等待。
+        let currentStarsAccountID: @MainActor () -> Int64? = {
+            guard let id = session.state.user?.id, db.currentUserId == id else { return nil }
+            return id
+        }
+        let followUp = StarsSyncFollowUpCoordinator(
+            accountIDProvider: currentStarsAccountID,
+            refreshGroups: { [starListSyncService = self.githubStarListSyncService, externalStarInbox = self.externalStarInbox] login in
+                guard !Task.isCancelled else { return false }
+                await externalStarInbox.handleSyncCompleted()
+                guard !Task.isCancelled else { return false }
                 await starListSyncService.sync(login: login)
+                return !Task.isCancelled && starListSyncService.lastErrorMessage == nil
+            },
+            retryMemberships: { [starListSyncService = self.githubStarListSyncService] in
+                _ = await starListSyncService.retryPendingLocalMemberships()
+            },
+            refreshDerivedData: { [ragIndexBuilder = self.knowledgeRAGIndexBuilder, widgetRefreshCoordinator = self.widgetRefreshCoordinator, screensaverRefreshCoordinator = self.screensaverRefreshCoordinator, repositorySpotlightService] userID in
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                await ragIndexBuilder.refreshMetadataForKnowledgeRepos()
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                await widgetRefreshCoordinator.publishReady()
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                await screensaverRefreshCoordinator.publishReady()
+                guard !Task.isCancelled, currentStarsAccountID() == userID else { return }
+                repositorySpotlightService.scheduleRebuild()
             }
-            await ragIndexBuilder.refreshMetadataForKnowledgeRepos()
-            await widgetRefreshCoordinator.publishReady()
-            repositorySpotlightService.scheduleRebuild()
+        )
+        self.starsSyncFollowUp = followUp
+        self.syncManager.onSyncSettled = { [session, followUp] userID, trigger in
+            guard let user = session.state.user, user.id == userID else { return }
+            followUp.schedule(userID: userID, login: user.login, retryPendingMemberships: trigger == .manual)
         }
         self.syncManager.onFullSyncCompleted = { [dataContributionCoordinator] userID, capturedAt in
             // 不 await：快照和上传是严格旁路，SyncManager 的完成态不等待 Collection 服务。
@@ -1710,6 +1825,7 @@ final class AppDependencies {
         // 还能看到自己的数据，不会进入"无 DB 可用"的死状态。
         session.onUserSessionChanged = { [weak self] userId in
             guard let self else { return }
+            self.externalStarInbox.resetForAccountChange()
             // 自定义索引跨账号共用同一名称。真实登出/切号必须先清空；冷启动从
             // anonymous 占位库恢复同一账号时可保留到切库后的内容指纹核验。
             await self.repositorySpotlightService.prepareForAccountChange(to: userId)
@@ -1717,6 +1833,11 @@ final class AppDependencies {
             self.widgetRefreshCoordinator.publishEmpty(
                 state: userId == nil ? .signedOut : .preparing
             )
+            // 屏保空态是应用图标。冷启动 / 切库时先删快照会让预览先空很久；
+            // 已登录只覆盖发布，只有登出才清目录。
+            if userId == nil {
+                self.screensaverRefreshCoordinator.clear()
+            }
             self.ragComposerDraftStore.removeAll()
             do { try DiskNotificationCommentDraftCache.shared.deleteEverything() }
             catch {
@@ -1774,6 +1895,7 @@ final class AppDependencies {
             if didSwitchDatabase, userId != nil {
                 self.repositorySpotlightService.scheduleRebuild()
                 await self.widgetRefreshCoordinator.publishReady()
+                await self.screensaverRefreshCoordinator.publishReady()
             }
         }
 
@@ -1781,6 +1903,7 @@ final class AppDependencies {
         if !TestEnvironment.isRunning {
             repositorySpotlightService.startObserving()
             self.widgetRefreshCoordinator.startObserving()
+            self.screensaverRefreshCoordinator.startObserving()
             Task { [bootstrapper] in
                 await bootstrapper.reload()
             }
@@ -1821,6 +1944,10 @@ final class AppDependencies {
     func switchUserDatabase(to userId: Int64?) async throws {
         let previousUserId = database.currentUserId
         if previousUserId != userId {
+            await syncManager.cancelAndWait()
+            // 先停止服务拥有的子 Task，再等待协调器退出；反向等待会让旧快照迟迟无法取消。
+            await githubStarListSyncService.resetForAccountChange()
+            await starsSyncFollowUp?.resetForAccountChange()
             // 两套人工 AI 草稿都属于账号作用域。必须在 reopen 前等旧请求退出，随后再从
             // 新账号库恢复；把屏障放在数据库所有者内部，避免 View 生命周期竞态。
             await batchAIQueueService.resetForAccountChange()
@@ -1893,6 +2020,7 @@ final class AppDependencies {
         let cleaner = CacheCleaner(readmeRepository: readmeRepository)
         await cleaner.clearImageCache()
         cleaner.clearArchives()
+        screensaverRefreshCoordinator.clear()
 
         do { try await DiskReadmeTranslationCache.shared.deleteEverything() }
         catch { AppLog.general.warning("Factory reset: translation cache cleanup failed: \(error.localizedDescription, privacy: .public)") }
@@ -1969,7 +2097,9 @@ final class AppDependencies {
         case .sharing:  await shareAPI.updateBaseURL(target)
         case .wiki:     await wikiAPI.updateBaseURL(target)
         case .recommend: await recommendAPI.updateBaseURL(target)
-        case .discovery: await discoveryAPI.updateBaseURL(target)
+        case .discovery:
+            await discoveryAPI.updateBaseURL(target)
+            await linuxDoStore.providerDidChange()
         case .history: await starHistoryAPI.updateBaseURL(target)
         }
 
@@ -2020,7 +2150,9 @@ final class AppDependencies {
         case .sharing:  await shareAPI.updateAPIKey(resolved)
         case .wiki:     await wikiAPI.updateAPIKey(resolved)
         case .recommend: await recommendAPI.updateAPIKey(resolved)
-        case .discovery: await discoveryAPI.updateAPIKey(resolved)
+        case .discovery:
+            await discoveryAPI.updateAPIKey(resolved)
+            await linuxDoStore.providerDidChange()
         case .history: await starHistoryAPI.updateAPIKey(resolved)
         }
 

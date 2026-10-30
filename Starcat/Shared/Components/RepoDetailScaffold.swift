@@ -161,10 +161,9 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
     /// - 成功（不抛错）→ chip 自动退出 loading；UI 由 `StarredRegistry` /
     ///   `Repo.isStarred` 字段变更驱动重渲染（API 200 才变 UI 原则）
     /// - 抛错 → chip 抖动 + 短暂红色 600ms，不弹 toast / alert
-    /// - 闭包内部应：① 未登录走 `authSession.signIn()` 后 return（不抛错）
-    ///   ② 已 star 调 `dependencies.starActionService.unstar(repo:)`
-    ///   ③ 未 star 调 `dependencies.starActionService.star(owner:repo:)`
-    let onStarTapped: () async throws -> Void
+    /// - `cleanupScope == nil` 表示普通 Star；非 nil 表示用户已经在 Sheet 中确认 Unstar 范围
+    /// - 闭包内部应：① 未登录走登录入口后 return ② 按 scope 调用 unstar ③ nil 时执行 star/toggle
+    let onStarTapped: (RepositoryUnstarCleanupScope?) async throws -> Void
 
     /// Activity 等场景的 fallback 颜色（无语言时 Hero 渐变使用）。
     let fallbackAccentColor: Color
@@ -180,6 +179,9 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
 
     /// Manage 详情传入时展示语言分布分割线；其它详情场景保持 nil，不加载语言数据。
     let onLanguageTapped: ((String) -> Void)?
+
+    /// 默认展示 Hero 贡献者列。目前所有详情场景都开；保留开关避免以后某一场景要单独关掉。
+    let showsContributorsStat: Bool
 
     /// 账本行等场景的顶栏一句（如「你 Star 了 · 2 小时前」）。
     ///
@@ -230,12 +232,17 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
     /// Manage 详情 README / 洞察切换行高度。其它场景保持 0，AI 浮层用原来的 16pt 顶距。
     @State private var aiOverlayTopChromeInset: CGFloat = 0
 
+    /// README 状态栏真实高度。AI 浮层底边贴在状态栏上沿，而不是覆盖状态栏。
+    @State private var aiOverlayBottomChromeInset: CGFloat = 0
+
     /// 当前 repo 的真实知识库状态。
     ///
     /// 状态从 `repo_notes.library_state` 读取；点击成功写库后才更新，避免把 ❤️ 做成
     /// 乐观 UI。Scaffold 会被详情浮窗复用，不能只依赖 HomeViewModel 当前列表页缓存。
     @State private var libraryState: LibraryState = .outsideLibrary
     @State private var isLibraryOperationInFlight = false
+    /// 任何已 Star 仓库取消前都展示会删除的基础数据；已入库时再提供扩展清理选项。
+    @State private var isShowingUnstarDataChoice = false
     /// 详情页共用 Toast。知识库操作与中栏 toolbar 的复制反馈共享同一承载层，
     /// 避免相邻列各自弹提示导致反馈位置与操作对象不一致。
     @State private var detailToastMessage: String?
@@ -295,8 +302,9 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         starHelpKey: LocalizedStringKey = "repo.unstar",
         showsRepoHealthEntry: Bool = false,
         onLanguageTapped: ((String) -> Void)? = nil,
+        showsContributorsStat: Bool = true,
         topBanner: String? = nil,
-        onStarTapped: @escaping () async throws -> Void,
+        onStarTapped: @escaping (RepositoryUnstarCleanupScope?) async throws -> Void,
         @ViewBuilder heroExtension: @escaping () -> HeroExt,
         @ViewBuilder body: @escaping (@escaping (RepoDetailScrollReport) -> Void) -> Body
     ) {
@@ -306,6 +314,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         self.starHelpKey = starHelpKey
         self.showsRepoHealthEntry = showsRepoHealthEntry
         self.onLanguageTapped = onLanguageTapped
+        self.showsContributorsStat = showsContributorsStat
         self.topBanner = topBanner
         self.onStarTapped = onStarTapped
         self.heroExtension_ = heroExtension
@@ -320,8 +329,9 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         starHelpKey: LocalizedStringKey = "repo.unstar",
         showsRepoHealthEntry: Bool = false,
         onLanguageTapped: ((String) -> Void)? = nil,
+        showsContributorsStat: Bool = true,
         topBanner: String? = nil,
-        onStarTapped: @escaping () async throws -> Void,
+        onStarTapped: @escaping (RepositoryUnstarCleanupScope?) async throws -> Void,
         @ViewBuilder body: @escaping (@escaping (RepoDetailScrollReport) -> Void) -> Body
     ) where HeroExt == EmptyView {
         self.init(
@@ -331,6 +341,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
             starHelpKey: starHelpKey,
             showsRepoHealthEntry: showsRepoHealthEntry,
             onLanguageTapped: onLanguageTapped,
+            showsContributorsStat: showsContributorsStat,
             topBanner: topBanner,
             onStarTapped: onStarTapped,
             heroExtension: { EmptyView() },
@@ -364,13 +375,18 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
                         guard aiOverlayTopChromeInset != newValue else { return }
                         aiOverlayTopChromeInset = newValue
                     }
+                    .onPreferenceChange(RepoDetailAIOverlayBottomInsetPreference.self) { newValue in
+                        guard aiOverlayBottomChromeInset != newValue else { return }
+                        aiOverlayBottomChromeInset = newValue
+                    }
                     .overlay(alignment: .bottom) {
                         if isRepositoryAIAvailable {
                             // 所有 repo-backed 详情共用同一个底部 AI 主入口；独立窗口
                             // 仍只能从该面板内部的“在独立窗口中打开”派生。
                             RepoAIFloatingOverlay(
                                 repo: repo,
-                                topChromeInset: aiOverlayTopChromeInset
+                                topChromeInset: aiOverlayTopChromeInset,
+                                bottomChromeInset: aiOverlayBottomChromeInset
                             )
                         }
                     }
@@ -450,6 +466,15 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         .sheet(item: $proPaywallContext) { context in
             ProPaywallSheet.hosted(context: context, dependencies: dependencies)
         }
+        .sheet(isPresented: $isShowingUnstarDataChoice) {
+            RepositoryUnstarDataChoiceSheet(
+                repositoryFullName: repo.fullName,
+                isInKnowledgeLibrary: libraryState == .inLibrary,
+                onConfirm: { cleanupScope in
+                    try await onStarTapped(cleanupScope)
+                }
+            )
+        }
         .toast(
             message: $detailToastMessage,
             icon: detailToastIcon,
@@ -472,6 +497,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
             aiOverlayTopChromeInset = 0
             libraryState = .outsideLibrary
             isLibraryOperationInFlight = false
+            isShowingUnstarDataChoice = false
             detailToastMessage = nil
             proPaywallContext = nil
         }
@@ -763,7 +789,8 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
                     showsRepoHealthEntry: showsRepoHealthEntry,
                     libraryState: libraryState,
                     onLanguageTapped: onLanguageTapped,
-                    onStarTapped: onStarTapped
+                    showsContributorsStat: showsContributorsStat,
+                    onStarTapped: handleStarTapped
                 ) {
                     trailingActionsView
                 }
@@ -773,6 +800,18 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
                 RepoLocalSections(repo: repo)
             }
         }
+    }
+
+    /// 已 Star 仓库取消前统一展示删除清单；只有知识库成员才出现“同时移出知识库”。
+    private func handleStarTapped() async throws {
+        let isCurrentlyStarred = repo.isStarred || dependencies.starredRegistry.contains(ghRepoId: repo.id)
+        guard isCurrentlyStarred else {
+            try await onStarTapped(nil)
+            return
+        }
+        // 不能依赖 `.task(id:)` 是否已经完成；点击当下重新读取，确保入库仓库一定展示扩展选项。
+        await loadLibraryState(for: repo)
+        isShowingUnstarDataChoice = true
     }
 
     /// trailingActions 派发渲染（按 RepoDetailAction enum 类型）。
@@ -1027,7 +1066,7 @@ struct RepoDetailScaffold<Body: View, HeroExt: View>: View {
         case .weeklyIssue(let number, let url):
             Link(destination: url) {
                 HStack(spacing: 4) {
-                    Image(systemName: "newspaper")
+                    Image(systemName: BusinessIcon.Symbol.weekly.systemImage)
                         .font(.system(size: 12, weight: .semibold))
                     Text("# \(number)")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))

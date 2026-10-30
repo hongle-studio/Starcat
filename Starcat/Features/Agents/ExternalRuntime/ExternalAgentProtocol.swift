@@ -76,6 +76,9 @@ enum ExternalAgentProtocolEvent: Equatable, Sendable {
     case assistantDelta(String)
     case reasoningDelta(String)
     case assistantMessage(String, usage: AgentUsage?)
+    /// DeepSeek Harness 已结算的单步消息。保留原始 block 顺序，避免把 reasoning 与正文
+    /// 压平成两个跨 Run 的全局字符串，也让历史恢复使用同一份持久化事实。
+    case assistantStepMessage(ExternalAgentAssistantStepMessage, usage: AgentUsage?)
     case toolCall(id: String, name: String, input: AgentJSONValue, rawInput: String?)
     case toolResult(id: String, name: String, output: AgentJSONValue, isError: Bool)
     case artifactMarkdown(String, toolCallID: String)
@@ -85,6 +88,20 @@ enum ExternalAgentProtocolEvent: Equatable, Sendable {
     case completed
     case cancelled
     case failed(String)
+}
+
+/// 外部 Runtime 一次已结算 assistant step 的稳定消息边界。
+///
+/// `parts` 只保留用户可见 reasoning/text；tool call 由后续 `tool/call` 权威事件补入，
+/// 防止同一个调用在消息内容和工具事件中重复落库。
+struct ExternalAgentAssistantStepMessage: Equatable, Sendable {
+    let providerMessageID: String
+    let turn: Int
+    let step: Int
+    /// 对应 step lifecycle Trace。step 结束时 Projector 用它先落库正文，保证正文
+    /// sequence 位于 step/end 之前，而不是拖到下一条 assistant 消息才倒插展示。
+    let parentTraceID: String?
+    let parts: [AgentMessagePart]
 }
 
 /// Provider adapter 输出的 Runtime 原生事件。`sequence` 与 `runID` 由 projector 统一分配，

@@ -19,6 +19,8 @@ struct AwesomeView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(AuthSession.self) private var authSession
     @State private var searchText = ""
+    @State private var quickSearchDraft = ""
+    @State private var isQuickSearchExpanded = false
     @State private var selectedSection: String?
     @State private var sort: AwesomeSortOption = .original
     @State private var libraryStateMap: [Int64: LibraryState] = [:]
@@ -32,6 +34,8 @@ struct AwesomeView: View {
             errorBanner
             content
         }
+        .preference(key: RepoLicenseOptionsPreferenceKey.self,
+                    value: RepoLicenseFilter.options(store.repositories.map(\.licenseSpdx)))
         .task(id: authSession.state.isAuthenticated) {
             guard authSession.state.isAuthenticated else {
                 onRepoCountChange(0)
@@ -50,11 +54,16 @@ struct AwesomeView: View {
         .task(id: completeDataTaskIdentity) {
             guard requiresCompleteRepositorySet else { return }
             await store.loadAllRepositoryPages()
+            reportCount()
         }
         .task(id: filteredDisplayItemIDs) {
             await fillVisiblePageIfNeeded()
         }
+        .onChange(of: store.hasMoreRepositories) { _, hasMore in
+            if !hasMore { reportCount() }
+        }
         .onChange(of: store.selectedSourceID) { _, _ in
+            resetQuickSearch()
             selectedSection = nil
             sort = .original
             dependencies.exploreMultiSelectionStore.clearSelection()
@@ -67,12 +76,18 @@ struct AwesomeView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("awesome.search.placeholder", text: $searchText)
-                .textFieldStyle(.plain)
-
+        QuickSearchToolbarContent(
+            isExpanded: $isQuickSearchExpanded,
+            draft: $quickSearchDraft,
+            committedQuery: searchText,
+            placeholder: "list.quickSearch.placeholder",
+            onSubmit: { query in
+                let normalizedQuery = QuickSearchTextMatcher.normalized(query)
+                searchText = normalizedQuery
+                quickSearchDraft = normalizedQuery
+            },
+            onClear: { searchText = "" }
+        ) {
             if store.selectedSourceID != nil {
                 Picker("awesome.section.title", selection: $selectedSection) {
                     Text("awesome.section.all").tag(String?.none)
@@ -111,6 +126,13 @@ struct AwesomeView: View {
         .padding(.vertical, 9)
     }
 
+    /// 切换 Awesome 数据源时不能沿用上一个来源的搜索条件，避免新列表看起来像空数据。
+    private func resetQuickSearch() {
+        isQuickSearchExpanded = false
+        quickSearchDraft = ""
+        searchText = ""
+    }
+
     @ViewBuilder
     private var errorBanner: some View {
         if let error = store.errorMessage {
@@ -139,11 +161,14 @@ struct AwesomeView: View {
             ContentUnavailableView {
                 Label("sidebar.loginPrompt", systemImage: "person.crop.circle.badge.exclamationmark")
             }
+        } else if settings.licenseFilter.isActive && store.hasMoreRepositories {
+            // 完整本地来源补齐前不展示部分命中，避免用户把前缀空结果误认为没有匹配项目。
+            RepoSkeletonListView(rowCount: 10)
         } else if store.isLoading, store.repositories.isEmpty, store.resources.isEmpty {
             RepoSkeletonListView(rowCount: 10)
         } else if store.enabledSources.isEmpty {
             ContentUnavailableView {
-                Label("awesome.empty.noSources.title", systemImage: "sparkles.rectangle.stack")
+                Label("awesome.empty.noSources.title", businessIcon: .curatedCollection, pointSize: 40)
             } description: {
                 Text("awesome.empty.noSources.subtitle")
             } actions: {
@@ -260,8 +285,7 @@ struct AwesomeView: View {
                 ),
                 isSelected: multiStore.isActive
                     ? multiStore.contains(ghRepoId: repo.id)
-                    : (store.selectedRepositoryID == repo.id),
-                showStarredCheckmark: true
+                    : (store.selectedRepositoryID == repo.id)
             )
         }
         .buttonStyle(.plain)
@@ -319,7 +343,7 @@ struct AwesomeView: View {
     /// 仓库专属筛选无法解释外站资源。只要用户启用了任一仓库事实筛选，就隐藏资源条目，
     /// 避免把“缺少 GitHub 元数据”误判为满足筛选条件。
     private var resourcesMatchGlobalFilters: Bool {
-        guard !settings.hideArchived, !settings.hideForks, settings.globalFilterLanguages.isEmpty else { return false }
+        guard !settings.licenseFilter.isActive, !settings.hideArchived, !settings.hideForks, settings.globalFilterLanguages.isEmpty else { return false }
         guard case .all = settings.starFilter, case .all = settings.libraryFilter else { return false }
         guard case .unknown = settings.wikiAvailabilityFilter,
               case .unknown = settings.healthAvailabilityFilter,
@@ -408,7 +432,8 @@ struct AwesomeView: View {
                 languages: settings.globalFilterLanguages,
                 wikiFilter: settings.wikiAvailabilityFilter,
                 healthFilter: settings.healthAvailabilityFilter,
-                openSSFFilter: settings.openSSFAvailabilityFilter
+                openSSFFilter: settings.openSSFAvailabilityFilter,
+                licenseFilter: settings.licenseFilter
             ),
             facts: AwesomeGlobalFilterFacts(
                 isStarred: dependencies.starredRegistry.contains(ghRepoId: repo.id),
@@ -455,6 +480,8 @@ struct AwesomeView: View {
     }
 
     private func reportCount() {
+        // 许可证需要完整来源，不能把前 40 条中的命中数冒充完整计数。
+        guard !settings.licenseFilter.isActive || !store.hasMoreRepositories else { return }
         if store.hasMoreRepositories, !requiresCompleteRepositorySet {
             // 默认分页浏览时不能把已加载 40 条冒充完整结果数。
             onRepoCountChange(store.currentRepositoryCount)
@@ -467,13 +494,17 @@ struct AwesomeView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || selectedSection != nil
             || sort != .original
+            || settings.licenseFilter.isActive
     }
 
     private var completeDataTaskIdentity: AwesomeCompleteDataTaskIdentity {
         AwesomeCompleteDataTaskIdentity(
             searchText: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
             selectedSection: selectedSection,
-            sort: sort
+            sort: sort,
+            licenseFilter: settings.licenseFilter,
+            sourceID: store.selectedSourceID,
+            hasMoreRepositories: store.hasMoreRepositories
         )
     }
 }
@@ -508,6 +539,7 @@ struct AwesomeGlobalFilterOptions {
     let wikiFilter: RepoSignalAvailabilityFilter
     let healthFilter: RepoSignalAvailabilityFilter
     let openSSFFilter: RepoSignalAvailabilityFilter
+    var licenseFilter: RepoLicenseFilter = .all
 }
 
 struct AwesomeGlobalFilterFacts {
@@ -524,6 +556,7 @@ enum AwesomeGlobalFilterPolicy {
         options: AwesomeGlobalFilterOptions,
         facts: AwesomeGlobalFilterFacts
     ) -> Bool {
+        guard options.licenseFilter.matches(repo.licenseSpdx) else { return false }
         guard options.starFilter.matches(isStarred: facts.isStarred) else { return false }
         if options.hideArchived, repo.isArchived { return false }
         if options.hideForks, repo.isFork { return false }
@@ -668,4 +701,7 @@ private struct AwesomeCompleteDataTaskIdentity: Hashable {
     let searchText: String
     let selectedSection: String?
     let sort: AwesomeSortOption
+    var licenseFilter: RepoLicenseFilter = .all
+    let sourceID: String?
+    let hasMoreRepositories: Bool
 }

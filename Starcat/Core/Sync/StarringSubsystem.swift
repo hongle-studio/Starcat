@@ -191,8 +191,8 @@ final class StarredRegistry {
 ///    → HomeViewModel 刷新 sidebar 计数 / 当前列表
 /// ```
 ///
-/// 失败语义：任意一步 throw，service 直接把 error 上抛。UI 层（详情页 chip）负责
-/// 把 chip 抖动 + 短暂红色（~600ms）；**registry 不写入**，DB 没有半截状态。
+/// 失败语义：远端 Star / Unstar 失败时不修改 registry 或本地数据。Unstar 的远端状态
+/// 已成功、但后续本地清理部分失败时，仍保留已取消的 registry 状态，并把清理错误交给 UI。
 ///
 /// 为什么不做乐观 UI：API 200 才变 UI 是 v1.0 Q1 决策——简化状态机，避免回滚动画抖动。
 @MainActor
@@ -203,6 +203,8 @@ final class StarActionService {
     private let registry: StarredRegistry
     /// Undo Star 历史记录仓储（unstar 时写入，star 时移除）。
     private let undoStarHistory: any UndoStarHistoryRepositoryProtocol
+    /// 远端取消成功后执行；绝不能在 GitHub API 返回成功前提前删除用户数据。
+    private let cleanupService: RepositoryUnstarCleanupService
     /// 当前用户 Star / Unstar 账本。通知时间线混排用；单测可不传。
     private let activityRepository: (any UserRepoActivityRepositoryProtocol)?
 
@@ -224,6 +226,7 @@ final class StarActionService {
         undoStarHistory: any UndoStarHistoryRepositoryProtocol,
         userIDProvider: @escaping @MainActor () -> Int64?,
         userNameProvider: @escaping @MainActor () -> String? = { nil },
+        cleanupService: RepositoryUnstarCleanupService,
         homeRefresher: (any HomeRefreshing)? = nil,
         activityRepository: (any UserRepoActivityRepositoryProtocol)? = nil
     ) {
@@ -233,6 +236,7 @@ final class StarActionService {
         self.undoStarHistory = undoStarHistory
         self.userIDProvider = userIDProvider
         self.userNameProvider = userNameProvider
+        self.cleanupService = cleanupService
         self.homeRefresher = homeRefresher
         self.activityRepository = activityRepository
     }
@@ -334,12 +338,16 @@ final class StarActionService {
 
     /// Unstar 一个 repo。
     ///
-    /// 数据语义（v1.0 §3.2.3）：只置 `is_starred=false`，**保留** tags / notes /
-    /// release 订阅 / AI 摘要等用户私有数据。用户后续重新 star 时自动恢复
-    /// （因索引 = `gh_repo_id` 不变）。
+    /// GitHub API 成功后，始终删除 Star 私有整理与派生分析数据；调用方可以额外选择
+    /// 同时移出知识库。`repos` 元数据保留，后续重新 Star 仍复用现有 upsert 路径。
     ///
-    /// - throws: 同 star。失败不修改 registry。
+    /// - throws: 远端失败不修改 registry；本地清理失败时远端与 registry 已完成取消。
     func unstar(repo: Repo) async throws {
+        try await unstar(repo: repo, cleanupScope: .keepKnowledgeLibrary)
+    }
+
+    /// 详情页确认 Sheet 使用的显式清理范围入口。
+    func unstar(repo: Repo, cleanupScope: RepositoryUnstarCleanupScope) async throws {
         try await unstar(
             ghRepoId: repo.id,
             owner: repo.owner,
@@ -347,7 +355,9 @@ final class StarActionService {
             displayedStarsCount: registry.displayedStarsCount(
                 base: repo.starsCount,
                 ghRepoId: repo.id
-            )
+            ),
+            cleanupScope: cleanupScope,
+            cleanupRepo: repo
         )
     }
 
@@ -360,9 +370,24 @@ final class StarActionService {
     ///
     /// **同文件依赖**：访问 `registry._remove` 是 fileprivate，必须留在本文件内，
     /// 与 StarringSubsystem 的「写入路径唯一」契约一致（详见文件头注释）。
-    func unstar(ghRepoId: Int64, owner: String, name: String, displayedStarsCount: Int? = nil) async throws {
+    func unstar(
+        ghRepoId: Int64,
+        owner: String,
+        name: String,
+        displayedStarsCount: Int? = nil,
+        cleanupScope: RepositoryUnstarCleanupScope = .keepKnowledgeLibrary,
+        cleanupRepo: Repo? = nil
+    ) async throws {
         guard let userID = userIDProvider() else {
             throw StarActionError.notAuthenticated
+        }
+
+        // 必须在远端调用前拿到完整 identity，但这里只读；任何删除仍在 API 成功之后。
+        let persistedRepo: Repo?
+        if let cleanupRepo {
+            persistedRepo = cleanupRepo
+        } else {
+            persistedRepo = try await repoRepository.findById(ghRepoId)
         }
 
         let baseline: Int?
@@ -374,7 +399,13 @@ final class StarActionService {
             baseline = try await repoRepository.findById(ghRepoId)?.starsCount
         }
 
-        try await apiClient.unstar(owner: owner, repo: name)
+        do {
+            try await apiClient.unstar(owner: owner, repo: name)
+        } catch NetworkError.notFound {
+            // 仓库已在 GitHub 侧删除（404）：unstar 的目标状态（未 star）本来就已达成，
+            // 继续执行本地 markUnstarred，否则已删库的仓库在 Starcat 里永远取消不掉。
+            AppLog.sync.info("unstar 目标仓库已不存在（404），仅更新本地状态：\(owner, privacy: .public)/\(name, privacy: .public)")
+        }
         try await repoRepository.markUnstarred(repoId: ghRepoId, userID: userID)
 
         registry._remove(ghRepoId)
@@ -389,6 +420,19 @@ final class StarActionService {
             object: nil,
             userInfo: ["repoId": ghRepoId]
         )
+
+        // GitHub 已经成功取消 Star，下面的本地清理即使部分失败也不能回滚远端状态。
+        // 先完成 registry / 账本 / Home 状态收口，最后再把“本地未删完整”错误交给 UI。
+        var cleanupError: Error?
+        if let persistedRepo {
+            do {
+                try await cleanupService.cleanup(repo: persistedRepo, scope: cleanupScope)
+            } catch {
+                cleanupError = error
+            }
+        } else {
+            cleanupError = RepositoryUnstarCleanupError(failedComponents: ["本地仓库信息"])
+        }
         await homeRefresher?.refreshAfterStarChange()
 
         // 记录到 Undo Star 历史（去重：同 ghRepoId 更新 unstarred_at）
@@ -438,6 +482,9 @@ final class StarActionService {
         }
 
         AppLog.sync.info("Unstar OK \(owner, privacy: .public)/\(name, privacy: .public) (id=\(ghRepoId, privacy: .public))")
+        if let cleanupError {
+            throw cleanupError
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────────

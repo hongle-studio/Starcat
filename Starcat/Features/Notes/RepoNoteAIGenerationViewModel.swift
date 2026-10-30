@@ -298,6 +298,9 @@ final class RepoNoteAIGenerationViewModel {
             return error.errorDescription
         case let error as AIClientError:
             return error.errorDescription
+        case let error as LocalAIError:
+            // 本地重复中止等错误有受控的本地化文案，不能退化成未知错误。
+            return error.errorDescription
         case let error as EntitlementGateError:
             return error.errorDescription
         default:

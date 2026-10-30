@@ -109,6 +109,7 @@ HStack {
 | 复制 | `CopyFeedbackButton`；成功 1.5 秒显示绿色 `checkmark.circle.fill` |
 | 重置 | `ResetIconButton`；成功反馈后自动恢复 |
 | 删除 / 清空 | `DestructiveIconButton`；业务删除仍必须二次确认 |
+| 取消 / 放弃草稿 | `CancelIconButton`；草稿未落盘，不二次确认 |
 | 其他 | 后续统一封装为设置页专用 action button；禁止直接写裸 `Button { Image(...) }` |
 
 每个 icon-only 按钮必须有 tooltip 与 accessibility label。使用 `.buttonStyle(.plain)` 时，必须紧跟 `.focusEffectDisabled()`。

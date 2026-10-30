@@ -19,7 +19,7 @@
 | [第4轮文档一致性审查报告.md](./第4轮文档一致性审查报告.md) | 当前实现、线上状态、运维边界与代码注释一致性复审 |
 | [API聚合与Kit抽离专项完成结果报告.md](./API聚合与Kit抽离专项完成结果报告.md) | 结果报告 |
 
-运维权威补充：`supports/docs/fly-io-环境变量.md`、`.claude/skills/starcat-supports-ops/references/ops-map.md`。
+运维权威补充：`supports/docs/fly-io-环境变量.md`、`skills/starcat-supports-ops/references/ops-map.md`。
 
 ## 当前边界
 

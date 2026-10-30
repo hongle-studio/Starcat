@@ -8,6 +8,9 @@
 //  与最短展示时长均完成后淡出移除。测试 host（`TestEnvironment.isRunning`）跳过，
 //  避免拖慢 xcodebuild test 启动链路。
 //
+//  Direct 正式版第一次打开若本机有 App Store 正式数据：splash 淡出后先弹出导入确认，
+//  用户点完才 restore。Debug 商店容器不参与检测。
+//
 //  关键约束：
 //  - 必须读 `\.starcatReduceMotion`：关动画时入口瞬显、退出无 transition
 //  - `LaunchSplashContainer` 放在 `.id(localeStore...)` **外层**，避免切语言时重播
@@ -97,6 +100,9 @@ struct LaunchSplashContainer<Content: View>: View {
     @State private var splashSequenceFinished = TestEnvironment.isRunning
     /// splash 淡出后、首次安装时展示分步引导 overlay。
     @State private var showFirstRunOnboarding = false
+    /// Direct 正式版第一次打开：从本机 App Store 数据导入的确认层。
+    @State private var importController = AppStoreToDirectImportController()
+    @State private var showAppStoreImportPrompt = false
     /// 0 = 首次引导收束期主窗口模糊，1 = 完全清晰。冷启动 splash 期间保持 1——
     /// splash 本身不透明，无需在底下再做 blur/scale，否则淡出时会露出错层顶栏。
     @State private var mainContentRevealProgress: Double = 1
@@ -119,6 +125,24 @@ struct LaunchSplashContainer<Content: View>: View {
                             : .opacity.combined(with: .scale(scale: 1.015))
                     )
                     .zIndex(999)
+            }
+            if showAppStoreImportPrompt {
+                ZStack {
+                    Color.primary.opacity(0.18)
+                        .ignoresSafeArea()
+                    AppStoreToDirectImportSheet(
+                        isCopying: importController.isCopying,
+                        errorMessage: importController.errorMessage,
+                        onCopy: { Task { await handleAppStoreImportCopy() } },
+                        onSkip: { Task { await handleAppStoreImportSkip() } }
+                    )
+                    .appLocaleEnvironment()
+                }
+                .appLocaleEnvironment()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(.container, edges: .all)
+                .transition(reduceMotion ? .identity : .opacity)
+                .zIndex(1_001)
             }
             if showFirstRunOnboarding {
                 FirstRunOnboardingView(
@@ -143,7 +167,7 @@ struct LaunchSplashContainer<Content: View>: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // splash / 引导期间隐藏 window toolbar。排序行在 safeAreaInset，标题走系统 navigation chrome。
-        .environment(\.firstRunOnboardingActive, showFirstRunOnboarding || isSplashVisible)
+        .environment(\.firstRunOnboardingActive, showFirstRunOnboarding || isSplashVisible || showAppStoreImportPrompt)
         .animation(
             reduceMotion ? nil : .easeOut(duration: LaunchSplashTiming.dismissAnimationSeconds),
             value: isSplashVisible
@@ -159,6 +183,9 @@ struct LaunchSplashContainer<Content: View>: View {
                 FirstRunOnboardingPreferences.beginPresentation()
                 showFirstRunOnboarding = true
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AppStoreToDirectImportIdentity.debugReplayNotification)) { _ in
+            presentAppStoreImportPrompt()
         }
     }
 
@@ -212,21 +239,25 @@ struct LaunchSplashContainer<Content: View>: View {
             if reduceMotion { return LaunchSplashTiming.reduceMotionMinimum }
             return isFirstLaunch ? LaunchSplashTiming.firstLaunchMinimum : LaunchSplashTiming.standardMinimum
         }()
+        let shouldPromptImport = importController.shouldPromptOnLaunch()
 
-        // `async let` 会把 View 的实例方法送入 nonisolated child task；显式 MainActor Task
-        // 既保留与最短展示时间并行执行，也不跨 actor 发送非 Sendable 的 View 值。
-        let restoreTask = Task { @MainActor in
-            await restoreSessionWithinSplashBudget()
-        }
-        try? await Task.sleep(for: minimumDisplay)
-        let didFinishRestore = await restoreTask.value
+        // 导入确认必须发生在 restore 之前，否则空 Direct 会先用空凭据走一遍登录恢复。
+        if !shouldPromptImport {
+            let restoreTask = Task { @MainActor in
+                await restoreSessionWithinSplashBudget()
+            }
+            try? await Task.sleep(for: minimumDisplay)
+            let didFinishRestore = await restoreTask.value
 
-        if !didFinishRestore {
-            AppLog.auth.warning("restore: splash budget exceeded; continuing startup without blocking UI")
-        }
+            if !didFinishRestore {
+                AppLog.auth.warning("restore: splash budget exceeded; continuing startup without blocking UI")
+            }
 
-        if isFirstLaunch {
-            await waitForWarmContentIfNeeded()
+            if isFirstLaunch {
+                await waitForWarmContentIfNeeded()
+            }
+        } else {
+            try? await Task.sleep(for: minimumDisplay)
         }
 
         LaunchSplashPreferences.markColdStartCompleted()
@@ -234,6 +265,43 @@ struct LaunchSplashContainer<Content: View>: View {
         splashSequenceFinished = true
         // 常规冷启动：主界面在 splash 下已是清晰最终布局，淡出 overlay 即可。
         // 首次引导会在 `presentFirstRunOnboardingIfNeeded` 里主动 obscureMainContent。
+        if shouldPromptImport {
+            presentAppStoreImportPrompt()
+            return
+        }
+        await presentFirstRunOnboardingIfNeeded()
+    }
+
+    private func presentAppStoreImportPrompt() {
+        obscureMainContent()
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.42)) {
+            showAppStoreImportPrompt = true
+        }
+    }
+
+    private func handleAppStoreImportSkip() async {
+        guard !importController.isCopying else { return }
+        importController.skipImport()
+        await finishAppStoreImportPrompt()
+    }
+
+    private func handleAppStoreImportCopy() async {
+        guard !importController.isCopying else { return }
+        let succeeded = await importController.copyImport()
+        guard succeeded else { return }
+        await finishAppStoreImportPrompt()
+    }
+
+    private func finishAppStoreImportPrompt() async {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.32)) {
+            showAppStoreImportPrompt = false
+        }
+        revealMainContent(
+            duration: LaunchSplashTiming.mainContentRevealSeconds,
+            curve: .easeInOut(duration: LaunchSplashTiming.mainContentRevealSeconds)
+        )
+        // 返回值「是否在预算内完成」只影响启动分支；这里无论快慢都继续首启引导。
+        _ = await restoreSessionWithinSplashBudget()
         await presentFirstRunOnboardingIfNeeded()
     }
 

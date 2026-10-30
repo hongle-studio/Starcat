@@ -34,7 +34,7 @@ import Observation
 /// `Repo` 实例；而 batch star/unstar 真正只需要 `ghRepoId` + `owner` + `name`。
 /// 抽出 `BatchStarTarget` 后 Manage / Trending / Weekly / Activity 四个场景的
 /// 入参形态完全统一，BatchStarService 不再依赖 Repo 模型。
-struct BatchStarTarget: Equatable, Identifiable {
+struct BatchStarTarget: Equatable, Identifiable, Sendable {
     /// GitHub repo ID。registry 的 contains 查询 + DB markUnstarred 都用它。
     let ghRepoId: Int64
     let owner: String

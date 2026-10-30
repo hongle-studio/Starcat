@@ -142,21 +142,21 @@ enum SidebarItem: Hashable, Identifiable {
     /// SF Symbol 图标名（用于 Sidebar 行的前置图标）。
     var systemImage: String {
         switch self {
-        case .trending:                return "safari"
-        case .allStars:                return "star.fill"
+        case .trending:                return BusinessIcon.Symbol.discovery.systemImage
+        case .allStars:                return BusinessIcon.Symbol.stars.systemImage
         // 与「订阅发布」的 shippingbox.fill 区分：用人物叠层表达「我拥有 / 可访问的项目」。
         // 不用 folder.badge.gearshape——同行已有项目授权 gear 角标，再叠 gear 会视觉撞车。
-        case .myProjects:              return "person.crop.rectangle.stack.fill"
-        case .untagged:                return "tag.slash"
-        case .library:                 return "heart.fill"
-        case .allLanguages:            return "globe"
-        case .smartCollectionsHome:    return "line.3.horizontal.decrease.circle"
+        case .myProjects:              return BusinessIcon.Symbol.myProjects.systemImage
+        case .untagged:                return BusinessIcon.Symbol.untagged.systemImage
+        case .library:                 return BusinessIcon.Symbol.library.systemImage
+        case .allLanguages:            return BusinessIcon.Symbol.languages.systemImage
+        case .smartCollectionsHome:    return BusinessIcon.Symbol.collections.systemImage
         case .smartCollection(let kind): return kind.systemImage
-        case .userSmartCollection:     return "line.3.horizontal.decrease.circle"
-        case .language:                return "chevron.left.forwardslash.chevron.right"
-        case .tag:                     return "tag.fill"
-        case .githubStarListUngrouped: return "tray"
-        case .githubStarList:          return "folder.fill"
+        case .userSmartCollection:     return BusinessIcon.Symbol.collections.systemImage
+        case .language:                return BusinessIcon.Symbol.codeContext.systemImage
+        case .tag:                     return BusinessIcon.Symbol.tags.systemImage
+        case .githubStarListUngrouped: return BusinessIcon.Symbol.ungrouped.systemImage
+        case .githubStarList:          return BusinessIcon.Symbol.groups.systemImage
         }
     }
 

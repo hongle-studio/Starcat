@@ -132,6 +132,39 @@ struct GitHubDTOsTests {
         #expect(dto.score == 1.0)
     }
 
+    @Test("GitHubRepoDTO 解码 fork parent")
+    func decodeForkParent() throws {
+        let json = #"""
+        {
+            "id": 200,
+            "name": "xxl-job",
+            "full_name": "dong4j/xxl-job",
+            "owner": { "id": 2, "login": "dong4j" },
+            "stargazers_count": 1,
+            "forks_count": 0,
+            "watchers_count": 0,
+            "html_url": "https://github.com/dong4j/xxl-job",
+            "private": false,
+            "fork": true,
+            "archived": false,
+            "default_branch": "master",
+            "parent": {
+                "full_name": "xuxueli/xxl-job",
+                "html_url": "https://github.com/xuxueli/xxl-job",
+                "default_branch": "master",
+                "owner": { "id": 3, "login": "xuxueli" }
+            }
+        }
+        """#.data(using: .utf8)!
+
+        let dto = try decoder.decode(GitHubRepoDTO.self, from: json)
+        #expect(dto.fork == true)
+        #expect(dto.parent?.fullName == "xuxueli/xxl-job")
+        #expect(dto.parent?.ownerLogin == "xuxueli")
+        #expect(dto.parent?.repoName == "xxl-job")
+        #expect(dto.parent?.defaultBranch == "master")
+    }
+
     /// 老的 `/user/starred` 嵌套 repo 不一定带新字段（部分字段是新增 API
     /// 字段或本来就只在 `/repos/{owner}/{repo}` 端点返回）。验证全部缺失时
     /// DTO 仍解码成功，新字段全部为 nil。
@@ -160,5 +193,6 @@ struct GitHubDTOsTests {
         #expect(dto.disabled == nil)
         #expect(dto.isTemplate == nil)
         #expect(dto.score == nil)
+        #expect(dto.parent == nil)
     }
 }

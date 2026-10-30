@@ -423,11 +423,14 @@ This project has been linked and endorsed by [LINUX DO Community](https://linux.
 ## Star History
 
 <div align="center">
-<a href="https://star-history.dera.page/#starcat-app/Starcat">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=starcat-app/Starcat&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=starcat-app/Starcat" />
-    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=starcat-app/Starcat" />
-  </picture>
-</a>
+  <a href="https://github.com/starcat-app/Starcat" target="_blank" rel="noopener noreferrer">
+    <picture data-starcat-star-history>
+      <source
+        media="(prefers-color-scheme: dark)"
+        srcset="https://history.starcat.ink/embed/v1/repos/starcat-app/Starcat/star-history.svg?theme=dark&amp;locale=en">
+      <img
+        alt="starcat-app/Starcat Star History"
+        src="https://history.starcat.ink/embed/v1/repos/starcat-app/Starcat/star-history.svg?theme=light&amp;locale=en">
+    </picture>
+  </a>
 </div>

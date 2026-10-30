@@ -80,6 +80,18 @@ protocol GitHubAPIClientProtocol: Sendable {
     /// - Throws: 网络层 `NetworkError`（404 / 401 / RateLimit 等）。
     func repo(owner: String, repo: String) async throws -> GitHubRepoDTO
 
+    /// 自己的 fork：上游身份 + 默认分支 ahead/behind。
+    ///
+    /// parent 来自 `GET /repos`；ahead/behind 走 GraphQL `ref.compare`，避免 REST compare
+    /// 把整段 files/commits 拉回来。compare 失败时仍返回 parent，计数为 nil。
+    ///
+    /// - Parameter restFallback: 仅首次进入详情为 true。Sync 成功后的刷新关掉它，
+    ///   避免 awesome-* 这类巨大 diff 把 REST compare 打到超时，看起来像同步失败。
+    func forkRelation(owner: String, repo: String, restFallback: Bool) async throws -> GitHubForkRelation
+
+    /// `POST /repos/{owner}/{repo}/merge-upstream`。409 由 `NetworkError.clientError` 抛出。
+    func mergeUpstream(owner: String, repo: String, branch: String) async throws -> GitHubMergeUpstreamResult
+
     /// GitHub Repository Search。返回 APIResponse 以保留 rate-limit 与分页响应头。
     func searchRepositories(
         query: GitHubRepositorySearchQuery,
@@ -89,6 +101,22 @@ protocol GitHubAPIClientProtocol: Sendable {
 
     /// 拉取单个仓库按字节统计的语言分布（详情 Hero 进入后按需加载）。
     func repositoryLanguages(owner: String, repo: String) async throws -> [String: Int]
+
+    /// 拉取仓库在指定 ref 上的递归 git tree（详情页按文件勾选下载）。
+    ///
+    /// `ref` 用默认分支或 `HEAD`。截断由 DTO 的 `truncated` 表达，不在这里抛错。
+    func repositoryGitTree(owner: String, repo: String, ref: String) async throws -> GitHubGitTreeDTO
+
+    /// 拉取仓库分支名（文件浏览器切树）。分页由实现方消化，调用方拿到完整列表。
+    func repositoryBranches(owner: String, repo: String) async throws -> [GitHubRepoBranchDTO]
+
+    /// 指定 path 的最近一次提交；没有提交时返回 nil。
+    func repositoryLatestCommit(
+        owner: String,
+        repo: String,
+        path: String,
+        ref: String
+    ) async throws -> GitHubCommitSummaryDTO?
 
     // MARK: - Readme
 
@@ -243,6 +271,34 @@ extension GitHubAPIClientProtocol {
         )
     }
 
+    /// 旧 Mock 默认失败，避免测试在未 stub 时拿到空树当成「仓库没文件」。
+    func repositoryGitTree(owner: String, repo: String, ref: String) async throws -> GitHubGitTreeDTO {
+        throw NetworkError.clientError(
+            statusCode: 501,
+            message: "Repository git tree is not implemented by this client"
+        )
+    }
+
+    /// 旧 Mock 默认失败；分支列表不能伪造空数组，否则 UI 会以为仓库没有分支。
+    func repositoryBranches(owner: String, repo: String) async throws -> [GitHubRepoBranchDTO] {
+        throw NetworkError.clientError(
+            statusCode: 501,
+            message: "Repository branches are not implemented by this client"
+        )
+    }
+
+    func repositoryLatestCommit(
+        owner: String,
+        repo: String,
+        path: String,
+        ref: String
+    ) async throws -> GitHubCommitSummaryDTO? {
+        throw NetworkError.clientError(
+            statusCode: 501,
+            message: "Repository commits are not implemented by this client"
+        )
+    }
+
     /// 未指定超时的既有调用保持默认 URLSession 策略；RAG 构建会显式传入短超时。
     func readmeHTML(
         owner: String,
@@ -384,5 +440,17 @@ extension GitHubAPIClientProtocol {
         perPage: Int
     ) async throws -> APIResponse<[GitHubOrganizationIssue]> {
         throw NetworkError.clientError(statusCode: 501, message: "Organization Issues is not implemented by this client")
+    }
+
+    func forkRelation(owner: String, repo: String, restFallback: Bool) async throws -> GitHubForkRelation {
+        throw NetworkError.clientError(statusCode: 501, message: "Fork relation is not implemented by this client")
+    }
+
+    func forkRelation(owner: String, repo: String) async throws -> GitHubForkRelation {
+        try await forkRelation(owner: owner, repo: repo, restFallback: true)
+    }
+
+    func mergeUpstream(owner: String, repo: String, branch: String) async throws -> GitHubMergeUpstreamResult {
+        throw NetworkError.clientError(statusCode: 501, message: "Merge upstream is not implemented by this client")
     }
 }

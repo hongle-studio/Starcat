@@ -301,7 +301,7 @@ final class AutoTidyScheduler {
             return
         }
         do {
-            try entitlementGate?.requirePro(.autoOrganize)
+            try entitlementGate?.requirePro(.autoOrganize, usesLocalOnly: settings.isTagsTaskResolvedToLocalAI)
         } catch {
             // 自动整理是后台触发，不能弹 sheet；记录原因并静默跳过，前台设置入口会负责提示。
             AppLog.ai.info("[autoTidy] runOnce(\(reason, privacy: .public)) skipped: \(error.localizedDescription, privacy: .public)")
@@ -378,7 +378,11 @@ final class AutoTidyScheduler {
             } else {
                 let options = snapshot.makeBatchOptions(standardActionRepoIDs: Set(standardPicked.map(\.id)))
                 if options.isValidForStart {
-                    let didStart = batchService.start(repos: standardPicked, options: options, silent: true)
+                    let didStart = batchService.start(
+                        repos: standardPicked,
+                        options: options,
+                        invocationMode: .automatic
+                    )
                     startedStandardCount = didStart ? standardPicked.count : 0
                 }
             }

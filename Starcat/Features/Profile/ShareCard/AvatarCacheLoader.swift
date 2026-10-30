@@ -47,6 +47,20 @@ enum AvatarCacheLoader {
 
     // MARK: - 公开 API
 
+    /// 只读 Kingfisher 磁盘 / 内存 cache，不触发网络。屏保只拿这份数据做像素边长检查。
+    static func cachedImageData(for url: URL) -> Data? {
+        if let data = readFromDiskCache(url: url) {
+            return data
+        }
+        let key = url.absoluteString
+        if let image = ImageCache.default.retrieveImageInMemoryCache(forKey: key),
+           let data = image.kf.pngRepresentation(),
+           data.count <= maxBytes {
+            return data
+        }
+        return nil
+    }
+
     /// 按现有头像尺寸的候选 key 读取本地图片，禁止触发网络，供卡片首帧使用。
     /// 先查全部内存 key，避免列表头像已经在内存中却仍逐个探测磁盘；磁盘命中保留原始格式。
     /// async 非 actor 方法沿用本模块的后台执行方式，磁盘读取和图片编码不占用主线程。

@@ -246,6 +246,27 @@ final class DiskWikiCache {
 
     // MARK: - 清理
 
+    /// 删除单仓库 Wiki 快照；取消 Star 并移出知识库时使用。
+    ///
+    /// 单仓删除必须发送与保存相同的 identity 通知，让仍打开的详情页和 RAG Metadata
+    /// 立即失效；目录为空时顺手移除 owner 目录，避免留下无意义的空层级。
+    func delete(owner: String, repo: String) throws {
+        let url = try cacheFileURL(owner: owner, repo: repo)
+        if fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
+        }
+        let ownerDirectory = url.deletingLastPathComponent()
+        if (try? fileManager.contentsOfDirectory(atPath: ownerDirectory.path).isEmpty) == true {
+            try? fileManager.removeItem(at: ownerDirectory)
+        }
+        reload()
+        NotificationCenter.default.post(
+            name: .wikiCacheDidChange,
+            object: self,
+            userInfo: ["owner": owner, "repo": repo]
+        )
+    }
+
     /// 设置页"清除 Wiki 缓存"按钮入口：删整个 `wiki-cache/` 目录后立即 reload。
     func deleteEverything() throws {
         // 清理前保留受影响 identity，让当前用户数据库只重建真正可能含 Wiki 链接的 Metadata。

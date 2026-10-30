@@ -13,7 +13,7 @@
 //  关键约束：
 //  - 主键是 `(repo_id, model)`；同一个 repo 可为不同 embedding model 保存不同向量。
 //  - `snapshotJson` 是 `IndexedSnapshot` 的 Codable JSON 编码：
-//    - body：AI 摘要 / README 纯文本 / description+topics 兜底（三级降级）
+//    - body：AI 摘要与 README 并存（摘要在前），都没有才用 description+topics
 //    - notes：用户私有笔记（可空）
 //    - metadata：fullName / description / language / topics / license / homepage 元数据元组
 //  - BLOB 编/解码保持在本模型内，业务层只处理 `[Float]`，不接触二进制细节。

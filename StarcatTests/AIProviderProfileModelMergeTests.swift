@@ -165,4 +165,96 @@ struct AIProviderProfileModelMergeTests {
         #expect(sanitized.models.count == AIProviderProfile.maxStoredModels)
         #expect(sanitized.models.filter { $0.name == "dup" }.count == 1)
     }
+
+    @Test("历史脏数据：大目录几乎全开时收口到首次拉取额度")
+    func sanitizedForStorageCapsExcessEnabledModels() {
+        let models: [AIModelDescriptor] = (0..<194).map { index in
+            AIModelDescriptor(
+                providerID: "orca",
+                name: "model-\(index)",
+                capability: .chat,
+                isEnabled: true
+            )
+        }
+        let profile = AIProviderProfile(
+            id: "orca",
+            provider: .orcaRouter,
+            models: models
+        )
+
+        let sanitized = profile.sanitizedForStorage()
+        let enabled = sanitized.models.filter(\.isEnabled)
+        #expect(sanitized.models.count == 194)
+        #expect(enabled.count == AIProviderProfile.firstFetchAutoEnableCount)
+        #expect(enabled.allSatisfy { $0.capability == .chat })
+    }
+
+    @Test("收口大目录全开时保留任务正在引用的模型")
+    func sanitizedForStorageKeepsReferencedModels() {
+        var models: [AIModelDescriptor] = (0..<80).map { index in
+            AIModelDescriptor(
+                providerID: "p",
+                name: "chat-\(index)",
+                capability: .chat,
+                isEnabled: true
+            )
+        }
+        models.append(
+            AIModelDescriptor(
+                providerID: "p",
+                name: "task-chat",
+                capability: .chat,
+                isEnabled: true
+            )
+        )
+        models.append(
+            AIModelDescriptor(
+                providerID: "p",
+                name: "embed-keep",
+                capability: .embedding,
+                isEnabled: true
+            )
+        )
+        let profile = AIProviderProfile(
+            id: "p",
+            provider: .openAICompatible,
+            models: models
+        )
+
+        let sanitized = profile.sanitizedForStorage(
+            referencedModelNames: ["task-chat", "embed-keep"]
+        )
+        let enabledNames = Set(sanitized.models.filter(\.isEnabled).map(\.name))
+        #expect(enabledNames.contains("task-chat"))
+        #expect(enabledNames.contains("embed-keep"))
+        #expect(enabledNames.count <= AIProviderProfile.firstFetchAutoEnableCount + 2)
+    }
+
+    @Test("再次拉取已全开的大目录：不会把历史全开态原样写回")
+    func largeCatalogRefreshCapsLegacyAllEnabled() {
+        let existing: [AIModelDescriptor] = (0..<80).map { index in
+            AIModelDescriptor(
+                providerID: "p",
+                name: "chat-\(index)",
+                capability: .chat,
+                isEnabled: true
+            )
+        }
+        let incoming = existing.map {
+            AIModelDescriptor(
+                providerID: "p",
+                name: $0.name,
+                capability: .chat,
+                isEnabled: true
+            )
+        }
+
+        let merged = AIProviderProfile.mergedDiscoveredModels(
+            existing: existing,
+            incoming: incoming,
+            providerID: "p"
+        )
+
+        #expect(merged.filter(\.isEnabled).count == AIProviderProfile.firstFetchAutoEnableCount)
+    }
 }

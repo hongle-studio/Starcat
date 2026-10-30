@@ -63,6 +63,9 @@ final class BatchAIQueueService {
     /// 是否被用户暂停。`isRunning && !isPaused` 才会拉下一个 job。
     private(set) var isPaused: Bool = false
 
+    /// 本轮的显式调用来源。Provider 路由依赖它区分人工建议与自动写入链路。
+    private(set) var invocationMode: BatchAIInvocationMode = .manual
+
     /// HOM-126：本轮是否是「自动后台整理」触发（区别于 HOM-52 用户手动整理）。
     ///
     /// 用途：
@@ -71,8 +74,8 @@ final class BatchAIQueueService {
     ///   Sidebar 改用「AI 自动整理中 N/M」轻量行展示进度。
     /// - 服务自身不主动唤起 UI（本来就不持有 UI），所以"静默"语义全部由订阅方实现。
     ///
-    /// 生命周期：在 `start(...)` 时设置，`reset()` 清回 false。
-    private(set) var silent: Bool = false
+    /// 它只负责 UI 展示语义；Provider 路由必须读取 `invocationMode`，不能反向依赖该派生值。
+    var silent: Bool { invocationMode == .automatic }
 
     /// 当前 Worker 正在处理的 repo id；数量不会超过 `defaultConcurrency`。
     private(set) var processingJobIDs: Set<Int64> = []
@@ -98,9 +101,17 @@ final class BatchAIQueueService {
     /// 与给模型的 `sharedTagLibrary` 分开保存：后者受字符预算截断，不能作为来源判断依据。
     private var initialTagCanonicalKeys: Set<String>?
 
-    /// 同一批次的多个 Worker 可能同时遇到同一个新标签。按 canonical key 共享创建任务，
-    /// 保证只创建一次，其余 Worker 复用同一结果，避免并发 UNIQUE 冲突和同义写法重复建标。
-    private var pendingTagCreationsByCanonicalKey: [String: Task<Tag, Error>] = [:]
+    /// Jev 首轮没有任何可复用标签的仓库。人工批次结束后只对这个集合做一次全局概念发现；
+    /// 自动后台整理不消费该集合，因为它没有确认扩充词表的交互边界。
+    private var uncoveredTagRepositoryIDs: Set<Int64> = []
+
+    /// 单次整批概念发现得到的待确认词表。它与逐仓标签建议一起持久化在现有草稿中，
+    /// 用户确认前不会创建标签；确认后才使用扩充后的闭集词表重新归类。
+    private(set) var pendingTagExpansionSession: TagTaxonomyBootstrapSession?
+
+    /// 概念发现是批次级请求，失败不能伪装成每个仓库各自失败，也不能退回逐仓 LLM。
+    /// 保存一条会话级错误供工作区展示和重试。
+    private(set) var tagExpansionError: String?
 
     /// 可重试失败的最早再次执行时刻，避免 429 / 5xx 立即空转轰炸 Provider。
     private var retryNotBeforeByRepoID: [Int64: Date] = [:]
@@ -121,6 +132,10 @@ final class BatchAIQueueService {
     /// 整批应用开始时冻结的「已选 N 个」快照；避免 `.applying` 被排除出有效选择后数字连跳。
     private var frozenTagReviewSelectionCount: Int?
 
+    /// 批量标签落库的真实仓库进度。生成进度已经结束后，审核面板改用这份状态展示
+    /// 「正在应用 X / N」，避免顶部仍停在 2053 / 2053 而用户无法判断落库是否前进。
+    private(set) var tagApplicationProgress: BatchAITagApplicationProgress?
+
     // MARK: - 依赖（按 AppDependencies 装配顺序注入）
 
     private let insightService: any BatchAIInsightProviding
@@ -138,6 +153,11 @@ final class BatchAIQueueService {
     /// 正常状态下保留 5 个长驻 Worker；每个 Worker 完成一个仓库后立即领取下一项。
     private static let defaultConcurrency = 5
     private static let rateLimitCooldown: TimeInterval = 30
+    /// 每块只产生一次 repo_tags 事务和一次草稿事务；100 个仓库既能把 2,000+ 次写入
+    /// 压缩到几十次，又保留取消边界、失败分块和可见进度。
+    private static let tagApplicationChunkSize = 100
+    /// 新标签属于全局词表而不是仓库私有关键词；每批最多扩充 5 个，避免词表线性膨胀。
+    private static let maximumTagExpansionCount = 5
 
     /// 一批任务内确实应用过标签后，通知外部刷新 Sidebar 计数 / 当前列表。
     ///
@@ -243,6 +263,9 @@ final class BatchAIQueueService {
     /// 自动后台任务由调度器记录结果，不应反过来阻塞用户发起新的手动整理。
     var hasUnresolvedManualWork: Bool {
         guard !silent, !jobs.isEmpty else { return false }
+        if pendingTagExpansionSession != nil || !uncoveredTagRepositoryIDs.isEmpty {
+            return true
+        }
         return jobs.contains { job in
             switch job.status {
             case .queued, .processing, .failed:
@@ -300,12 +323,16 @@ final class BatchAIQueueService {
     /// 行为：清掉上一批次的 jobs（即使是已完成的）→ 把传入 repos 全部入队 → 启动循环。
     /// 如果当前正在跑且未结束，会被拒绝（调用方应先 cancel）。
     ///
-    /// - Parameter silent: HOM-126 新增。`true` 表示由自动调度器触发，
+    /// - Parameter invocationMode: `.automatic` 表示由自动调度器触发，
     ///   订阅方（HomeView / 浮动面板 / Banner）应避免主动弹任何 sheet / 强提示；
-    ///   Sidebar 改用「AI 自动整理中 N/M」轻量行展示进度。默认 `false` 维持 HOM-52
+    ///   Sidebar 改用「AI 自动整理中 N/M」轻量行展示进度。默认 `.manual` 维持 HOM-52
     ///   手动模式行为不变。
     @discardableResult
-    func start(repos: [Repo], options: BatchAIQueueOptions, silent: Bool = false) -> Bool {
+    func start(
+        repos: [Repo],
+        options: BatchAIQueueOptions,
+        invocationMode: BatchAIInvocationMode = .manual
+    ) -> Bool {
         guard !isRunning else {
             AppLog.ai.warning("[batch-ai] start() ignored: already running")
             return false
@@ -317,7 +344,7 @@ final class BatchAIQueueService {
             return false
         }
         do {
-            try entitlementGate?.requirePro(.batchAI)
+            try entitlementGate?.requirePro(.batchAI, usesLocalOnly: AppSettings.shared.isGenerationTasksResolvedToLocalAI)
         } catch {
             // 批量整理可能由 UI 或自动调度器触发。这里做底层硬门控，避免绕过付费墙后
             // 仍能直接启动队列；UI 入口会把同一个错误转换成 ProPaywallSheet。
@@ -329,14 +356,14 @@ final class BatchAIQueueService {
             return false
         }
         do {
-            try validateConfiguration(for: options)
+            try validateConfiguration(for: options, invocationMode: invocationMode)
         } catch {
             // 只记录一次批次级配置错误，不能把同一个缺失项扩散成数千条 job 失败。
             AppLog.ai.warning("[batch-ai] start() blocked by AI configuration: \(error.localizedDescription, privacy: .public)")
             return false
         }
         self.options = options
-        self.silent = silent
+        self.invocationMode = invocationMode
         self.jobs = repos.map { repo in
             BatchAIJob(
                 repoId: repo.id,
@@ -357,22 +384,138 @@ final class BatchAIQueueService {
         self.processingJobIDs = []
         self.sharedTagLibrary = nil
         self.initialTagCanonicalKeys = nil
-        self.pendingTagCreationsByCanonicalKey = [:]
+        self.uncoveredTagRepositoryIDs = []
+        self.pendingTagExpansionSession = nil
+        self.tagExpansionError = nil
         self.retryNotBeforeByRepoID = [:]
         self.rateLimitCooldownUntil = nil
-        self.activeDraftID = silent ? nil : UUID()
-        self.isDraftCreated = silent
-        AppLog.ai.notice("[batch-ai] start: count=\(repos.count, privacy: .public), autoApplyTags=\(options.autoApplyTags, privacy: .public), threshold=\(options.confidenceThreshold, privacy: .public), silent=\(silent, privacy: .public)")
+        self.activeDraftID = invocationMode == .automatic ? nil : UUID()
+        self.isDraftCreated = invocationMode == .automatic
+        AppLog.ai.notice("[batch-ai] start: count=\(repos.count, privacy: .public), autoApplyTags=\(options.autoApplyTags, privacy: .public), threshold=\(options.confidenceThreshold, privacy: .public), mode=\(String(describing: invocationMode), privacy: .public)")
         launchRunLoop()
+        return true
+    }
+
+    /// 以纯本地候选直接建立一轮人工审核，不启动 Provider Worker。
+    ///
+    /// 首次标签体系已经在独立工作台完成全局候选分析；这里仅把确定性归类结果投影为
+    /// `BatchAIJob`，从而复用既有逐仓勾选、草稿恢复和最终 repo_tags 写入能力。标签关系
+    /// 仍必须由用户在审核页确认，不能因为本地分析不消耗 token 就绕过保守写入边界。
+    @discardableResult
+    func startLocalTagReview(
+        repos: [Repo],
+        suggestionsByRepoID: [Int64: [AITagSuggestion]],
+        options requestedOptions: BatchAIQueueOptions
+    ) async -> Bool {
+        guard !isRunning, runLoopTask == nil else {
+            AppLog.ai.warning("[batch-ai] local taxonomy review ignored: queue is running")
+            return false
+        }
+        guard !hasUnresolvedManualWork else {
+            AppLog.ai.warning("[batch-ai] local taxonomy review ignored: unresolved manual session exists")
+            return false
+        }
+        guard !repos.isEmpty, suggestionsByRepoID.values.contains(where: { !$0.isEmpty }) else {
+            AppLog.ai.warning("[batch-ai] local taxonomy review ignored: no local suggestions")
+            return false
+        }
+        do {
+            // 本轮没有远端生成调用，Pro 门控必须按 local-only 语义判断，不能要求 AI Key。
+            try entitlementGate?.requirePro(.batchAI, usesLocalOnly: true)
+        } catch {
+            AppLog.ai.warning("[batch-ai] local taxonomy review blocked by entitlement: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+
+        var localOptions = requestedOptions
+        localOptions.actions = [.tags]
+        localOptions.autoApplyTags = false
+        localOptions.autoCreateMissingTags = false
+        localOptions.standardActionRepoIDs = nil
+
+        let existingTags: [Tag]
+        do {
+            existingTags = try await tagRepository.fetchAll()
+        } catch {
+            AppLog.database.error("[batch-ai] load local taxonomy tags failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        let existingKeys = Set(existingTags.compactMap { tag -> String? in
+            let key = AITagSuggestionPolicy.canonicalKey(tag.name)
+            return key.isEmpty ? nil : key
+        })
+        let now = Date.now
+
+        self.options = localOptions
+        self.invocationMode = .manual
+        self.repoCache = Dictionary(uniqueKeysWithValues: repos.map { ($0.id, $0) })
+        self.jobs = repos.map { repo in
+            var job = BatchAIJob(
+                repoId: repo.id,
+                repoFullName: repo.fullName,
+                repoDescription: repo.description,
+                ownerAvatarURL: repo.ownerAvatar
+            )
+            let suggestions = suggestionsByRepoID[repo.id] ?? []
+            job.suggestedTags = suggestions
+            job.suggestedTagAvailability = suggestions.reduce(into: [:]) { result, suggestion in
+                let key = AITagSuggestionPolicy.canonicalKey(suggestion.name)
+                result[suggestion.id] = existingKeys.contains(key) ? .existing : .missing
+            }
+            job.finishedAt = now
+            if suggestions.isEmpty {
+                // 未命中不是 Provider 失败；保留在“忽略”中，用户仍能看到本地体系的覆盖边界。
+                job.status = .ignored
+                job.tagReviewState = .ignored
+                job.ignoreReason = .taxonomyUncovered
+            } else {
+                job.status = .completed
+                job.selectedSuggestedTagIDs = Set(suggestions.map(\.id))
+                job.tagReviewState = .pending
+            }
+            return job
+        }
+        self.selectedRepoIDsForTagApplication = Set(jobs.compactMap { job in
+            job.tagReviewState == .pending ? job.repoId : nil
+        })
+        self.bulkActionRepoIDs = []
+        self.isPaused = false
+        self.isRunning = false
+        self.cancelRequested = false
+        self.accountResetRequested = false
+        self.hasPendingTagsChangedNotification = false
+        self.startedAt = now
+        self.processingJobIDs = []
+        self.sharedTagLibrary = existingTags.map(\.name)
+        self.initialTagCanonicalKeys = existingKeys
+        self.uncoveredTagRepositoryIDs = []
+        self.pendingTagExpansionSession = nil
+        self.tagExpansionError = nil
+        self.retryNotBeforeByRepoID = [:]
+        self.rateLimitCooldownUntil = nil
+        self.activeDraftID = UUID()
+        self.isDraftCreated = false
+
+        guard await prepareDraftForRun() else {
+            deleteActiveDraft()
+            reset()
+            return false
+        }
+        AppLog.ai.notice(
+            "[batch-ai] local taxonomy review ready: total=\(repos.count, privacy: .public), pending=\(self.pendingTagReviewCount, privacy: .public)"
+        )
         return true
     }
 
     /// 整理弹窗的只读预检结果。UI 与 `start()` 复用同一校验入口，避免按钮显示可用，
     /// 点击后却创建整批失败任务。返回值已经本地化，可直接作为错误说明展示。
-    func configurationIssue(for options: BatchAIQueueOptions) -> String? {
+    func configurationIssue(
+        for options: BatchAIQueueOptions,
+        invocationMode: BatchAIInvocationMode = .manual
+    ) -> String? {
         guard options.isValidForStart else { return nil }
         do {
-            try validateConfiguration(for: options)
+            try validateConfiguration(for: options, invocationMode: invocationMode)
             return nil
         } catch {
             return error.localizedDescription
@@ -482,7 +625,8 @@ final class BatchAIQueueService {
             activeDraftID = draft.id
             isDraftCreated = true
             options = header.options
-            silent = false
+            // 只有人工会话会持久化草稿；恢复后仍保持人工路由语义，但不会自动重放请求。
+            invocationMode = .manual
             startedAt = header.startedAt
             jobs = snapshots.map { $0.restoredJob() }
             repoCache = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.repo.id, $0.repo) })
@@ -495,7 +639,9 @@ final class BatchAIQueueService {
             processingJobIDs = []
             sharedTagLibrary = nil
             initialTagCanonicalKeys = nil
-            pendingTagCreationsByCanonicalKey = [:]
+            uncoveredTagRepositoryIDs = header.uncoveredTagRepositoryIDs ?? []
+            pendingTagExpansionSession = header.pendingTagExpansionSession
+            tagExpansionError = header.tagExpansionError
             retryNotBeforeByRepoID = [:]
             rateLimitCooldownUntil = nil
 
@@ -531,13 +677,16 @@ final class BatchAIQueueService {
         processingJobIDs = []
         cancelRequested = false
         accountResetRequested = false
-        silent = false
+        invocationMode = .manual
         hasPendingTagsChangedNotification = false
         isBulkApplyingSuggestedTags = false
         frozenTagReviewSelectionCount = nil
+        tagApplicationProgress = nil
         sharedTagLibrary = nil
         initialTagCanonicalKeys = nil
-        pendingTagCreationsByCanonicalKey = [:]
+        uncoveredTagRepositoryIDs = []
+        pendingTagExpansionSession = nil
+        tagExpansionError = nil
         retryNotBeforeByRepoID = [:]
         rateLimitCooldownUntil = nil
         repoCache = [:]
@@ -577,6 +726,7 @@ final class BatchAIQueueService {
         jobs[idx].failure = nil
         jobs[idx].errorDiagnostic = nil
         jobs[idx].copyDiagnostic = nil
+        jobs[idx].ignoreReason = nil
         jobs[idx].finishedAt = nil
         retryNotBeforeByRepoID[jobId] = nil
         schedulePersistJob(repoID: jobId)
@@ -610,6 +760,7 @@ final class BatchAIQueueService {
             jobs[idx].failure = nil
             jobs[idx].errorDiagnostic = nil
             jobs[idx].copyDiagnostic = nil
+            jobs[idx].ignoreReason = nil
             jobs[idx].finishedAt = nil
             retryNotBeforeByRepoID[jobs[idx].repoId] = nil
             touched = true
@@ -747,6 +898,7 @@ final class BatchAIQueueService {
         case .pending, .failed:
             jobs[index].selectedSuggestedTagIDs = []
             jobs[index].tagReviewState = .ignored
+            jobs[index].ignoreReason = .userSkipped
             selectedRepoIDsForTagApplication.remove(repoId)
             schedulePersistJob(repoID: repoId)
         case .notRequired, .applying, .applied, .ignored:
@@ -843,6 +995,7 @@ final class BatchAIQueueService {
         for index in jobs.indices where jobs[index].tagReviewState == .ignored {
             guard repoIDs.contains(jobs[index].repoId) else { continue }
             jobs[index].tagReviewState = .pending
+            jobs[index].ignoreReason = nil
         }
         schedulePersistJobs(repoIDs: repoIDs)
     }
@@ -913,6 +1066,7 @@ final class BatchAIQueueService {
 
             guard let finalIndex = jobs.firstIndex(where: { $0.repoId == repoId }) else { return }
             jobs[finalIndex].tagReviewState = .applied
+            jobs[finalIndex].ignoreReason = nil
             selectedRepoIDsForTagApplication.remove(repoId)
             try await persistJob(repoID: repoId)
             // 整批应用中只记 pending，结束时合并一次 Sidebar 刷新，避免每仓触发整窗抖动。
@@ -928,10 +1082,30 @@ final class BatchAIQueueService {
         }
     }
 
-    /// 依照队列顺序应用底栏勾选的仓库。
+    private struct PendingBulkTagApplication {
+        let repoID: Int64
+        let selectedSuggestionIDs: Set<String>
+        let suggestions: [AITagSuggestion]
+        let appliedTagNames: Set<String>
+    }
+
+    private struct ResolvedBulkTagSuggestion {
+        let suggestionID: String
+        let tag: Tag
+    }
+
+    private struct ResolvedBulkTagApplication {
+        let repoID: Int64
+        let selectedSuggestionIDs: Set<String>
+        let suggestions: [ResolvedBulkTagSuggestion]
+        let appliedTagNames: Set<String>
+    }
+
+    /// 依照队列顺序分块应用底栏勾选的仓库。
     ///
-    /// 标签可能需要按 canonical key 创建；串行复用单仓应用路径可以避免多个仓库同时创建同名标签，
-    /// 同时每完成一个仓库就即时更新该行。单仓失败会保留勾选并继续处理其余仓库。
+    /// 旧实现逐仓复用单项路径，每仓 3 个标签时会产生 8 次独立写事务，并在每次 await 后
+    /// 重扫 jobs。这里先把每块的标签解析到内存，再用一次 repo_tags 事务和一次草稿事务提交；
+    /// 分块之间仍保留取消与失败边界，失败块保持勾选，可继续重试。
     func applySelectedTagReviewRepositories() async {
         guard !isBulkApplyingSuggestedTags else { return }
         let selectedRepoIDs = effectiveSelectedRepoIDsForTagApplication
@@ -941,22 +1115,263 @@ final class BatchAIQueueService {
             .filter { selectedRepoIDs.contains($0) }
         beginBulkTagApplication(selectionCount: selectedRepoIDs.count)
         defer { endBulkTagApplication() }
-        for repoId in orderedRepoIDs {
-            guard !Task.isCancelled else { return }
-            await applySelectedSuggestedTags(repoId: repoId)
+
+        let jobIndexByRepoID = Dictionary(
+            uniqueKeysWithValues: jobs.indices.map { (jobs[$0].repoId, $0) }
+        )
+        var tagsByCanonicalKey: [String: Tag]
+        do {
+            let tags = try await tagRepository.fetchAll()
+            tagsByCanonicalKey = Dictionary(
+                tags.map { (AITagSuggestionPolicy.canonicalKey($0.name), $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+        } catch {
+            await markBulkTagApplicationsFailed(
+                repoIDs: orderedRepoIDs,
+                error: error,
+                jobIndexByRepoID: jobIndexByRepoID
+            )
+            advanceTagApplicationProgress(by: orderedRepoIDs.count)
+            return
         }
+
+        var chunkStart = 0
+        while chunkStart < orderedRepoIDs.count {
+            guard !Task.isCancelled else { return }
+            let chunkEnd = min(
+                chunkStart + Self.tagApplicationChunkSize,
+                orderedRepoIDs.count
+            )
+            let chunkRepoIDs = Array(orderedRepoIDs[chunkStart..<chunkEnd])
+            let pendingApplications = pendingBulkTagApplications(
+                repoIDs: chunkRepoIDs,
+                jobIndexByRepoID: jobIndexByRepoID
+            )
+            guard !pendingApplications.isEmpty else {
+                advanceTagApplicationProgress(by: chunkRepoIDs.count)
+                chunkStart = chunkEnd
+                continue
+            }
+
+            let activeRepoIDs = pendingApplications.map(\.repoID)
+            markBulkTagApplicationsAsApplying(
+                repoIDs: activeRepoIDs,
+                jobIndexByRepoID: jobIndexByRepoID
+            )
+
+            do {
+                let resolved = try await resolveBulkTagApplications(
+                    pendingApplications,
+                    tagsByCanonicalKey: tagsByCanonicalKey
+                )
+                tagsByCanonicalKey = resolved.tagsByCanonicalKey
+
+                let assignments = resolved.applications.flatMap { application in
+                    application.suggestions.map { suggestion in
+                        RepoTagAssignment(repoId: application.repoID, tagId: suggestion.tag.id)
+                    }
+                }
+                try await repoTagRepository.batchAddTags(assignments: assignments)
+                if !assignments.isEmpty {
+                    hasPendingTagsChangedNotification = true
+                }
+
+                var updatedJobs = jobs
+                var updatedSelectedRepoIDs = selectedRepoIDsForTagApplication
+                for application in resolved.applications {
+                    guard let index = jobIndexByRepoID[application.repoID] else { continue }
+                    updatedJobs[index].selectedSuggestedTagIDs.subtract(application.selectedSuggestionIDs)
+                    updatedJobs[index].appliedTagNames = application.appliedTagNames.sorted()
+                    for suggestion in application.suggestions
+                    where updatedJobs[index].suggestedTagAvailability[suggestion.suggestionID] == .missing {
+                        updatedJobs[index].suggestedTagAvailability[suggestion.suggestionID] = .created
+                    }
+                    updatedJobs[index].tagReviewState = .applied
+                    updatedSelectedRepoIDs.remove(application.repoID)
+                }
+
+                // 草稿先写最终快照，再一次性发布内存状态。若 checkpoint 失败，数据库关联已由
+                // INSERT OR IGNORE 保证可安全重试，UI 继续保留选择并显示失败，不会伪装成功。
+                try await persistBulkDraftItems(
+                    jobs: updatedJobs,
+                    repoIDs: activeRepoIDs,
+                    selectedRepoIDs: updatedSelectedRepoIDs,
+                    jobIndexByRepoID: jobIndexByRepoID
+                )
+                jobs = updatedJobs
+                selectedRepoIDsForTagApplication = updatedSelectedRepoIDs
+            } catch {
+                await markBulkTagApplicationsFailed(
+                    repoIDs: activeRepoIDs,
+                    error: error,
+                    jobIndexByRepoID: jobIndexByRepoID
+                )
+            }
+
+            advanceTagApplicationProgress(by: chunkRepoIDs.count)
+            chunkStart = chunkEnd
+        }
+    }
+
+    /// 在任何 await 之前冻结当前分块的选择。未来分块仍可继续接受用户调整，与旧串行路径一致；
+    /// 当前分块一旦进入 applying 就不再读取可变 UI 状态，避免 actor 重入造成标签错配。
+    private func pendingBulkTagApplications(
+        repoIDs: [Int64],
+        jobIndexByRepoID: [Int64: Int]
+    ) -> [PendingBulkTagApplication] {
+        repoIDs.compactMap { repoID in
+            guard selectedRepoIDsForTagApplication.contains(repoID),
+                  let index = jobIndexByRepoID[repoID]
+            else { return nil }
+            switch jobs[index].tagReviewState {
+            case .pending, .failed:
+                break
+            case .notRequired, .applying, .applied, .ignored:
+                return nil
+            }
+            let selectedIDs = jobs[index].selectedSuggestedTagIDs
+            let suggestions = jobs[index].suggestedTags.filter { selectedIDs.contains($0.id) }
+            guard !suggestions.isEmpty else { return nil }
+            return PendingBulkTagApplication(
+                repoID: repoID,
+                selectedSuggestionIDs: selectedIDs,
+                suggestions: suggestions,
+                appliedTagNames: Set(jobs[index].appliedTagNames)
+            )
+        }
+    }
+
+    private func markBulkTagApplicationsAsApplying(
+        repoIDs: [Int64],
+        jobIndexByRepoID: [Int64: Int]
+    ) {
+        var updatedJobs = jobs
+        for repoID in repoIDs {
+            guard let index = jobIndexByRepoID[repoID] else { continue }
+            updatedJobs[index].tagReviewState = .applying
+        }
+        jobs = updatedJobs
+    }
+
+    private func resolveBulkTagApplications(
+        _ pendingApplications: [PendingBulkTagApplication],
+        tagsByCanonicalKey initialTagsByCanonicalKey: [String: Tag]
+    ) async throws -> (
+        applications: [ResolvedBulkTagApplication],
+        tagsByCanonicalKey: [String: Tag]
+    ) {
+        var tagsByCanonicalKey = initialTagsByCanonicalKey
+        var applications: [ResolvedBulkTagApplication] = []
+        applications.reserveCapacity(pendingApplications.count)
+
+        for pending in pendingApplications {
+            var resolvedSuggestions: [ResolvedBulkTagSuggestion] = []
+            var appliedTagNames = pending.appliedTagNames
+            for suggestion in pending.suggestions {
+                let normalized = AITagSuggestionPolicy.normalizedDisplayName(suggestion.name)
+                let key = AITagSuggestionPolicy.canonicalKey(normalized)
+                guard !normalized.isEmpty, !key.isEmpty else { continue }
+
+                let tag: Tag
+                if let existing = tagsByCanonicalKey[key] {
+                    tag = existing
+                } else {
+                    tag = makeUserConfirmedTag(named: normalized)
+                    try await tagRepository.create(tag)
+                    tagsByCanonicalKey[key] = tag
+                }
+                resolvedSuggestions.append(ResolvedBulkTagSuggestion(
+                    suggestionID: suggestion.id,
+                    tag: tag
+                ))
+                appliedTagNames.insert(tag.name)
+            }
+            applications.append(ResolvedBulkTagApplication(
+                repoID: pending.repoID,
+                selectedSuggestionIDs: pending.selectedSuggestionIDs,
+                suggestions: resolvedSuggestions,
+                appliedTagNames: appliedTagNames
+            ))
+        }
+        return (applications, tagsByCanonicalKey)
+    }
+
+    private func markBulkTagApplicationsFailed(
+        repoIDs: [Int64],
+        error: Error,
+        jobIndexByRepoID: [Int64: Int]
+    ) async {
+        let failure = BatchAIFailure(error: error)
+        var updatedJobs = jobs
+        for repoID in repoIDs {
+            guard let index = jobIndexByRepoID[repoID] else { continue }
+            updatedJobs[index].tagReviewState = .failed(failure)
+        }
+        jobs = updatedJobs
+        // 只有失败路径退回逐项 best-effort checkpoint；正常批次始终使用单事务批量保存。
+        await persistJobsBestEffort(repoIDs: Set(repoIDs))
+    }
+
+    private func persistBulkDraftItems(
+        jobs proposedJobs: [BatchAIJob],
+        repoIDs: [Int64],
+        selectedRepoIDs: Set<Int64>,
+        jobIndexByRepoID: [Int64: Int]
+    ) async throws {
+        guard !silent,
+              isDraftCreated,
+              let draftRepository,
+              let activeDraftID
+        else { return }
+        let items = try repoIDs.map { repoID -> AIOrganizationDraftItem in
+            guard let index = jobIndexByRepoID[repoID],
+                  let repo = repoCache[repoID]
+            else { throw CocoaError(.fileNoSuchFile) }
+            return AIOrganizationDraftItem(
+                repoID: repoID,
+                payloadJSON: try encodedDraftItem(
+                    job: proposedJobs[index],
+                    repo: repo,
+                    isSelectedForTagApplication: selectedRepoIDs.contains(repoID)
+                )
+            )
+        }
+        try await draftRepository.upsertItems(
+            draftID: activeDraftID,
+            kind: .batchTags,
+            items: items
+        )
+    }
+
+    private func advanceTagApplicationProgress(by processedCount: Int) {
+        guard let progress = tagApplicationProgress else { return }
+        tagApplicationProgress = BatchAITagApplicationProgress(
+            processedRepositoryCount: min(
+                progress.processedRepositoryCount + processedCount,
+                progress.totalRepositoryCount
+            ),
+            totalRepositoryCount: progress.totalRepositoryCount
+        )
     }
 
     /// 打开整批落库会话锁；`selectionCount` 非 nil 时冻结底栏「已选 N 个」。
     private func beginBulkTagApplication(selectionCount: Int?) {
         isBulkApplyingSuggestedTags = true
         frozenTagReviewSelectionCount = selectionCount
+        tagApplicationProgress = selectionCount.map {
+            BatchAITagApplicationProgress(
+                processedRepositoryCount: 0,
+                totalRepositoryCount: $0
+            )
+        }
     }
 
     /// 关闭整批落库会话锁，并合并发布本批产生的标签变更通知。
     private func endBulkTagApplication() {
         isBulkApplyingSuggestedTags = false
         frozenTagReviewSelectionCount = nil
+        tagApplicationProgress = nil
         notifyTagsChangedIfNeeded()
     }
 
@@ -989,6 +1404,7 @@ final class BatchAIQueueService {
     /// 不等待其它 Worker，因此快请求的完成状态会立即出现在列表和顶部进度中。
     private func runLoop() async {
         guard let options else { return }
+        var effectiveOptions = options
 
         if options.actions.contains(.tags) {
             if initialTagCanonicalKeys == nil {
@@ -1009,15 +1425,39 @@ final class BatchAIQueueService {
                     tagRepository: tagRepository
                 )
             }
+            if silent, sharedTagLibrary?.isEmpty == true {
+                // 后台自动整理没有用户确认词表的界面；空标签库时逐仓让 LLM 自由造词会稳定
+                // 退化成“一仓一标签”。因此只跳过标签子任务，摘要仍可继续，标签体系交给
+                // 用户下次打开手动整理时通过本地全局引导建立。
+                effectiveOptions.actions.remove(.tags)
+                AppLog.ai.notice("[batch-ai] automatic tags skipped: empty canonical tag library")
+            }
         }
 
-        await withTaskGroup(of: Void.self) { group in
-            for workerIndex in 0..<Self.defaultConcurrency {
-                group.addTask { [weak self] in
-                    await self?.runWorker(index: workerIndex, options: options)
-                }
+        if effectiveOptions.actions.isEmpty {
+            let now = Date.now
+            for index in jobs.indices where jobs[index].status == .queued {
+                jobs[index].status = .ignored
+                jobs[index].tagReviewState = .ignored
+                jobs[index].ignoreReason = .emptyTagLibrary
+                jobs[index].finishedAt = now
             }
-            await group.waitForAll()
+        } else {
+            let workerOptions = effectiveOptions
+            await withTaskGroup(of: Void.self) { group in
+                for workerIndex in 0..<Self.defaultConcurrency {
+                    group.addTask { [weak self] in
+                        await self?.runWorker(index: workerIndex, options: workerOptions)
+                    }
+                }
+                await group.waitForAll()
+            }
+        }
+
+        if !cancelRequested,
+           !isPaused,
+           jobs.allSatisfy({ $0.status != .queued && $0.status != .processing }) {
+            await prepareTagExpansionIfNeeded(options: effectiveOptions)
         }
 
         // 循环退出：若全部终态则关掉 isRunning；否则保留状态等用户 resume / cancel。
@@ -1057,6 +1497,9 @@ final class BatchAIQueueService {
 
     private struct JobOutcome: Sendable {
         var suggestions: [AITagSuggestion]
+        /// 闭集首轮没有任何现有标签可复用。人工批次稍后进入整批扩词，自动批次只记忽略。
+        var isVocabularyMiss: Bool
+        var needsVocabularyExpansion: Bool
     }
 
     private var activeConcurrency: Int {
@@ -1153,8 +1596,22 @@ final class BatchAIQueueService {
 
         let includesSummary = options.shouldRun(.summary, forRepoID: jobId)
         let includesTags = options.shouldRun(.tags, forRepoID: jobId)
-        let suggestions: [AITagSuggestion]
-        if includesSummary || includesTags {
+        let rawSuggestions: [AITagSuggestion]
+        var reuseOnlyPolicy = options.tagGenerationPolicy
+        // 队列首轮只做闭集分类；允许新增的意图留到所有仓库处理完后统一消费，
+        // 不能继续让每个 Worker 独立触发 `.newOnly` LLM fallback。
+        reuseOnlyPolicy.allowNewTags = false
+        if includesTags && !includesSummary {
+            // 纯标签任务进入标签专用路由；调用来源保留队列语义，但首轮始终关闭新增，
+            // Jev 未覆盖仓库统一留给批次结束后的全局概念发现。
+            let suggestionsByRepoID = try await insightService.generateBatchTagSuggestions(
+                for: [repo],
+                tagHintsByRepoID: [repo.id: hints],
+                invocationMode: invocationMode,
+                tagGenerationPolicy: reuseOnlyPolicy
+            )
+            rawSuggestions = suggestionsByRepoID[repo.id] ?? []
+        } else if includesSummary {
             let insight = try await insightService.generateBatchInsight(
                 for: repo,
                 existingTagHints: hints,
@@ -1162,29 +1619,58 @@ final class BatchAIQueueService {
                 includeTags: includesTags,
                 // 标签单独运行时不需要摘要上下文，避免无意义地准备代码或外部搜索。
                 codeContextEnabledOverride: includesSummary ? options.codeContextEnabledOverride : nil,
-                externalContextEnabledOverride: includesSummary ? options.externalContextEnabledOverride : nil
+                externalContextEnabledOverride: includesSummary ? options.externalContextEnabledOverride : nil,
+                tagGenerationPolicy: reuseOnlyPolicy
             )
-            suggestions = insight.insight.suggestedTags
-            // 标签任务的空结果没有任何可审核或可应用内容，不能计为“全部完成”。
-            // 摘要单独运行仍允许 suggestions 为空，因此只在本仓库确实执行标签任务时失败。
-            guard !includesTags || !suggestions.isEmpty else {
-                throw AIRecommendationValidationError.emptyTagSuggestions
-            }
+            rawSuggestions = insight.insight.suggestedTags
         } else {
-            suggestions = []
+            rawSuggestions = []
         }
 
-        return JobOutcome(suggestions: suggestions)
+        let suggestions: [AITagSuggestion]
+        if includesTags,
+           options.autoCreateMissingTags,
+           let initialTagCanonicalKeys {
+            // 非 Jev Provider 仍可能在 reuse-first 响应里夹带新名称。整批扩词开启时，首轮
+            // 必须在本地再次收口为闭集，保证所有新词都经过同一个 5 个上限与确认页。
+            suggestions = rawSuggestions.filter { suggestion in
+                initialTagCanonicalKeys.contains(AITagSuggestionPolicy.canonicalKey(suggestion.name))
+            }
+        } else {
+            suggestions = rawSuggestions
+        }
+
+        let isVocabularyMiss = includesTags
+            && options.autoCreateMissingTags
+            && suggestions.isEmpty
+
+        // 标签任务的空结果没有任何可审核或可应用内容，不能计为“全部完成”。
+        // 摘要单独运行仍允许 suggestions 为空，因此只在本仓库确实执行标签任务时失败。
+        // 唯一例外是开启整批扩词后的闭集 miss：它是合法覆盖边界，不是 Provider 失败。
+        guard !includesTags || !suggestions.isEmpty || isVocabularyMiss else {
+            throw AIRecommendationValidationError.emptyTagSuggestions
+        }
+
+        return JobOutcome(
+            suggestions: suggestions,
+            isVocabularyMiss: isVocabularyMiss,
+            needsVocabularyExpansion: isVocabularyMiss && !silent
+        )
     }
 
     /// 在创建 jobs 前一次性校验本批次会调用到的任务配置。
     ///
     /// 校验必须留在 Service 层：手动弹窗和自动调度器都能启动队列，只在 UI 禁用按钮
     /// 会留下绕过路径。`ensureGenerationClientsReady` 只构造客户端，不发网络请求。
-    private func validateConfiguration(for options: BatchAIQueueOptions) throws {
+    private func validateConfiguration(
+        for options: BatchAIQueueOptions,
+        invocationMode: BatchAIInvocationMode
+    ) throws {
         try insightService.ensureGenerationClientsReady(
             includeSummary: options.actions.contains(.summary),
-            includeTags: options.actions.contains(.tags)
+            includeTags: options.actions.contains(.tags),
+            invocationMode: invocationMode,
+            tagGenerationPolicy: options.tagGenerationPolicy
         )
     }
 
@@ -1199,6 +1685,12 @@ final class BatchAIQueueService {
         let didSummary = options.shouldRun(.summary, forRepoID: jobId)
         let didTags = options.shouldRun(.tags, forRepoID: jobId)
         var shouldMarkIgnored = false
+        // 每次生成结果都会重新判定是否忽略，不能沿用重试前或上一阶段留下的原因。
+        jobs[idx].ignoreReason = nil
+
+        if result.needsVocabularyExpansion {
+            uncoveredTagRepositoryIDs.insert(jobId)
+        }
 
         if didTags {
             jobs[idx].suggestedTags = suggestions
@@ -1237,8 +1729,7 @@ final class BatchAIQueueService {
             if !aboveThreshold.isEmpty {
                 autoApplyOutcome = await applyTagsToRepo(
                     repoId: jobId,
-                    suggestions: aboveThreshold,
-                    autoCreateMissingTags: options.autoCreateMissingTags
+                    suggestions: aboveThreshold
                 )
                 guard let currentIndex = jobs.firstIndex(where: { $0.repoId == jobId }) else { return }
                 jobs[currentIndex].appliedTagNames = autoApplyOutcome.appliedNames
@@ -1272,14 +1763,326 @@ final class BatchAIQueueService {
                 }
             } else if autoApplyOutcome.appliedNames.isEmpty, !suggestions.isEmpty {
                 shouldMarkIgnored = true
+                // 正常的低置信度跳过与“没有可直接复用的现有标签”分开记录，
+                // 避免统一显示成阈值问题而误导用户。
+                jobs[currentIndex].ignoreReason = aboveThreshold.isEmpty
+                    ? .belowConfidenceThreshold
+                    : .vocabularyMiss
             }
         }
 
         guard let finalIndex = jobs.firstIndex(where: { $0.repoId == jobId }) else { return }
         jobs[finalIndex].didGenerateSummary = didSummary
         jobs[finalIndex].finishedAt = Date()
+        if result.isVocabularyMiss, !didSummary {
+            jobs[finalIndex].tagReviewState = .ignored
+            jobs[finalIndex].ignoreReason = .vocabularyMiss
+            shouldMarkIgnored = true
+        }
         let wroteAnything = !jobs[finalIndex].appliedTagNames.isEmpty
         jobs[finalIndex].status = shouldMarkIgnored && !didSummary && !wroteAnything ? .ignored : .completed
+        if jobs[finalIndex].status != .ignored, jobs[finalIndex].tagReviewState != .ignored {
+            jobs[finalIndex].ignoreReason = nil
+        }
+    }
+
+    // MARK: - 整批增量词表
+
+    private struct TagExpansionAccumulator {
+        var displayName: String
+        var matchesByRepositoryID: [Int64: TagTaxonomyRepositoryMatch] = [:]
+    }
+
+    /// Jev 闭集首轮结束后，只为全部未覆盖仓库发起一次 LLM 请求。
+    ///
+    /// 这里不创建标签，也不直接采用 LLM 的逐仓结果；返回值只被压缩成最多 5 个全局候选，
+    /// 后续必须经过用户确认，再用扩充后的完整词表重新分类。这样“发现概念”与“归类仓库”
+    /// 是两个明确阶段，不能退化回一仓一次 LLM、一仓一个新标签。
+    private func prepareTagExpansionIfNeeded(options: BatchAIQueueOptions) async {
+        guard !silent,
+              options.actions.contains(.tags),
+              options.autoCreateMissingTags,
+              pendingTagExpansionSession == nil,
+              !uncoveredTagRepositoryIDs.isEmpty
+        else { return }
+
+        let repositories = jobs.compactMap { job -> Repo? in
+            guard uncoveredTagRepositoryIDs.contains(job.repoId) else { return nil }
+            return repoCache[job.repoId]
+        }
+        guard !repositories.isEmpty else {
+            uncoveredTagRepositoryIDs = []
+            tagExpansionError = nil
+            await persistDraftHeaderBestEffort()
+            return
+        }
+
+        let library = sharedTagLibrary ?? []
+        var hintsByRepositoryID: [Int64: AITagHints] = [:]
+        for repository in repositories {
+            hintsByRepositoryID[repository.id] = await RepoAIInsightService.makeTagHints(
+                for: repository,
+                repoTagRepository: repoTagRepository,
+                sharedLibraryTags: library
+            )
+        }
+
+        do {
+            let discovered = try await insightService.generateBatchTagSuggestions(
+                for: repositories,
+                tagHintsByRepoID: hintsByRepositoryID,
+                purpose: .newOnly
+            )
+            let session = makeTagExpansionSession(
+                repositories: repositories,
+                suggestionsByRepositoryID: discovered
+            )
+            pendingTagExpansionSession = session
+            tagExpansionError = nil
+            if session == nil {
+                // 模型没有找到跨仓库可复用概念时，本轮闭集 miss 就是最终结果；保留 ignored
+                // 行供用户检查，但不要制造一个无法确认的空工作台。
+                uncoveredTagRepositoryIDs = []
+            }
+        } catch {
+            tagExpansionError = Self.userVisibleFailureMessage(for: error)
+            AppLog.ai.error(
+                "[batch-ai] pooled tag discovery failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        await persistDraftHeaderBestEffort()
+    }
+
+    /// Provider 返回的仍是逐仓 JSON；这里用 canonical key 合并为全局候选，并用跨仓库支持数
+    /// 作为确定性完整性边界。多仓批次中只出现一次的仓库私有词会被丢弃，单仓批次则允许
+    /// 一个候选，否则用户选择单个仓库时永远无法扩充词表。
+    private func makeTagExpansionSession(
+        repositories: [Repo],
+        suggestionsByRepositoryID: [Int64: [AITagSuggestion]]
+    ) -> TagTaxonomyBootstrapSession? {
+        let existingKeys = initialTagCanonicalKeys ?? []
+        var accumulators: [String: TagExpansionAccumulator] = [:]
+
+        for repository in repositories {
+            var seenKeys: Set<String> = []
+            for suggestion in suggestionsByRepositoryID[repository.id] ?? [] {
+                let displayName = AITagSuggestionPolicy.normalizedDisplayName(suggestion.name)
+                let key = AITagSuggestionPolicy.canonicalKey(displayName)
+                guard !displayName.isEmpty,
+                      displayName.count <= 36,
+                      !key.isEmpty,
+                      !existingKeys.contains(key),
+                      seenKeys.insert(key).inserted
+                else { continue }
+
+                var accumulator = accumulators[key] ?? TagExpansionAccumulator(displayName: displayName)
+                accumulator.matchesByRepositoryID[repository.id] = TagTaxonomyRepositoryMatch(
+                    repoID: repository.id,
+                    repositoryFullName: repository.fullName,
+                    confidence: min(max(suggestion.confidence, 0), 1),
+                    signals: [.llm]
+                )
+                accumulators[key] = accumulator
+            }
+        }
+
+        let minimumSupport = repositories.count > 1 ? 2 : 1
+        let candidates = accumulators.compactMap { key, accumulator -> (TagTaxonomyCandidate, Double)? in
+            let matches = accumulator.matchesByRepositoryID.values.sorted { lhs, rhs in
+                if lhs.confidence != rhs.confidence { return lhs.confidence > rhs.confidence }
+                return lhs.repositoryFullName < rhs.repositoryFullName
+            }
+            guard matches.count >= minimumSupport else { return nil }
+            let averageConfidence = matches.reduce(0.0) { $0 + $1.confidence } / Double(matches.count)
+            return (
+                TagTaxonomyCandidate(
+                    id: "llm:\(key)",
+                    name: accumulator.displayName,
+                    supportCount: matches.count,
+                    targetSupportCount: matches.count,
+                    signals: [.llm],
+                    sampleRepositoryNames: Array(matches.prefix(8).map(\.repositoryFullName)),
+                    targetMatches: matches
+                ),
+                averageConfidence
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.0.supportCount != rhs.0.supportCount { return lhs.0.supportCount > rhs.0.supportCount }
+            if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+            return lhs.0.name.localizedCaseInsensitiveCompare(rhs.0.name) == .orderedAscending
+        }
+        .prefix(Self.maximumTagExpansionCount)
+        .map(\.0)
+
+        guard !candidates.isEmpty else { return nil }
+        return TagTaxonomyBootstrapSession(
+            kind: .expansion,
+            suggestionEngine: .llm,
+            targetRepositories: repositories,
+            candidates: candidates,
+            defaultSelectedCandidateIDs: Set(candidates.map(\.id)),
+            corpusRepositoryCount: repositories.count,
+            cachedReadmeCount: 0
+        )
+    }
+
+    /// 批次级发现失败后的唯一重试入口；不会重放已完成的逐仓 Jev / 摘要请求。
+    func retryTagExpansionDiscovery() async {
+        guard !isRunning,
+              pendingTagExpansionSession == nil,
+              tagExpansionError != nil,
+              !uncoveredTagRepositoryIDs.isEmpty,
+              let options
+        else { return }
+        isRunning = true
+        tagExpansionError = nil
+        await prepareTagExpansionIfNeeded(options: options)
+        isRunning = false
+    }
+
+    /// 用户可以拒绝本次词表扩充并直接检查现有结果；未覆盖仓库保持“已忽略”，
+    /// 但会话不再被待确认候选阻塞。这个出口保证“需要确认”不等于“强制接受 AI 新词”。
+    func skipPendingTagExpansion() async {
+        guard pendingTagExpansionSession != nil
+                || tagExpansionError != nil
+                || !uncoveredTagRepositoryIDs.isEmpty
+        else { return }
+        pendingTagExpansionSession = nil
+        uncoveredTagRepositoryIDs = []
+        tagExpansionError = nil
+        await persistDraftHeaderBestEffort()
+    }
+
+    /// 用户确认全局候选后创建标签，再用扩充后的闭集词表重新分类未覆盖仓库。
+    ///
+    /// LLM 概念发现结果只负责解释“为什么值得扩词”，不会直接变成最终仓库标签；重新分类
+    /// 仍走统一 Provider 路由，因此 Jev 可用时最终置信度来自 Jev，且 repo_tags 继续等待
+    /// 用户在审核页逐仓确认。
+    func confirmPendingTagExpansion(
+        selectedCandidates: [TagTaxonomyCandidate]
+    ) async -> String? {
+        guard let session = pendingTagExpansionSession,
+              session.kind == .expansion,
+              !selectedCandidates.isEmpty,
+              selectedCandidates.count <= Self.maximumTagExpansionCount
+        else {
+            return String.l10n("batchAI.expansion.validation")
+        }
+
+        let allowedCandidateIDs = Set(session.candidates.map(\.id))
+        let normalizedCandidates = selectedCandidates.compactMap { candidate -> TagTaxonomyCandidate? in
+            guard allowedCandidateIDs.contains(candidate.id) else { return nil }
+            var normalized = candidate
+            normalized.name = AITagSuggestionPolicy.normalizedDisplayName(candidate.name)
+            return normalized
+        }
+        let keys = normalizedCandidates.map { AITagSuggestionPolicy.canonicalKey($0.name) }
+        guard normalizedCandidates.count == selectedCandidates.count,
+              keys.allSatisfy({ !$0.isEmpty }),
+              Set(keys).count == keys.count
+        else {
+            return String.l10n("batchAI.expansion.validation")
+        }
+
+        // 先把用户的改名与勾选写入草稿；若创建或重分类失败，重启后仍回到同一确认边界。
+        pendingTagExpansionSession = TagTaxonomyBootstrapSession(
+            kind: .expansion,
+            suggestionEngine: .llm,
+            targetRepositories: session.targetRepositories,
+            candidates: normalizedCandidates,
+            defaultSelectedCandidateIDs: Set(normalizedCandidates.map(\.id)),
+            corpusRepositoryCount: session.corpusRepositoryCount,
+            cachedReadmeCount: session.cachedReadmeCount
+        )
+        await persistDraftHeaderBestEffort()
+
+        var createdAnyTag = false
+        do {
+            let existingTags = try await tagRepository.fetchAll()
+            var tagsByCanonicalKey = Dictionary(
+                existingTags.map { (AITagSuggestionPolicy.canonicalKey($0.name), $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            for candidate in normalizedCandidates {
+                let key = AITagSuggestionPolicy.canonicalKey(candidate.name)
+                guard tagsByCanonicalKey[key] == nil else { continue }
+                let tag = makeUserConfirmedTag(named: candidate.name)
+                try await tagRepository.create(tag)
+                tagsByCanonicalKey[key] = tag
+                createdAnyTag = true
+            }
+
+            let fullLibrary = tagsByCanonicalKey.values
+                .map(\.name)
+                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            sharedTagLibrary = fullLibrary
+            initialTagCanonicalKeys = Set(tagsByCanonicalKey.keys)
+
+            var hintsByRepositoryID: [Int64: AITagHints] = [:]
+            for repository in session.targetRepositories {
+                hintsByRepositoryID[repository.id] = await RepoAIInsightService.makeTagHints(
+                    for: repository,
+                    repoTagRepository: repoTagRepository,
+                    sharedLibraryTags: fullLibrary
+                )
+            }
+            let reclassified = try await insightService.generateBatchTagSuggestions(
+                for: session.targetRepositories,
+                tagHintsByRepoID: hintsByRepositoryID,
+                invocationMode: .manual,
+                tagGenerationPolicy: AITagGenerationPolicy(
+                    allowNewTags: false,
+                    minimumReusableConfidence: options?.tagGenerationPolicy.minimumReusableConfidence ?? 0
+                )
+            )
+
+            let now = Date.now
+            let vocabularyKeys = initialTagCanonicalKeys ?? []
+            for repository in session.targetRepositories {
+                guard let index = jobs.firstIndex(where: { $0.repoId == repository.id }) else { continue }
+                let suggestions = (reclassified[repository.id] ?? []).filter { suggestion in
+                    vocabularyKeys.contains(AITagSuggestionPolicy.canonicalKey(suggestion.name))
+                }
+                jobs[index].suggestedTags = suggestions
+                jobs[index].suggestedTagAvailability = Dictionary(
+                    uniqueKeysWithValues: suggestions.map { ($0.id, .existing) }
+                )
+                jobs[index].selectedSuggestedTagIDs = Set(suggestions.map(\.id))
+                jobs[index].failure = nil
+                jobs[index].errorDiagnostic = nil
+                jobs[index].copyDiagnostic = nil
+                jobs[index].finishedAt = now
+                if suggestions.isEmpty {
+                    selectedRepoIDsForTagApplication.remove(repository.id)
+                    jobs[index].tagReviewState = jobs[index].didGenerateSummary ? .notRequired : .ignored
+                    jobs[index].status = jobs[index].didGenerateSummary ? .completed : .ignored
+                    jobs[index].ignoreReason = jobs[index].didGenerateSummary ? nil : .vocabularyMiss
+                } else {
+                    selectedRepoIDsForTagApplication.insert(repository.id)
+                    jobs[index].tagReviewState = .pending
+                    jobs[index].status = .completed
+                    jobs[index].ignoreReason = nil
+                }
+            }
+
+            uncoveredTagRepositoryIDs = []
+            pendingTagExpansionSession = nil
+            tagExpansionError = nil
+            await persistJobsBestEffort(repoIDs: Set(session.targetRepositories.map(\.id)))
+            await persistDraftHeaderBestEffort()
+            if createdAnyTag { onTagsChanged?() }
+            return nil
+        } catch {
+            if createdAnyTag { onTagsChanged?() }
+            let message = Self.userVisibleFailureMessage(for: error)
+            tagExpansionError = message
+            await persistDraftHeaderBestEffort()
+            AppLog.ai.error(
+                "[batch-ai] confirm tag expansion failed: \(error.localizedDescription, privacy: .public)"
+            )
+            return message
+        }
     }
 
     /// 为用户明确确认的新标签补齐与详情页一致的默认视觉属性。
@@ -1319,13 +2122,13 @@ final class BatchAIQueueService {
 
     /// 把通过阈值过滤的建议落库为 repo_tags 关联，但只允许复用已有标签。
     ///
-    /// 批量自动应用没有逐项人工确认，不能因为模型自报高置信度就静默扩张标签库；真正的
-    /// 新标签会返回给当前批量窗口继续确认。这里使用宽松 canonical key，让
-    /// `Open-Source` / `open source` 等形式差异复用已有记录。
+    /// 批量自动应用没有逐项人工确认，不能因为模型自报高置信度就静默扩张标签库；词表外
+    /// 名称会返回给当前批量窗口继续确认。这里使用宽松 canonical key，让
+    /// `Open-Source` / `open source` 等形式差异复用已有记录。新增标签只能由扩词确认页或
+    /// 逐仓人工确认入口创建，不能在这个底层写入路径保留旧的隐式扩词能力。
     private func applyTagsToRepo(
         repoId: Int64,
-        suggestions: [AITagSuggestion],
-        autoCreateMissingTags: Bool
+        suggestions: [AITagSuggestion]
     ) async -> TagAutoApplyOutcome {
         let existingTags: [Tag]
         do {
@@ -1353,18 +2156,7 @@ final class BatchAIQueueService {
                 continue
             }
 
-            var tag = existingTagByName[normalized] ?? existingTagByKey[key]
-            if tag == nil, autoCreateMissingTags {
-                do {
-                    let created = try await findOrCreateAutoTag(named: normalized, canonicalKey: key)
-                    tag = created
-                    existingTagByName[created.name] = created
-                    existingTagByKey[key] = created
-                } catch {
-                    AppLog.ai.error("[batch-ai] auto-create tag failed: repo=\(repoId, privacy: .public), tag=\(normalized, privacy: .public), error=\(error.localizedDescription, privacy: .public)")
-                }
-            }
-
+            let tag = existingTagByName[normalized] ?? existingTagByKey[key]
             guard let tag else {
                 AppLog.ai.notice("[batch-ai] skip new tag during auto-apply: repo=\(repoId, privacy: .public), tag=\(normalized, privacy: .public)")
                 outcome.unresolvedSuggestions.append(suggestion)
@@ -1380,36 +2172,6 @@ final class BatchAIQueueService {
             }
         }
         return outcome
-    }
-
-    /// 创建或复用自动应用所需的新标签。
-    ///
-    /// 创建任务先登记再 await，MainActor 重入期间后来者会复用同一 Task；数据库唯一约束仍是
-    /// 最终防线，若其他入口抢先创建同名标签，则在 create 失败后重新查询并复用该记录。
-    private func findOrCreateAutoTag(named name: String, canonicalKey: String) async throws -> Tag {
-        if let pending = pendingTagCreationsByCanonicalKey[canonicalKey] {
-            return try await pending.value
-        }
-
-        let candidate = makeUserConfirmedTag(named: name)
-        let repository = tagRepository
-        let task = Task<Tag, Error> {
-            if let existing = try await repository.findByName(name) {
-                return existing
-            }
-            do {
-                try await repository.create(candidate)
-                return candidate
-            } catch {
-                if let existing = try await repository.findByName(name) {
-                    return existing
-                }
-                throw error
-            }
-        }
-        pendingTagCreationsByCanonicalKey[canonicalKey] = task
-        defer { pendingTagCreationsByCanonicalKey[canonicalKey] = nil }
-        return try await task.value
     }
 
     /// 处理单个 job 的失败：分流"重试" vs "终态失败"。
@@ -1449,6 +2211,7 @@ final class BatchAIQueueService {
             jobs[idx].failure = failure
             jobs[idx].errorDiagnostic = diagnostic
             jobs[idx].copyDiagnostic = copyDiagnostic
+            jobs[idx].ignoreReason = nil
             jobs[idx].finishedAt = .now
             retryNotBeforeByRepoID[jobId] = nil
         } else {
@@ -1546,6 +2309,11 @@ final class BatchAIQueueService {
         if error is AIRecommendationValidationError {
             return true
         }
+        if error is TypeSafeClientError {
+            // TypeSafeClient 已在单次请求内处理传输错误、408、429 与 5xx 的有限重试。
+            // 这里再按 job 重试会形成乘法放大；失败行仍保留给用户通过现有入口显式重试。
+            return true
+        }
         if let insight = error as? RepoAIInsightError {
             switch insight {
             case .missingAPIKey, .missingProvider:
@@ -1567,9 +2335,10 @@ final class BatchAIQueueService {
     }
 
     private func isRateLimited(_ error: Error) -> Bool {
-        guard let aiError = error as? AIClientError else { return false }
-        if case .rateLimited = aiError { return true }
-        return false
+        if let aiError = error as? AIClientError, case .rateLimited = aiError {
+            return true
+        }
+        return (error as? TypeSafeClientError)?.isRateLimitLike == true
     }
 
     // MARK: - 人工会话草稿
@@ -1584,7 +2353,7 @@ final class BatchAIQueueService {
             return true
         }
         do {
-            let header = BatchAIOrganizationDraftHeader(options: options, startedAt: startedAt)
+            let header = makeDraftHeader(options: options, startedAt: startedAt)
             let items = try jobs.map { job in
                 AIOrganizationDraftItem(
                     repoID: job.repoId,
@@ -1616,12 +2385,63 @@ final class BatchAIQueueService {
         guard let job = jobs.first(where: { $0.repoId == repoID }),
               let repo = repoCache[repoID]
         else { throw CocoaError(.fileNoSuchFile) }
+        return try encodedDraftItem(
+            job: job,
+            repo: repo,
+            isSelectedForTagApplication: selectedRepoIDsForTagApplication.contains(repoID)
+        )
+    }
+
+    /// 批量路径在发布内存状态前先持久化「拟提交快照」，因此不能通过 `jobs.first` 回读旧值。
+    /// 显式传入 job 与选择态也消除了批量保存时对完整 jobs 数组的 O(n²) 重扫。
+    private func encodedDraftItem(
+        job: BatchAIJob,
+        repo: Repo,
+        isSelectedForTagApplication: Bool
+    ) throws -> String {
         let snapshot = BatchAIOrganizationDraftItem(
             repo: repo,
             job: job,
-            isSelectedForTagApplication: selectedRepoIDsForTagApplication.contains(repoID)
+            isSelectedForTagApplication: isSelectedForTagApplication
         )
         return try AIOrganizationDraftJSON.encode(snapshot)
+    }
+
+    private func makeDraftHeader(
+        options: BatchAIQueueOptions,
+        startedAt: Date
+    ) -> BatchAIOrganizationDraftHeader {
+        BatchAIOrganizationDraftHeader(
+            options: options,
+            startedAt: startedAt,
+            pendingTagExpansionSession: pendingTagExpansionSession,
+            uncoveredTagRepositoryIDs: uncoveredTagRepositoryIDs.isEmpty ? nil : uncoveredTagRepositoryIDs,
+            tagExpansionError: tagExpansionError
+        )
+    }
+
+    /// 草稿 Header 保存批次级扩词状态；逐仓 Item 的高频 checkpoint 不应重复改写它。
+    private func persistDraftHeaderBestEffort() async {
+        guard !silent,
+              isDraftCreated,
+              let draftRepository,
+              let activeDraftID,
+              let options,
+              let startedAt
+        else { return }
+        do {
+            try await draftRepository.updateHeader(
+                draftID: activeDraftID,
+                kind: .batchTags,
+                headerJSON: try AIOrganizationDraftJSON.encode(
+                    makeDraftHeader(options: options, startedAt: startedAt)
+                )
+            )
+        } catch {
+            AppLog.database.error(
+                "[batch-ai] save draft header failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     private func persistJob(repoID: Int64) async throws {

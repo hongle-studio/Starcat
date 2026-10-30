@@ -358,7 +358,9 @@ final class DirectLicenseManager: ProEntitlementProviding {
             return entitlement.isActive
         } catch {
             lastErrorMessage = error.localizedDescription
-            AppLog.general.error("[direct-license] request failed: \(error.localizedDescription, privacy: .public)")
+            // 用户提示与诊断分离；未知 Error 的描述也可能带请求内容，只记录固定错误码。
+            let diagnosticCode = (error as? DirectLicenseAPIError)?.diagnosticCode ?? "unknown_request_error"
+            AppLog.general.error("[direct-license] request failed: \(diagnosticCode, privacy: .public)")
             return false
         }
     }

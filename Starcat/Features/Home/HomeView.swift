@@ -68,6 +68,8 @@ struct HomeView: View {
 
     /// HOM-47：Release 时间线 sheet 显示状态。
     @State private var showReleaseTimeline: Bool = false
+    /// 批量整理必须挂到发起操作的主窗口，不能误用状态 popover 或其它 Scene 的焦点窗口。
+    @State private var batchAIParentWindow = WorkspaceSceneWindowReference()
     /// Widget Release Deep Link 的一次性定位目标；普通 Sidebar 入口保持为 nil。
     @State private var releaseTimelineTargetID: Int64?
 
@@ -311,6 +313,10 @@ struct HomeView: View {
 
     var body: some View {
         navigationWithLifecycle
+            .background {
+                WorkspaceSceneWindowReader(reference: batchAIParentWindow, minimumContentSize: nil)
+                    .frame(width: 0, height: 0)
+            }
     }
 
     private var baseNavigation: AnyView {
@@ -351,25 +357,38 @@ struct HomeView: View {
         .overlayPreferenceValue(GettingStartedAnchorPreferenceKey.self) { anchors in
             gettingStartedOverlay(anchors: anchors)
         }
-        .overlay {
-            if searchCenterViewModel.isPresented {
-                SearchCenterView(
-                    viewModel: searchCenterViewModel,
-                    languages: viewModel.languageStats,
-                    onOpenCandidate: openSearchCandidate,
-                    onOpenURL: openSearchRepositoryURL,
-                    onCopyURL: copySearchRepositoryURL,
-                    onOpenAI: openSearchRepositoryAI,
-                    onToggleStar: toggleSearchRepositoryStar,
-                    isStarred: { dependencies.starredRegistry.contains(ghRepoId: $0) },
-                    isGitHubAuthenticated: authSession.state.isAuthenticated
-                )
-                .environment(viewModel)
-                .zIndex(100)
+        .onChange(of: searchCenterViewModel.isPresented) { _, isPresented in
+            if isPresented {
+                Task { await viewModel.reloadSemanticIndexCoverage() }
+                presentSearchCenterWindow()
+            } else {
+                SearchCenterWindowController.dismiss()
             }
         }
-        // 弹出/关闭：纯淡入淡出，贴近 Spotlight / 命令面板；不再叠加 scale 弹入。
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: searchCenterViewModel.isPresented)
+        )
+    }
+
+    /// 把全局搜索放进覆盖主窗口内容区的 child window，避免它和详情 README 共用 cursor rect。
+    ///
+    /// 搜索 ViewModel 仍由 HomeView 持有；窗口控制器只保留 hosting tree 和几何关系，
+    /// 这样点击遮罩、Esc、打开详情等现有路径仍然只通过 `isPresented` 驱动。
+    private func presentSearchCenterWindow() {
+        SearchCenterWindowController.present(
+            content: SearchCenterView(
+                viewModel: searchCenterViewModel,
+                languages: viewModel.languageStats,
+                onOpenCandidate: openSearchCandidate,
+                onOpenURL: openSearchRepositoryURL,
+                onCopyURL: copySearchRepositoryURL,
+                onOpenAI: openSearchRepositoryAI,
+                onToggleStar: toggleSearchRepositoryStar,
+                isStarred: { dependencies.starredRegistry.contains(ghRepoId: $0) },
+                isGitHubAuthenticated: authSession.state.isAuthenticated
+            )
+            // AppKit child window 不会自动继承 WindowGroup 的 environment；必须复用主窗口
+            // 同一套注入链，否则搜索结果的详情、收藏和命令路由会在运行时丢失依赖。
+            .appHostEnvironment(dependencies, homeViewModel: viewModel),
+            reduceMotion: reduceMotion
         )
     }
 
@@ -393,7 +412,7 @@ struct HomeView: View {
                         return
                     }
                     requestGettingStartedSync()
-                    syncManager.performFullSync(userID: user.id, force: true)
+                    syncManager.performFullSync(userID: user.id, force: true, trigger: .manual)
                 },
                 onSelectRepo: {
                     selectFirstRepoForGettingStarted()
@@ -584,6 +603,13 @@ struct HomeView: View {
         .task(id: syncManager.state) {
             await reloadAfterSyncIfNeeded()
         }
+        // 后台分组快照/授权回写落盘后只读本地，不能再次触发远端 Lists 同步形成反馈环。
+        .onChange(of: dependencies.githubStarListSyncService.snapshotRevision) { _, _ in
+            Task { @MainActor in
+                guard authSession.state.user?.id == dependencies.database.currentUserId else { return }
+                await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
+            }
+        }
         // R-07（2026-06-15）：SyncManager 写完第一页后立即刷一次列表，让首次登录 1~2s 内看到前 20 条。
         //
         // 与上方 `.task(id: syncManager.state)` 的 `.completed` 分支协作：
@@ -603,6 +629,9 @@ struct HomeView: View {
         // 分支，造成"切窗口/重进 HomeView 触发 N 次自动整理"。.onChange 只在
         // syncManager.state 真正变化的边沿触发。
         .onChange(of: syncManager.state) { _, newState in
+            if case .syncing = newState {
+                dependencies.externalStarInbox.handleSyncStarted()
+            }
             dependencies.autoTidyScheduler.notifySyncStateChanged(newState)
         }
         // HOM-126：用户在 Settings 切换「定时」/触发开关后，让 scheduler 重新装载
@@ -1407,6 +1436,7 @@ struct HomeView: View {
             dependencies.openSSFScorePoller.start()
             dependencies.repoHealthPoller.start()
             dependencies.githubNotificationPoller.start()
+            dependencies.externalStarInbox.start()
             startReadmePrefetchIfNeeded()
             startInitialWarmupIfNeeded()
             if !TestEnvironment.isRunning, settings.aiIndexAutoPrefetchEnabled {
@@ -1417,6 +1447,8 @@ struct HomeView: View {
             dependencies.openSSFScorePoller.stop()
             dependencies.repoHealthPoller.stop()
             dependencies.githubNotificationPoller.stop()
+            dependencies.externalStarInbox.stop()
+            dependencies.externalStarInbox.resetForAccountChange()
             dependencies.userProjectSyncService.stopBackgroundRefresh()
             stopReadmePrefetch()
             dependencies.initialWarmupCoordinator.cancel()
@@ -1481,7 +1513,8 @@ struct HomeView: View {
                 repo: nil,
                 sourceHtml: nil,
                 targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                mode: settings.readmeTranslationMode
+                mode: settings.readmeTranslationMode,
+                engine: settings.readmeTranslationEngine
             )
         }
     }
@@ -1507,7 +1540,8 @@ struct HomeView: View {
                 repo: nil,
                 sourceHtml: nil,
                 targetLanguage: settings.effectiveReadmeTranslationLanguage,
-                mode: settings.readmeTranslationMode
+                mode: settings.readmeTranslationMode,
+                engine: settings.readmeTranslationEngine
             )
         }
     }
@@ -1837,6 +1871,7 @@ struct HomeView: View {
             dependencies.openSSFScorePoller.start()
             dependencies.repoHealthPoller.start()
             dependencies.githubNotificationPoller.start()
+            dependencies.externalStarInbox.start()
         }
         startReadmePrefetchIfNeeded()
         startInitialWarmupIfNeeded()
@@ -1977,6 +2012,9 @@ struct HomeView: View {
         if viewModel.globalFilterLanguages != settings.globalFilterLanguages {
             viewModel.globalFilterLanguages = settings.globalFilterLanguages
         }
+        if viewModel.licenseFilter != settings.licenseFilter {
+            viewModel.licenseFilter = settings.licenseFilter
+        }
         if viewModel.interestedLanguages != settings.interestedLanguages {
             viewModel.interestedLanguages = settings.interestedLanguages
         }
@@ -2047,13 +2085,9 @@ struct HomeView: View {
     private func reloadAfterSyncIfNeeded() async {
         guard case .completed = syncManager.state else { return }
         startInitialWarmupIfNeeded()
-        if case .authenticated(let user) = authSession.state {
-            await syncGitHubStarListsAndRefreshSidebar(login: user.login)
-        } else {
-            await viewModel.refreshSidebar()
-        }
+        await viewModel.refreshSidebar()
         guard syncManager.lastRunWroteRepos else { return }
-        // GitHub Stars List 已在上方随 stars 同步完成刷新；这里只处理 repo 数据写入后的列表重载。
+        // 分组由后台快照的 revision 单独刷新；这里不等网络，只把新写入的 Stars 显示出来。
         await viewModel.reloadItems(forceRefresh: true, reason: .sync)
         await Task.yield()
         applyManageDetailSelectionPolicy()
@@ -2112,7 +2146,7 @@ struct HomeView: View {
     /// 未分组中栏横幅「开始整理」：先过 Pro 门控，再打开现有 GitHub Lists 审核 sheet。
     private func startGitHubStarListAIGrouping() {
         do {
-            try dependencies.entitlementGate.requirePro(.batchAI)
+            try dependencies.entitlementGate.requirePro(.batchAI, usesLocalOnly: dependencies.settings.isGenerationTasksResolvedToLocalAI)
             PerformanceTracer.shared.mark(.gitHubStarListAIGroupingRequested)
             showGitHubStarListAIGroupingSheet = true
         } catch {
@@ -2123,7 +2157,7 @@ struct HomeView: View {
     /// Manage 多选入口复用现有审核窗口，只把本次点击时冻结的仓库作为整理范围。
     private func startSelectedGitHubStarListAIGrouping(repositories: [Repo]) {
         do {
-            try dependencies.entitlementGate.requirePro(.batchAI)
+            try dependencies.entitlementGate.requirePro(.batchAI, usesLocalOnly: dependencies.settings.isGenerationTasksResolvedToLocalAI)
         } catch {
             paywallContext = ProPaywallContext(feature: .batchAI, message: error.localizedDescription)
             return
@@ -2175,41 +2209,184 @@ struct HomeView: View {
     ///
     /// 错误处理：fetchUntagged 失败仅记日志，不弹错——这是用户主动触发的场景，
     /// 失败时按钮仍可继续点（dependencies 状态未变，第二次点击会重试）。
-    private func startBatchAIIntegration(scope: BatchAIRepositoryScope) async -> Bool {
+    private func startBatchAIIntegration(
+        context: BatchAIWorkspacePreflightContext,
+        onTaxonomyProgress: @escaping TagTaxonomyBootstrapProgressHandler
+    ) async -> BatchAIWorkspaceStartOutcome {
         do {
-            try dependencies.entitlementGate.requirePro(.batchAI)
+            try dependencies.entitlementGate.requirePro(
+                .batchAI,
+                usesLocalOnly: context.requiresTaxonomyBootstrap
+                    || dependencies.settings.isGenerationTasksResolvedToLocalAI
+            )
         } catch {
             paywallContext = ProPaywallContext(feature: .batchAI, message: error.localizedDescription)
-            return false
+            return .failed(error.localizedDescription)
         }
         batchAIOptions.actions.insert(.tags)
-        guard dependencies.batchAIQueueService.configurationIssue(for: batchAIOptions) == nil else {
+        guard context.requiresTaxonomyBootstrap
+            || dependencies.batchAIQueueService.configurationIssue(for: batchAIOptions) == nil
+        else {
             // Sheet 会用同一预检结果展示具体原因并保持打开；这里防止设置在点击瞬间变化后
             // 仍去拉仓库或抢占正在运行的自动整理。
-            return false
+            return .failed(nil)
         }
         let repositories: [Repo]
         do {
-            repositories = try await scope.resolveRepositories {
+            repositories = try await context.scope.resolveRepositories {
                 try await dependencies.repoRepository.fetchUntagged()
             }
         } catch {
             AppLog.ai.error("[batch-ai] resolve repositories failed: \(error.localizedDescription, privacy: .public)")
-            return false
+            return .failed(String.l10n("batchAI.taxonomy.error.loadRepositories"))
         }
-        guard !repositories.isEmpty else { return false }
-        let wasSelectionScoped = scope.isSelectionScoped
+        guard !repositories.isEmpty else { return .failed(nil) }
+
+        if context.requiresTaxonomyBootstrap {
+            do {
+                onTaxonomyProgress(.loadingLocalData)
+                async let corpusTask = dependencies.repoRepository.fetchAllStarred()
+                async let readmesTask = dependencies.readmeRepository.fetchAllContents()
+                let (corpus, readmes) = try await (corpusTask, readmesTask)
+                try Task.checkCancellation()
+                let analyzer = TagTaxonomyBootstrapAnalyzer()
+                let session = try await analyzer.analyze(
+                    corpusRepositories: corpus,
+                    targetRepositories: repositories,
+                    cachedReadmesByRepositoryID: readmes,
+                    onProgress: { progress in
+                        await onTaxonomyProgress(progress)
+                    }
+                )
+                guard !session.candidates.isEmpty else {
+                    return .failed(String.l10n("batchAI.taxonomy.error.noCandidates"))
+                }
+                return .taxonomy(session)
+            } catch is CancellationError {
+                return .cancelled
+            } catch {
+                AppLog.ai.error(
+                    "[batch-ai] local taxonomy analysis failed: \(error.localizedDescription, privacy: .public)"
+                )
+                return .failed(String.l10n("batchAI.taxonomy.error.analysis"))
+            }
+        }
+
+        let wasSelectionScoped = context.scope.isSelectionScoped
         // 用户主动整理优先于静默自动轮次。必须等待旧 runLoop 完全退出后再复用
         // BatchAIQueueService，避免两轮同时改写 jobs / options 和标签数据。
         await dependencies.batchAIQueueService.preemptAutomaticRunForManualStart()
         guard dependencies.batchAIQueueService.start(repos: repositories, options: batchAIOptions) else {
-            return false
+            return .failed(nil)
         }
         if wasSelectionScoped {
             dependencies.manageMultiSelectionStore.exit()
         }
         batchAIOptionsPresentation = nil
-        return true
+        return .reviewStarted
+    }
+
+    /// 用户确认首次词表后创建标签实体，并把本地闭集匹配结果交给既有逐仓审核。
+    /// repo_tags 仍不会在这里写入；只有审核页的“应用”出口可以建立仓库关联。
+    private func confirmTagTaxonomyBootstrap(
+        session: TagTaxonomyBootstrapSession,
+        selectedCandidates: [TagTaxonomyCandidate]
+    ) async -> String? {
+        guard session.kind == .bootstrap, !selectedCandidates.isEmpty else {
+            return String.l10n("batchAI.taxonomy.validation")
+        }
+
+        let normalizedCandidates = selectedCandidates.map { candidate -> TagTaxonomyCandidate in
+            var copy = candidate
+            copy.name = AITagSuggestionPolicy.normalizedDisplayName(candidate.name)
+            return copy
+        }
+        let canonicalNames = normalizedCandidates.map { AITagSuggestionPolicy.canonicalKey($0.name) }
+        guard canonicalNames.allSatisfy({ !$0.isEmpty }),
+              Set(canonicalNames).count == canonicalNames.count
+        else {
+            return String.l10n("batchAI.taxonomy.validation")
+        }
+
+        let suggestionLimit = dependencies.settings.clampedAITagSuggestionCounts.maximum
+        let suggestionReason = String.l10n("batchAI.taxonomy.suggestionReason")
+        let preliminarySuggestions = session.suggestions(
+            candidates: normalizedCandidates,
+            maximumPerRepository: suggestionLimit,
+            reason: suggestionReason
+        )
+        // 先验证本轮目标确实有命中，再创建标签实体；否则用户会看到错误，但词表已经被部分写入。
+        guard preliminarySuggestions.values.contains(where: { !$0.isEmpty }) else {
+            return String.l10n("batchAI.taxonomy.error.noTargetMatches")
+        }
+
+        // 用户主动确认优先于后台自动轮次；等待旧 Worker 完全退出后再创建本轮词表和草稿。
+        await dependencies.batchAIQueueService.preemptAutomaticRunForManualStart()
+
+        do {
+            let existingTags = try await dependencies.tagRepository.fetchAll()
+            var resolvedNamesByCanonicalKey: [String: String] = [:]
+            for tag in existingTags {
+                let key = AITagSuggestionPolicy.canonicalKey(tag.name)
+                guard !key.isEmpty, resolvedNamesByCanonicalKey[key] == nil else { continue }
+                resolvedNamesByCanonicalKey[key] = tag.name
+            }
+
+            for candidate in normalizedCandidates {
+                let key = AITagSuggestionPolicy.canonicalKey(candidate.name)
+                guard resolvedNamesByCanonicalKey[key] == nil else { continue }
+                let tag = makeTaxonomyTag(named: candidate.name)
+                try await dependencies.tagRepository.create(tag)
+                resolvedNamesByCanonicalKey[key] = tag.name
+            }
+
+            let resolvedCandidates = normalizedCandidates.map { candidate -> TagTaxonomyCandidate in
+                var copy = candidate
+                let key = AITagSuggestionPolicy.canonicalKey(candidate.name)
+                copy.name = resolvedNamesByCanonicalKey[key] ?? candidate.name
+                return copy
+            }
+            let suggestions = session.suggestions(
+                candidates: resolvedCandidates,
+                maximumPerRepository: suggestionLimit,
+                reason: suggestionReason
+            )
+
+            guard await dependencies.batchAIQueueService.startLocalTagReview(
+                repos: session.targetRepositories,
+                suggestionsByRepoID: suggestions,
+                options: batchAIOptions
+            ) else {
+                return String.l10n("batchAI.taxonomy.error.startReview")
+            }
+
+            if batchAIOptionsPresentation?.usesSelectedRepositories == true {
+                dependencies.manageMultiSelectionStore.exit()
+            }
+            batchAIOptionsPresentation = nil
+            return nil
+        } catch {
+            AppLog.ai.error(
+                "[batch-ai] commit local taxonomy failed: \(error.localizedDescription, privacy: .public)"
+            )
+            return String.l10n("batchAI.taxonomy.error.createTags")
+        }
+    }
+
+    private func makeTaxonomyTag(named name: String) -> Tag {
+        let now = ISO8601DateFormatter.shared.string(from: .now)
+        let visual = TagAutoVisual.pick(for: name)
+        return Tag(
+            id: UUID().uuidString,
+            name: name,
+            color: visual.colorHex,
+            icon: visual.iconName,
+            sortOrder: 0,
+            isPreset: false,
+            parentId: nil,
+            createdAt: now,
+            updatedAt: now
+        )
     }
 
     /// 根据入口固定本次仓库范围，并重置本轮可选操作。
@@ -2219,7 +2396,8 @@ struct HomeView: View {
     private func presentBatchAIOptions(
         scope: BatchAIRepositoryScope,
         skippedTaggedCount: Int = 0
-    ) {
+    ) async {
+        AppLog.ui.info("[batch-ai-window] Requested mode=preflight")
         batchAIOptions.actions = [.tags]
         batchAIOptions.codeContextEnabledOverride = false
         batchAIOptions.externalContextEnabledOverride = false
@@ -2229,17 +2407,32 @@ struct HomeView: View {
             skippedTaggedCount: skippedTaggedCount
         )
         batchAIOptionsPresentation = presentation
+        let hasReusableCanonicalTag: Bool
+        do {
+            hasReusableCanonicalTag = try await dependencies.tagRepository.fetchAll().contains { tag in
+                !AITagSuggestionPolicy.canonicalKey(tag.name).isEmpty
+            }
+        } catch {
+            // 读取失败时不要误判为空库并进入创建流程；点击启动后会由原预检继续阻止异常路径。
+            hasReusableCanonicalTag = true
+            AppLog.database.error(
+                "[batch-ai] inspect canonical tag library failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
         let context = BatchAIWorkspacePreflightContext(
             scope: presentation.scope,
             pendingCount: presentation.pendingCount(untaggedCount: viewModel.untaggedCount),
-            skippedTaggedCount: presentation.skippedTaggedCount
+            skippedTaggedCount: presentation.skippedTaggedCount,
+            requiresTaxonomyBootstrap: !hasReusableCanonicalTag
         )
         BatchAIWorkspaceWindowController.present(
             dependencies: dependencies,
+            parentWindow: batchAIParentWindow.window,
             initialMode: .preflight(context),
             options: $batchAIOptions,
             hasUsableExternalSearchProvider: hasUsableExternalSearchProvider,
             onStart: startBatchAIIntegration,
+            onConfirmTaxonomy: confirmTagTaxonomyBootstrap,
             onDismiss: dismissBatchAIOptions
         )
     }
@@ -2250,7 +2443,7 @@ struct HomeView: View {
         if dependencies.batchAIQueueService.hasUnresolvedManualWork {
             presentBatchAIProgress()
         } else {
-            presentBatchAIOptions(scope: scope)
+            Task { await presentBatchAIOptions(scope: scope) }
         }
     }
 
@@ -2283,7 +2476,7 @@ struct HomeView: View {
             batchAISelectionNotice = String.l10n("batchAI.selection.allTagged")
             return
         }
-        presentBatchAIOptions(
+        await presentBatchAIOptions(
             scope: .selected(eligible),
             skippedTaggedCount: skippedTaggedCount
         )
@@ -2296,12 +2489,15 @@ struct HomeView: View {
 
     /// 队列在窗口关闭后继续运行；状态入口只重新挂载审核工作区，不创建或覆盖任务。
     private func presentBatchAIProgress() {
+        AppLog.ui.info("[batch-ai-window] Requested mode=review")
         BatchAIWorkspaceWindowController.present(
             dependencies: dependencies,
+            parentWindow: batchAIParentWindow.window,
             initialMode: .review,
             options: $batchAIOptions,
             hasUsableExternalSearchProvider: hasUsableExternalSearchProvider,
             onStart: startBatchAIIntegration,
+            onConfirmTaxonomy: confirmTagTaxonomyBootstrap,
             onDismiss: dismissBatchAIOptions
         )
     }
@@ -2367,7 +2563,10 @@ struct HomeView: View {
         }
 
         Task { @MainActor in
-            await syncGitHubStarListsAndRefreshSidebar(login: user.login)
+            // 先显示本地数据并启动 Stars；分组网络快照不能挡住首页和主同步的启动。
+            await viewModel.refreshSidebar()
+            guard authSession.state.user?.id == user.id,
+                  dependencies.database.currentUserId == user.id else { return }
 
             if !isManageSelectionValid(viewModel.selection) {
                 viewModel.selection = .allStars
@@ -2378,11 +2577,15 @@ struct HomeView: View {
                 applyManageDetailSelectionPolicy()
             }
 
+            // 本地读取期间用户仍可能切号；旧入口不得给新账号启动 Stars 或分组网络任务。
+            guard authSession.state.user?.id == user.id,
+                  dependencies.database.currentUserId == user.id else { return }
             if isAccountSwitch {
                 syncManager.performFullSync(userID: user.id)
             } else {
                 syncManager.performFullSyncIfStale(userID: user.id)
             }
+            await syncGitHubStarListsAndRefreshSidebar(login: user.login)
         }
 
         // 项目同步不阻塞 Stars 首屏。完成后只刷新项目计数；用户当前正在浏览“我的项目”
@@ -2468,6 +2671,7 @@ struct HomeView: View {
         settings.libraryFilter = .all
         settings.repoLanguageFilter = .all
         settings.globalFilterLanguages = []
+        settings.globalFilterLicenses = []
         settings.wikiAvailabilityFilter = .unknown
         settings.healthAvailabilityFilter = .unknown
         settings.openSSFAvailabilityFilter = .unknown

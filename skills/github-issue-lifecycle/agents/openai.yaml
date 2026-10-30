@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Issue 生命周期"
+  short_description: "以 Issue 驱动开发并自动同步 GitHub Project"
+  default_prompt: "使用 $github-issue-lifecycle 管理这次代码变更：先建立 Issue，实施和审查期间自动同步 Project，人工验收后评论并关闭。"

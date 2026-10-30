@@ -41,6 +41,8 @@ private enum ExploreSidebarSelection: Hashable {
     case trendingLanguage(TrendingLanguage)
     case weeklyLanguage(String?)
     case awesomeSource(String?)
+    case linuxDo
+    case linuxDoLanguage(String?)
 }
 
 /// 探索侧栏图标色：未选中用语义色；明亮主题选中时跟系统蓝底反成白色。
@@ -65,6 +67,7 @@ struct SidebarView: View {
     /// Weekly 已迁移到 Explore,这里只读 ActivityViewModel 已发布的本地分类统计，
     /// 不在 sidebar 里主动触发任何加载。
     @Environment(AppDependencies.self) private var dependencies
+    @Environment(\.scenePhase) private var scenePhase
 
     /// 当前打开/收起 Languages 组的状态。
     @State private var languagesExpanded: Bool = true
@@ -216,6 +219,16 @@ struct SidebarView: View {
             backgroundTaskFooter
         }
         .background(.bar)
+        .task {
+            // 公共来源索引不依赖进入发现页；长期前台使用也按 TTL 低频更新。
+            while !Task.isCancelled {
+                await dependencies.linuxDoStore.refreshProvenance()
+                do { try await Task.sleep(for: .seconds(30 * 60)) } catch { return }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await dependencies.linuxDoStore.refreshProvenance() } }
+        }
         .sheet(isPresented: $showLoginSheet) {
             GithubAuthView()
                 .appLocaleEnvironment()
@@ -225,8 +238,7 @@ struct SidebarView: View {
                 list: item.list,
                 service: dependencies.githubStarListSyncService,
                 onSaved: {
-                    await viewModel.refreshSidebar()
-                    await viewModel.reloadItems(forceRefresh: true)
+                    await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
                 }
             )
             .appLocaleEnvironment()
@@ -264,13 +276,12 @@ struct SidebarView: View {
             // 后台自动分组不依赖审核 Sheet 是否打开；回调必须在 Sidebar 生命周期内常驻。
             dependencies.githubStarListAIGroupingSession.onMembershipsChanged = {
                 Task { @MainActor in
-                    await viewModel.refreshSidebar()
-                    await viewModel.reloadItems(forceRefresh: true)
+                    await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
                 }
             }
             dependencies.githubStarListAIGroupingSession.onAutoIgnoredReposChanged = {
                 Task { @MainActor in
-                    await viewModel.refreshSidebar()
+                    await viewModel.refreshGitHubStarListData(reloadCurrentList: false)
                 }
             }
         }
@@ -844,14 +855,20 @@ struct SidebarView: View {
             return defaultExploreSidebarSelection
         } set: { newSelection in
             guard let newSelection else { return }
-            exploreListSelection = newSelection
+            // 先提交来源 / 模式，再记录视觉 selection，避免 List 在同一事务中用旧业务状态
+            // 判定新行“已失效”，从而把高亮回退到上一个 Explore 分类。
             applyExploreSelection(newSelection)
+            exploreListSelection = newSelection
         }
     }
 
     private var defaultExploreSidebarSelection: ExploreSidebarSelection {
         switch selectedExploreMode {
         case .discover:
+            if dependencies.linuxDoStore.selectedSource == .linuxDo {
+                if let language = dependencies.linuxDoStore.selectedLanguage { return .linuxDoLanguage(language) }
+                return .linuxDo
+            }
             if let selectedDiscoveryTopic {
                 return .topic(selectedDiscoveryTopic)
             }
@@ -876,11 +893,11 @@ struct SidebarView: View {
     private func isExploreSelectionCurrent(_ selection: ExploreSidebarSelection) -> Bool {
         switch selection {
         case .mode(let mode):
-            return selectedExploreMode == mode
+            return selectedExploreMode == mode && (mode != .discover || dependencies.linuxDoStore.selectedSource == .catalog)
         case .topic(let code):
-            return selectedExploreMode == .discover && selectedDiscoveryTopic == code
+            return selectedExploreMode == .discover && dependencies.linuxDoStore.selectedSource == .catalog && selectedDiscoveryTopic == code
         case .platform(let code):
-            return selectedExploreMode == .discover && selectedDiscoveryPlatform == code
+            return selectedExploreMode == .discover && dependencies.linuxDoStore.selectedSource == .catalog && selectedDiscoveryPlatform == code
         case .language(let key):
             return selectedExploreMode != .discover
                 && selectedExploreMode != .trending
@@ -893,10 +910,23 @@ struct SidebarView: View {
         case .awesomeSource(let sourceID):
             return selectedExploreMode == .awesome
                 && dependencies.awesomeStore.selectedSourceID == sourceID
+        case .linuxDo:
+            return selectedExploreMode == .discover && dependencies.linuxDoStore.selectedSource == .linuxDo
+        case .linuxDoLanguage(let key):
+            return selectedExploreMode == .discover
+                && dependencies.linuxDoStore.selectedSource == .linuxDo
+                && dependencies.linuxDoStore.selectedLanguage == key
         }
     }
 
     private func applyExploreSelection(_ selection: ExploreSidebarSelection) {
+        // 来源不是 topic；返回普通发现时恢复已有主题/平台筛选，不污染 Linux.do 目录。
+        switch selection {
+        case .linuxDo, .linuxDoLanguage(_):
+            dependencies.linuxDoStore.selectedSource = .linuxDo
+        default:
+            dependencies.linuxDoStore.selectedSource = .catalog
+        }
         switch selection {
         case .mode(let mode):
             selectedExploreMode = mode
@@ -924,6 +954,16 @@ struct SidebarView: View {
         case .awesomeSource(let sourceID):
             selectedExploreMode = .awesome
             dependencies.awesomeStore.selectSource(sourceID)
+        case .linuxDo:
+            // Linux.do 是 Discover 下的独立来源；先切来源再切模式，保证 Sidebar、
+            // 中栏内容和标题在同一轮观察更新中都能识别为 Linux.do。
+            dependencies.linuxDoStore.selectedSource = .linuxDo
+            dependencies.linuxDoStore.selectedLanguage = nil
+            selectedExploreMode = .discover
+        case .linuxDoLanguage(let key):
+            // 单选语言只改变 Linux.do 的本地投影，不回写普通发现或全局语言筛选。
+            dependencies.linuxDoStore.selectedLanguage = key
+            selectedExploreMode = .discover
         }
     }
 
@@ -979,9 +1019,11 @@ struct SidebarView: View {
                 } icon: {
                     // 与星标 / 探索 / 活动侧栏一致：未选中保留语义色，明亮选中反白。
                     Image(systemName: topic.systemImage)
+                        .font(interfaceScale.font(.iconSmall, weight: .semibold))
                         .foregroundStyle(
                             SidebarSemanticIconStyle(semanticColor: topic.semanticIconColor)
                         )
+                        .frame(width: 16, height: 16)
                 }
                 .tag(topic)
             }
@@ -1071,6 +1113,15 @@ struct SidebarView: View {
         Section("nav.trending") {
             ForEach(ExploreMode.allCases) { mode in
                 exploreModeRow(mode)
+                if mode == .weekly {
+                    exploreSelectableRow(
+                        selection: .linuxDo,
+                        count: dependencies.linuxDoStore.provenance?.payload.origins?.count ?? 0
+                    ) {
+                        // 社区来源使用单气泡，复用分类字号与字重，避免独立缩放造成笔画不一致。
+                        exploreSidebarBusinessIcon(.linuxDo, color: .indigo)
+                    } title: { Text(verbatim: "Linux.do") }
+                }
             }
         }
     }
@@ -1080,7 +1131,7 @@ struct SidebarView: View {
             selection: .mode(mode),
             count: exploreModeCount(mode)
         ) {
-            exploreSidebarSystemIcon(mode.systemImage, color: mode.sidebarIconColor)
+            exploreSidebarBusinessIcon(mode.businessIcon, color: mode.sidebarIconColor)
         } title: {
             HStack(spacing: 4) {
                 Text(mode.titleKey)
@@ -1125,7 +1176,11 @@ struct SidebarView: View {
     private var exploreSidebarContent: some View {
         switch selectedExploreMode {
         case .discover:
-            exploreDiscoverySidebarContent
+            if dependencies.linuxDoStore.selectedSource == .catalog {
+                exploreDiscoverySidebarContent
+            } else {
+                linuxDoLanguageSidebarContent
+            }
         case .popular, .newReleases:
             exploreLanguageSidebarContent
         case .trending:
@@ -1284,6 +1339,28 @@ struct SidebarView: View {
         return items
     }
 
+    /// 本来源语言统计只读缓存；行样式、偏好分组与折叠行为复用普通探索语言区。
+    private var linuxDoLanguageSidebarContent: some View {
+        Section {
+            exploreLanguageRow(nil, isLinuxDo: true)
+            if trendingLanguagesExpanded {
+                let items = exploreLanguageRowItems(
+                    keysWithCounts: dependencies.linuxDoStore.languages.map { ($0.key, $0.count) },
+                    interestedLanguages: viewModel.interestedLanguages
+                )
+                ForEach(items) { item in
+                    exploreLanguageRow(
+                        DiscoveryLanguageDTO(key: item.key, label: item.label, count: item.count),
+                        isLinuxDo: true
+                    )
+                    .transition(Self.disclosureRowTransition)
+                }
+            }
+        } header: {
+            exploreLanguageSectionHeader
+        }
+    }
+
     @ViewBuilder
     private var exploreLanguageSidebarContent: some View {
         Section {
@@ -1411,7 +1488,7 @@ struct SidebarView: View {
             // Activity 分类使用系统语义图标，不复用 LanguageIconView，避免渲染出语言 logo。
             // 明亮选中态反白：与探索「发现 / 趋势 / …」同一套 SidebarSemanticIconStyle。
             Image(systemName: category.systemImage)
-                .font(interfaceScale.font(size: 14, weight: .semibold))
+                .font(interfaceScale.font(.iconSmall, weight: .semibold))
                 .foregroundStyle(SidebarSemanticIconStyle(semanticColor: category.iconColor))
                 .frame(width: 16, height: 16)
         }
@@ -1753,7 +1830,9 @@ struct SidebarView: View {
 
                 Spacer(minLength: 8)
 
-                Text(dependencies.exploreCatalogStore.displayLanguages(for: selectedExploreMode).count.formatted())
+                Text((dependencies.linuxDoStore.selectedSource == .linuxDo && selectedExploreMode == .discover
+                    ? dependencies.linuxDoStore.languages.count
+                    : dependencies.exploreCatalogStore.displayLanguages(for: selectedExploreMode).count).formatted())
                     .font(interfaceScale.font(.captionSmall))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -1861,10 +1940,7 @@ struct SidebarView: View {
         guard let login = authSession.state.user?.login else { return }
         Task {
             await dependencies.githubStarListSyncService.sync(login: login)
-            await viewModel.refreshSidebar()
-            if viewModel.selection.isGitHubStarListContext {
-                await viewModel.reloadItems(forceRefresh: true)
-            }
+            await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
         }
     }
 
@@ -1966,15 +2042,17 @@ struct SidebarView: View {
         }
     }
 
-    private func exploreLanguageRow(_ language: DiscoveryLanguageDTO?) -> some View {
+    private func exploreLanguageRow(_ language: DiscoveryLanguageDTO?, isLinuxDo: Bool = false) -> some View {
         let key = language?.key
         // 「其他」/感兴趣语言由客户端聚合而来，count 优先用 DTO 自带值；
         // 「全部」回退到 catalog total。
-        let count: Int? = language?.count ?? dependencies.exploreCatalogStore.total(for: selectedExploreMode)
+        let count: Int? = language?.count ?? (isLinuxDo
+            ? dependencies.linuxDoStore.repositories.count
+            : dependencies.exploreCatalogStore.total(for: selectedExploreMode))
         // 语言 logo 不是 SF Symbol，不能塞进 systemImage 字符串；仍走 Label icon 槽，
         // 与趋势/周刊语言行、星标主导航同一套 sidebar 图标列对齐。
         return exploreSelectableRow(
-            selection: .language(key),
+            selection: isLinuxDo ? .linuxDoLanguage(key) : .language(key),
             count: count
         ) {
             if let language {
@@ -1991,6 +2069,17 @@ struct SidebarView: View {
                     .lineLimit(1)
             }
         }
+    }
+
+    /// 资产按 16pt 画布、系统图标按既有 13pt 字号绘制，共用原图标列与选中态。
+    private func exploreSidebarBusinessIcon(_ symbol: BusinessIcon.Symbol, color: Color) -> some View {
+        BusinessIcon(
+            symbol,
+            pointSize: (symbol.isAsset ? 16 : 13) * interfaceScale.multiplier,
+            weight: .semibold
+        )
+        .foregroundStyle(ExploreSidebarIconStyle(semanticColor: color))
+        .frame(width: 16, height: 16)
     }
 
     /// 探索侧栏 SF Symbol：语义色 + 明亮主题选中反白（见 `ExploreSidebarIconStyle`）。
@@ -2224,9 +2313,11 @@ struct SidebarView: View {
             }
         } icon: {
             Image(systemName: item.systemImage)
+                .font(interfaceScale.font(.iconSmall, weight: .semibold))
                 .foregroundStyle(
                     SidebarSemanticIconStyle(semanticColor: item.semanticIconColor ?? .secondary)
                 )
+                .frame(width: 16, height: 16)
         }
         .tag(item)
         // HOM-46 优化：鼠标悬停时预取相邻分类数据，降低点击后的感知延迟
@@ -2282,11 +2373,13 @@ struct SidebarView: View {
             }
         } icon: {
             Image(systemName: SidebarItem.myProjects.systemImage)
+                .font(interfaceScale.font(.iconSmall, weight: .semibold))
                 .foregroundStyle(
                     SidebarSemanticIconStyle(
                         semanticColor: SidebarItem.myProjects.semanticIconColor ?? .secondary
                     )
                 )
+                .frame(width: 16, height: 16)
         }
         .tag(SidebarItem.myProjects)
         .onHover { isHovering in
@@ -2351,9 +2444,9 @@ struct SidebarView: View {
         row(.githubStarListUngrouped, count: viewModel.githubStarListUngroupedCount)
     }
 
-    /// GitHub Stars List 真实分组行：颜色点 + 名称 + 计数。
+    /// GitHub Stars List 真实分组行：颜色点 + 名称 + 私有盾牌（常驻）+ 计数。
     ///
-    /// 编辑入口不常驻：hover 时紧跟分组名，计数仍走右侧固定槽。
+    /// 编辑入口不常驻：hover 时紧跟名称（私有盾牌之后），计数仍走右侧固定槽。
     /// 未 hover 时按钮不进视图树，避免抢走 List 选中。右键提供编辑 / 删除。「未分组」没有这些入口。
     ///
     /// 不要在 Label 上挂 `TapGesture`：macOS `List(selection:)` 会把单击交给手势，
@@ -2386,8 +2479,7 @@ struct SidebarView: View {
             if viewModel.selection == .githubStarList(list.id) {
                 viewModel.selection = .githubStarListUngrouped
             }
-            await viewModel.refreshSidebar()
-            await viewModel.reloadItems(forceRefresh: true)
+            await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
         } catch {
             AppLog.network.error("Delete GitHub star list from sidebar failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -2422,12 +2514,14 @@ struct SidebarView: View {
         } icon: {
             // 优先 user-defined SF Symbol；否则 fallback "tag.fill"
             // 明亮选中反白，避免彩色 icon 叠在系统蓝底上看不清。
-            Image(systemName: tag.icon ?? "tag.fill")
+            Image(systemName: tag.icon ?? BusinessIcon.Symbol.tags.systemImage)
+                .font(interfaceScale.font(.iconSmall, weight: .semibold))
                 .foregroundStyle(
                     SidebarSemanticIconStyle(
                         semanticColor: Color(hex: tag.color ?? TagColorPalette.defaultHex) ?? .accentColor
                     )
                 )
+                .frame(width: 16, height: 16)
         }
         .tag(item)
         // HOM-46 优化：hover 时预取相邻分类

@@ -108,6 +108,26 @@ struct GitHubStarListAIGroupingPolicyTests {
         #expect(result.map(\.reason) == ["allowed"])
     }
 
+    @Test("人工审核默认过滤低概率并限制前五项，但保留用户阈值已批准项")
+    func reviewSuggestionsKeepRequiredAutomaticMatches() {
+        let suggestions = (0..<7).map { index in
+            GitHubStarListAISuggestion(
+                listId: "list-\(index)",
+                confidence: 0.90 - Double(index) * 0.05,
+                reason: "rank \(index)"
+            )
+        } + [
+            GitHubStarListAISuggestion(listId: "required", confidence: 0.52, reason: "user threshold")
+        ]
+
+        let result = GitHubStarListAISuggestionPolicy.reviewSuggestions(
+            from: suggestions,
+            requiredListIDs: ["required"]
+        )
+
+        #expect(result.map(\.listId) == ["list-0", "list-1", "list-2", "list-3", "list-4", "required"])
+    }
+
     @Test("审核建议未确认时不生成写入计划，确认后仍限制在建议闭集")
     func previewRequiresExplicitConfirmation() {
         let suggestions = [

@@ -43,6 +43,9 @@ enum RepositorySearchMerger {
             if current.semanticScore == nil {
                 current.semanticScore = candidate.semanticScore
             }
+            if current.semanticReason == nil {
+                current.semanticReason = candidate.semanticReason
+            }
             merged[matchIndex] = current
         }
         return merged

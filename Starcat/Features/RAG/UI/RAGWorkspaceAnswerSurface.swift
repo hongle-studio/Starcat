@@ -445,7 +445,7 @@ struct RAGWorkspaceAnswerSurface: View {
         Group {
             if viewModel.isKnowledgeBaseEmpty {
                 EmptyStateView(
-                    systemImage: "books.vertical",
+                    systemImage: BusinessIcon.Symbol.library.systemImage,
                     title: "rag.workspace.empty.noKnowledge.title",
                     subtitle: "rag.workspace.empty.noKnowledge.subtitle",
                     iconSize: interfaceScale.scaled(52),
@@ -501,7 +501,7 @@ struct RAGWorkspaceAnswerSurface: View {
     /// 会话已有内容但知识库仍为空（例如提问后落到 noKnowledgeRepos）时，在 Composer 上方给补救入口。
     var emptyKnowledgeBanner: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "books.vertical")
+            Image(systemName: BusinessIcon.Symbol.library.systemImage)
                 .font(iconFont(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text("rag.workspace.empty.noKnowledge.banner")

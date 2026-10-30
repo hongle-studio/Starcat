@@ -16,7 +16,7 @@ enum BuiltInAgents {
         id: "github-weekly-report",
         title: String.l10n("agent.definition.githubWeeklyReport.title"),
         subtitle: String.l10n("agent.definition.githubWeeklyReport.subtitle"),
-        systemImage: "newspaper",
+        systemImage: BusinessIcon.Symbol.weekly.systemImage,
         capabilityLabels: [
             String.l10n("agent.capability.trending"),
             String.l10n("agent.capability.report"),
@@ -60,7 +60,7 @@ enum BuiltInAgents {
         id: "repo-insight",
         title: String.l10n("agent.definition.repoInsight.title"),
         subtitle: String.l10n("agent.definition.repoInsight.subtitle"),
-        systemImage: "doc.text.magnifyingglass",
+        systemImage: BusinessIcon.Symbol.repositoryAnalysis.systemImage,
         capabilityLabels: [
             String.l10n("agent.capability.repository"),
             String.l10n("agent.capability.analysis"),
@@ -102,7 +102,7 @@ enum BuiltInAgents {
         id: "repo-alternatives",
         title: String.l10n("agent.definition.repoAlternatives.title"),
         subtitle: String.l10n("agent.definition.repoAlternatives.subtitle"),
-        systemImage: "arrow.triangle.branch",
+        systemImage: BusinessIcon.Symbol.alternatives.systemImage,
         capabilityLabels: [
             String.l10n("agent.capability.compare"),
             String.l10n("agent.capability.github"),
@@ -148,7 +148,7 @@ enum BuiltInAgents {
         id: "untagged-tidy",
         title: String.l10n("agent.definition.untaggedTidy.title"),
         subtitle: String.l10n("agent.definition.untaggedTidy.subtitle"),
-        systemImage: "tag",
+        systemImage: BusinessIcon.Symbol.tags.systemImage,
         capabilityLabels: [
             String.l10n("agent.capability.taxonomy"),
             String.l10n("agent.capability.queue"),

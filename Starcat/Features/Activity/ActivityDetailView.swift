@@ -462,7 +462,7 @@ struct ActivityDetailView: View {
                         ),
                         style: .full
                     )
-                    MetaBadge(systemImage: "tuningfork", text: repo.forksCount.formattedShort, tint: .secondary)
+                    MetaBadge(businessIcon: .forkCount, text: repo.forksCount.formattedShort, tint: .secondary)
                     MetaBadge(systemImage: "eye", text: repo.watchersCount.formattedShort, tint: StatSemanticColor.watchers.resolved(colorScheme: colorScheme))
                     if repo.isArchived {
                         ArchivedBadge()

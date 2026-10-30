@@ -14,6 +14,7 @@
 //
 //  本 ContentView 负责 body slot 内容：
 //  - `ReadmeStateView`：README WebView（含翻译入口,活动总是已 star）
+//  - 已 star 时经 `RepoDetailInsightsHost` 露出 README / 洞察切换
 //
 //  R-01 v1.5 修订（2026-06-10 下午, dong4j bug 反馈）：
 //  - tags / notes / release 三段（`RepoLocalSections`）**从 ContentView 迁回 Scaffold
@@ -49,25 +50,27 @@ struct ActivityRepoDetailContent: View {
     @Environment(AuthSession.self) private var authSession
 
     var body: some View {
-        // v1.5 修订（2026-06-10）：RepoLocalSections 已迁回 Scaffold metadataPanel,
-        // 本 ContentView body 仅剩 ReadmeStateView,无需再包 VStack。
-        ReadmeStateView(
-            state: readmeVM.state,
-            contentScope: .manage(repoId: repo.id),
-            baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
-            onScrollReportChange: onScrollReport,
-            translationControl: ReadmeTranslationControl(
-                repo: repo,
-                translationVM: translationVM,
-                settings: settings
-            )
-        ) {
-            readmeVM.reload(repo: repo, isLoggedIn: authSession.state.isAuthenticated)
-        } onLogin: {
-            // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
-            // （让用户在 sheet 内可选 Device Flow / PAT，详见 AuthSession.requestLoginSheet 注释）
-            authSession.requestLoginSheet()
+        // 活动 repo-backed 路径几乎总是已 star；仍走同一 isStarred 门禁，避免和探索/周刊分叉。
+        RepoDetailInsightsHost(repo: repo, onScrollReport: onScrollReport) {
+            ReadmeStateView(
+                state: readmeVM.state,
+                contentScope: .manage(repoId: repo.id),
+                baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
+                onScrollReportChange: onScrollReport,
+                translationControl: ReadmeTranslationControl(
+                    repo: repo,
+                    translationVM: translationVM,
+                    settings: settings
+                ),
+                starHistoryRepo: repo
+            ) {
+                readmeVM.reload(repo: repo, isLoggedIn: authSession.state.isAuthenticated)
+            } onLogin: {
+                // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
+                // （让用户在 sheet 内可选 Device Flow / PAT，详见 AuthSession.requestLoginSheet 注释）
+                authSession.requestLoginSheet()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

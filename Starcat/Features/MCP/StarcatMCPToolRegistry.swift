@@ -45,6 +45,7 @@ final class StarcatMCPToolRegistry {
         "starcat.get_repo_summary",
         "starcat.get_readme",
         "starcat.list_tags",
+        "starcat.list_repos_by_tag",
         "starcat.get_repo_note",
     ]
 
@@ -227,11 +228,48 @@ final class StarcatMCPToolRegistry {
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
             ),
             Tool(
+                name: "starcat.list_repos_by_tag",
+                title: "List repositories by tag",
+                description: "List currently starred repositories assigned to one exact Starcat tag name, ordered the same way as the Tags view.",
+                inputSchema: Self.objectSchema([
+                    "tag": Self.stringSchema("Exact tag name returned by starcat.list_tags."),
+                    "limit": Self.integerSchema(
+                        "Maximum number of repositories to return.",
+                        defaultValue: 20,
+                        minimum: 1,
+                        maximum: 100
+                    )
+                ], required: ["tag"]),
+                annotations: .init(readOnlyHint: true, openWorldHint: false)
+            ),
+            Tool(
                 name: "starcat.get_repo_note",
                 title: "Get private repo note",
                 description: "Read a repository private note and status. This only works when private note exposure is enabled in Starcat Settings.",
                 inputSchema: Self.repoSelectorSchema(),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
+            ),
+            Tool(
+                name: "starcat.star_repo",
+                title: "Star a GitHub repository",
+                description: "Star a repository on the user's GitHub account. owner/name may reference a GitHub search result that is not yet cached locally. Requires MCP GitHub Star writes in Starcat Settings.",
+                inputSchema: Self.objectSchema(
+                    Self.repoSelectorProperties().merging([
+                        "dry_run": Self.booleanSchema("Validate the remote write without changing GitHub or local data.", defaultValue: false)
+                    ]) { _, new in new }
+                ),
+                annotations: .init(readOnlyHint: false, openWorldHint: true)
+            ),
+            Tool(
+                name: "starcat.unstar_repo",
+                title: "Unstar a GitHub repository",
+                description: "Unstar a repository on the user's GitHub account while preserving its Starcat tags, notes, summaries, and other local data. Requires MCP GitHub Star writes in Starcat Settings.",
+                inputSchema: Self.objectSchema(
+                    Self.repoSelectorProperties().merging([
+                        "dry_run": Self.booleanSchema("Validate the remote write without changing GitHub or local data.", defaultValue: false)
+                    ]) { _, new in new }
+                ),
+                annotations: .init(readOnlyHint: false, openWorldHint: true)
             ),
             Tool(
                 name: "starcat.upsert_repo_note",
@@ -282,6 +320,28 @@ final class StarcatMCPToolRegistry {
                     ]) { _, new in new },
                     required: ["tags"]
                 ),
+                annotations: .init(readOnlyHint: false, openWorldHint: false)
+            ),
+            Tool(
+                name: "starcat.batch_organize_repos",
+                title: "Batch organize repositories",
+                description: "Add tags and/or update private notes for up to 100 local repositories in one request. The entire request is preflighted before writes begin. Requires MCP local and batch writes in Starcat Settings.",
+                inputSchema: Self.objectSchema([
+                    "items": Self.arraySchema(
+                        "Repository operations. Each item must provide repo_id or owner/name plus non-empty tags and/or note.",
+                        items: Self.batchOrganizeItemSchema(),
+                        minimumItems: 1,
+                        maximumItems: 100
+                    ),
+                    "create_missing": Self.booleanSchema(
+                        "Create tag names that do not already exist. Defaults to false to protect the curated tag vocabulary.",
+                        defaultValue: false
+                    ),
+                    "dry_run": Self.booleanSchema(
+                        "Validate every item without persisting tags or notes.",
+                        defaultValue: false
+                    )
+                ], required: ["items"]),
                 annotations: .init(readOnlyHint: false, openWorldHint: false)
             ),
             Tool(
@@ -398,9 +458,39 @@ final class StarcatMCPToolRegistry {
                 let value = try await facade.listTags()
                 return try Self.result(value)
 
+            case "starcat.list_repos_by_tag":
+                guard let tag = params.arguments?["tag"]?.stringValue else {
+                    throw StarcatMCPError.invalidArguments("Missing required argument: tag")
+                }
+                let value = try await facade.listReposByTag(
+                    tagName: tag,
+                    limit: params.arguments?["limit"]?.intValue ?? 20
+                )
+                return try Self.result(value)
+
             case "starcat.get_repo_note":
                 let selector = Self.repoSelector(from: params.arguments)
                 let value = try await facade.getRepoNote(repoID: selector.repoID, owner: selector.owner, name: selector.name)
+                return try Self.result(value)
+
+            case "starcat.star_repo":
+                let selector = Self.repoSelector(from: params.arguments)
+                let value = try await writeFacade.starRepo(
+                    repoID: selector.repoID,
+                    owner: selector.owner,
+                    name: selector.name,
+                    dryRun: Self.bool(params.arguments, "dry_run", defaultValue: false)
+                )
+                return try Self.result(value)
+
+            case "starcat.unstar_repo":
+                let selector = Self.repoSelector(from: params.arguments)
+                let value = try await writeFacade.unstarRepo(
+                    repoID: selector.repoID,
+                    owner: selector.owner,
+                    name: selector.name,
+                    dryRun: Self.bool(params.arguments, "dry_run", defaultValue: false)
+                )
                 return try Self.result(value)
 
             case "starcat.upsert_repo_note":
@@ -451,6 +541,14 @@ final class StarcatMCPToolRegistry {
                     name: selector.name,
                     tagNames: try Self.stringArray(params.arguments, "tags"),
                     createMissing: Self.bool(params.arguments, "create_missing", defaultValue: true),
+                    dryRun: Self.bool(params.arguments, "dry_run", defaultValue: false)
+                )
+                return try Self.result(value)
+
+            case "starcat.batch_organize_repos":
+                let value = try await writeFacade.batchOrganizeRepos(
+                    items: try Self.batchOrganizeItems(from: params.arguments),
+                    createMissing: Self.bool(params.arguments, "create_missing", defaultValue: false),
                     dryRun: Self.bool(params.arguments, "dry_run", defaultValue: false)
                 )
                 return try Self.result(value)
@@ -705,6 +803,30 @@ final class StarcatMCPToolRegistry {
         ])
     }
 
+    private static func arraySchema(
+        _ description: String,
+        items: Value,
+        minimumItems: Int,
+        maximumItems: Int
+    ) -> Value {
+        .object([
+            "type": .string("array"),
+            "description": .string(description),
+            "items": items,
+            "minItems": .int(minimumItems),
+            "maxItems": .int(maximumItems)
+        ])
+    }
+
+    private static func batchOrganizeItemSchema() -> Value {
+        objectSchema(
+            repoSelectorProperties().merging([
+                "tags": stringArraySchema("Tag names to add. Omit when only updating the note."),
+                "note": stringSchema("Private Markdown note content. An empty string clears the note; omit to keep it unchanged.")
+            ]) { _, new in new }
+        )
+    }
+
     private static func bool(_ arguments: [String: Value]?, _ key: String, defaultValue: Bool) -> Bool {
         arguments?[key]?.boolValue ?? defaultValue
     }
@@ -718,6 +840,37 @@ final class StarcatMCPToolRegistry {
             throw StarcatMCPError.invalidArguments("\(key) must be an array of strings")
         }
         return strings
+    }
+
+    private static func batchOrganizeItems(
+        from arguments: [String: Value]?
+    ) throws -> [MCPBatchOrganizeItemInput] {
+        guard let values = arguments?["items"]?.arrayValue else {
+            throw StarcatMCPError.invalidArguments("Missing required argument: items")
+        }
+        return try values.enumerated().map { index, value in
+            guard let object = value.objectValue else {
+                throw StarcatMCPError.invalidArguments("items[\(index)] must be an object")
+            }
+            let selector = repoSelector(from: object)
+            let tags = object["tags"] == nil ? [] : try stringArray(object, "tags")
+            let note: String?
+            if let rawNote = object["note"] {
+                guard let resolvedNote = rawNote.stringValue else {
+                    throw StarcatMCPError.invalidArguments("items[\(index)].note must be a string")
+                }
+                note = resolvedNote
+            } else {
+                note = nil
+            }
+            return MCPBatchOrganizeItemInput(
+                repoID: selector.repoID,
+                owner: selector.owner,
+                name: selector.name,
+                tagNames: tags,
+                note: note
+            )
+        }
     }
 
     private static func prettyJSON<T: Encodable>(_ value: T) throws -> String {

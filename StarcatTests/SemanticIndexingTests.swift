@@ -7,7 +7,7 @@
 //  覆盖范围：
 //  - `ReadmePreprocessor`：HTML / Markdown 清洗 + 截断的边界
 //  - `IndexedSnapshot`：Codable / Equatable
-//  - `IndexedTextBuilder`：三级降级主体 + 元数据筛选 + 笔记拼接
+//  - `IndexedTextBuilder`：摘要+README 并存主体 + 元数据筛选 + 笔记拼接
 //  - `IndexedTextDiff`：行级 diff 比例计算 + 三档阈值 + metadata 变化触发
 //
 //  设计取舍：
@@ -237,8 +237,8 @@ struct IndexedTextBuilderTests {
         )
     }
 
-    @Test("三级降级: 优先用 AI 摘要")
-    func bodyPrefersSummary() {
+    @Test("摘要和 README 都有时并存，摘要在前")
+    func bodyKeepsSummaryAndReadme() {
         let repo = makeRepo()
         let snap = IndexedTextBuilder.buildSnapshot(
             repo: repo,
@@ -246,10 +246,10 @@ struct IndexedTextBuilderTests {
             aiSummary: "ai summary text",
             noteContent: nil
         )
-        #expect(snap.body == "ai summary text")
+        #expect(snap.body == "ai summary text\n\nreadme text")
     }
 
-    @Test("三级降级: 无摘要时用 README")
+    @Test("无摘要时用 README")
     func bodyFallsBackToReadme() {
         let repo = makeRepo()
         let snap = IndexedTextBuilder.buildSnapshot(
@@ -261,7 +261,19 @@ struct IndexedTextBuilderTests {
         #expect(snap.body == "readme text")
     }
 
-    @Test("三级降级: 摘要 README 全空 → description+topics 兜底")
+    @Test("只有摘要没有 README 时 body 就是摘要")
+    func bodyUsesSummaryAlone() {
+        let repo = makeRepo()
+        let snap = IndexedTextBuilder.buildSnapshot(
+            repo: repo,
+            readmePlainText: nil,
+            aiSummary: "ai summary text",
+            noteContent: nil
+        )
+        #expect(snap.body == "ai summary text")
+    }
+
+    @Test("摘要 README 全空 → description+topics 兜底")
     func bodyFallsBackToDescriptionTopics() {
         let repo = makeRepo(description: "fallback desc", topics: "[\"a\",\"b\"]")
         let snap = IndexedTextBuilder.buildSnapshot(

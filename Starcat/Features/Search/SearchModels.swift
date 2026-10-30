@@ -110,6 +110,9 @@ struct RepositoryCandidate: Identifiable, Hashable, Sendable {
     /// 远端完整元数据，仅用于会话内详情/AI，不代表已经写入本地数据库。
     var remoteRepo: Repo?
     var semanticScore: Double?
+    /// 语义命中原因，仅给 Search Center 匹配度徽章的 tooltip 用。
+    /// 关键词-only 候选保持 nil，避免纯 FTS 行冒出百分比。
+    var semanticReason: String? = nil
     /// 远端瞬时态字段（disabled / is_template / score）。默认 `.empty` 让现有
     /// 调用点零改动；GitHub Search Provider 显式填值后弹窗能渲染对应徽章。
     var remoteExtras: RemoteRepoExtras = .empty

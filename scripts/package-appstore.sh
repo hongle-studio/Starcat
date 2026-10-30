@@ -41,6 +41,8 @@ EXPORT_OPTIONS_PATH="${DIST_DIR}/ExportOptions.generated.plist"
 DEVELOPMENT_TEAM_ID="${STARCAT_DEVELOPMENT_TEAM:-${DEVELOPMENT_TEAM:-}}"
 APPSTORE_SIGN_IDENTITY="${STARCAT_APPSTORE_SIGN_IDENTITY:-Apple Distribution}"
 APPSTORE_ENTITLEMENTS_PATH="${PROJECT_ROOT}/Starcat/Starcat.entitlements"
+CODEBASE_ENTITLEMENTS_PATH="${PROJECT_ROOT}/Starcat/StarcatCodebase.entitlements"
+LOCAL_AI_APP_GROUP="8WCUMGCWMB.com.starcat.app.localai"
 FORMAL_XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 
 log() { printf '[appstore] %s\n' "$1"; }
@@ -67,12 +69,18 @@ verify_formal_xcode() {
   xcode_icon_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$xcode_app_path/Contents/Info.plist" 2>/dev/null || true)"
 
   # App Store Connect 会拒绝 Beta Xcode 生成的构建。固定正式版安装路径，
-  # 并检查 Beta 图标标记和 seed build 后缀，避免只修改 app 名称后绕过门禁。
+  # 并检查 Beta 图标标记与 xcodebuild 版本横幅，避免只修改 app 名称后绕过门禁。
+  # 注意：不能用「build 号以小写字母结尾」判 Beta——Apple 正式版 GM 常以字母结尾
+  # （Xcode 16.0=16A242d、15.0=15A240d、27=27A266a，见 developer.apple.com/news/releases），
+  # 且 RC 与 GM 复用同一 build 字节，后缀本身无法区分正式版。
   [ "$developer_dir" = "$FORMAL_XCODE_DEVELOPER_DIR" ] || \
     fail "App Store 正式包只允许使用 ${FORMAL_XCODE_DEVELOPER_DIR}；当前为 ${developer_dir}。请显式设置 DEVELOPER_DIR=${FORMAL_XCODE_DEVELOPER_DIR}"
   [ -n "$xcode_version" ] || fail "无法读取正式版 Xcode 版本"
   [ -n "$xcode_build" ] || fail "无法读取正式版 Xcode build"
-  if [[ "$xcode_icon_name" =~ [Bb]eta|[Pp]review|[Rr]elease[Cc]andidate ]] || [[ "$xcode_build" =~ [a-z]$ ]]; then
+  local xcode_banner
+  xcode_banner="$("$xcodebuild_path" -version 2>/dev/null | head -1)"
+  if [[ "$xcode_icon_name" =~ [Bb]eta|[Pp]review|[Rr]elease[Cc]andidate ]] || \
+     [[ "$xcode_banner" =~ [Bb]eta|[Pp]review|[Rr]elease[[:space:]][Cc]andidate ]]; then
     fail "App Store 正式包禁止使用 Beta/RC/Preview Xcode；当前为 Xcode ${xcode_version} (${xcode_build})"
   fi
 
@@ -131,6 +139,8 @@ set +e
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE_PATH" \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
   "${BUILD_SETTINGS[@]}" \
   clean archive \
   >"$BUILD_LOG" 2>&1
@@ -153,6 +163,7 @@ sign_codebase_binary_for_appstore() {
   local binary_path="${APP_PATH}/Contents/Resources/codebase.bin"
   [ -f "$binary_path" ] || return
   [ -f "$APPSTORE_ENTITLEMENTS_PATH" ] || fail "缺少 App Store entitlements: $APPSTORE_ENTITLEMENTS_PATH"
+  [ -f "$CODEBASE_ENTITLEMENTS_PATH" ] || fail "缺少 codebase.bin entitlements: $CODEBASE_ENTITLEMENTS_PATH"
 
   local sign_identity
   sign_identity="$(resolve_appstore_sign_identity)"
@@ -162,13 +173,16 @@ sign_codebase_binary_for_appstore() {
   codesign --force \
     --sign "$sign_identity" \
     --options runtime \
-    --entitlements "$APPSTORE_ENTITLEMENTS_PATH" \
+    --entitlements "$CODEBASE_ENTITLEMENTS_PATH" \
     "$binary_path"
 
   local codebase_entitlements
   codebase_entitlements="$(codesign -d --entitlements :- "$binary_path" 2>/dev/null || true)"
   if ! grep -q "com.apple.security.app-sandbox" <<<"$codebase_entitlements"; then
     fail "codebase.bin 重签后仍缺少 sandbox entitlement"
+  fi
+  if grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$codebase_entitlements"; then
+    fail "codebase.bin 不应获得本地 AI 共享 App Group"
   fi
 
   if command -v dsymutil >/dev/null 2>&1; then
@@ -292,11 +306,17 @@ verify_appstore_archive() {
   if ! grep -q "com.apple.security.app-sandbox" <<<"$ENTITLEMENTS"; then
     fail "App Store 包缺少 sandbox entitlement"
   fi
+  if ! grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$ENTITLEMENTS"; then
+    fail "App Store 主 App 缺少本地 AI 共享 App Group"
+  fi
   log "主 App sandbox entitlement: OK"
 
   WIDGET_ENTITLEMENTS="$(codesign -d --entitlements :- "$WIDGET_PATH" 2>/dev/null || true)"
   if ! grep -q "com.apple.security.app-sandbox" <<<"$WIDGET_ENTITLEMENTS"; then
     fail "Widget 缺少 sandbox entitlement"
+  fi
+  if grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$WIDGET_ENTITLEMENTS"; then
+    fail "Widget 不应获得本地 AI 共享 App Group"
   fi
   log "Widget sandbox entitlement: OK"
 
@@ -306,6 +326,9 @@ verify_appstore_archive() {
     CODEBASE_ENTITLEMENTS="$(codesign -d --entitlements :- "$CODEBASE_BIN" 2>/dev/null || true)"
     if ! grep -q "com.apple.security.app-sandbox" <<<"$CODEBASE_ENTITLEMENTS"; then
       fail "codebase.bin 缺少 sandbox entitlement"
+    fi
+    if grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$CODEBASE_ENTITLEMENTS"; then
+      fail "codebase.bin 不应获得本地 AI 共享 App Group"
     fi
     log "codebase.bin sandbox entitlement: OK"
 
@@ -387,6 +410,14 @@ export_appstore_package() {
   verify_apple_distribution_signature "$EXPORTED_APP" "主 App（export）"
   verify_apple_distribution_signature "$EXPORTED_WIDGET" "Widget（export）"
   verify_apple_distribution_signature "$EXPORTED_CODEBASE" "codebase.bin（export）"
+  EXPORTED_APP_ENTITLEMENTS="$(codesign -d --entitlements :- "$EXPORTED_APP" 2>/dev/null || true)"
+  EXPORTED_WIDGET_ENTITLEMENTS="$(codesign -d --entitlements :- "$EXPORTED_WIDGET" 2>/dev/null || true)"
+  EXPORTED_CODEBASE_ENTITLEMENTS="$(codesign -d --entitlements :- "$EXPORTED_CODEBASE" 2>/dev/null || true)"
+  grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$EXPORTED_APP_ENTITLEMENTS" \
+    || fail "export 后主 App 丢失本地 AI 共享 App Group"
+  if grep -Fq "$LOCAL_AI_APP_GROUP" <<<"$EXPORTED_WIDGET_ENTITLEMENTS$EXPORTED_CODEBASE_ENTITLEMENTS"; then
+    fail "export 后 Widget 或 codebase.bin 意外获得本地 AI 共享 App Group"
+  fi
   verify_appstore_provisioning_profile \
     "$EXPORTED_APP" \
     "$EXPORTED_APP/Contents/embedded.provisionprofile" \

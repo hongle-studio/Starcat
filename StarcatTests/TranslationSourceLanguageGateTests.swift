@@ -92,4 +92,59 @@ struct TranslationSourceLanguageGateTests {
         )
         #expect(remaining.map(\.id) == ["en"])
     }
+
+    @Test("长英文样本可解析为 Apple Translation 的明确源语言")
+    func detectsEnglishSourceLanguage() {
+        #expect(
+            TranslationSourceLanguageGate.detectDocumentLanguage(in: [
+                ReadmeSourceSegment(id: "s1", text: english)
+            ]) == .english
+        )
+    }
+
+    @Test("过短样本不猜源语言")
+    func doesNotGuessShortSourceLanguage() {
+        #expect(
+            TranslationSourceLanguageGate.detectDocumentLanguage(in: [
+                ReadmeSourceSegment(id: "s1", text: "README")
+            ]) == nil
+        )
+    }
+
+    @Test("缩写密集的英文 README 从头部噪音中投票出英语（KAG 回归）")
+    func votesEnglishForAcronymHeavyReadme() {
+        // 头部噪音：三语导航行会被单独判成 ja 0.98；正文与标题充满专有名词，
+        // 拼接样本一次性识别置信度只有 ~0.5。逐段投票后英语必须胜出。
+        let segments = [
+            "KAG: Knowledge Augmented Generation",
+            "English | 简体中文 | 日本語版ドキュメント",
+            "1. What is KAG?",
+            "KAG is a logical reasoning and Q&A framework based on the OpenSPG engine and large language models, which is used to build logical reasoning and Q&A solutions for vertical domain knowledge bases. KAG can effectively overcome the ambiguity of traditional RAG vector similarity calculation and the noise problem of GraphRAG introduced by OpenIE. KAG supports logical reasoning and multi-hop fact Q&A, etc., and is significantly better than the current SOTA method."
+        ].enumerated().map { index, text in
+            ReadmeSourceSegment(id: "s-\(index)", text: text)
+        }
+        #expect(TranslationSourceLanguageGate.detectDocumentLanguage(in: segments) == .english)
+    }
+
+    @Test("带英文导航行的日文 README 投票出日语")
+    func votesJapaneseForJapaneseReadme() {
+        let segments = [
+            ReadmeSourceSegment(id: "nav", text: "English | 简体中文 | 日本語版ドキュメント"),
+            ReadmeSourceSegment(
+                id: "body",
+                text: "これは十分に長い日本語の説明文です。言語識別器がこの文を安定して日本語と判定できることを確認するために、十分な長さの文章をここに記述しています。"
+            )
+        ]
+        #expect(TranslationSourceLanguageGate.detectDocumentLanguage(in: segments) == .japanese)
+    }
+
+    @Test("整篇不支持的语种返回 nil，不硬猜")
+    func returnsNilForUnsupportedLanguage() {
+        let thai = "นี่คือประโยคภาษาไทยที่มีความยาวเพียงพอสำหรับการตรวจจับภาษาอย่างน่าเชื่อถือในเอกสาร"
+        #expect(
+            TranslationSourceLanguageGate.detectDocumentLanguage(in: [
+                ReadmeSourceSegment(id: "th", text: thai)
+            ]) == nil
+        )
+    }
 }

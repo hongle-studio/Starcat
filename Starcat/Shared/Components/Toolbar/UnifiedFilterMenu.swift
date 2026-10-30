@@ -122,31 +122,17 @@ struct UnifiedFilterMenu<Content: View>: View {
         .focusEffectDisabled()
         .help(isAnyFilterActive ? Text("list.filter.active") : Text(helpKey))
         .popover(isPresented: isPresented, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 6) {
-                    content
-                }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
-
-                if let onReset, isAnyFilterActive {
-                    Divider()
-                        .padding(.horizontal, 12)
-
-                    Button(role: .destructive) {
+            UnifiedFilterPopoverContent(
+                isAnyFilterActive: isAnyFilterActive,
+                onReset: onReset.map { reset in
+                    {
                         isPresented.wrappedValue = false
-                        onReset()
-                    } label: {
-                        Label("list.filter.reset", systemImage: "arrow.counterclockwise")
+                        reset()
                     }
-                    .buttonStyle(.plain)
-                    .focusEffectDisabled()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
                 }
+            ) {
+                content
             }
-            .frame(width: 260, alignment: .leading)
             .appLocaleEnvironment()
             // popover 打开时 Esc 只关筛选，避免外层面板/TextField 的 onExitCommand 一并触发。
             .onExitCommand {

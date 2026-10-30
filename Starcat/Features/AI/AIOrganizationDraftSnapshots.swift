@@ -15,6 +15,25 @@ import Foundation
 struct BatchAIOrganizationDraftHeader: Codable, Sendable {
     let options: BatchAIQueueOptions
     let startedAt: Date
+    /// 增量扩词是用户尚未确认的生成结果，必须随现有批量草稿恢复，不能因退出 App 丢失。
+    let pendingTagExpansionSession: TagTaxonomyBootstrapSession?
+    /// 生成增量候选失败时保留待发现仓库，用户修复 Provider 后可只重试整批发现。
+    let uncoveredTagRepositoryIDs: Set<Int64>?
+    let tagExpansionError: String?
+
+    init(
+        options: BatchAIQueueOptions,
+        startedAt: Date,
+        pendingTagExpansionSession: TagTaxonomyBootstrapSession? = nil,
+        uncoveredTagRepositoryIDs: Set<Int64>? = nil,
+        tagExpansionError: String? = nil
+    ) {
+        self.options = options
+        self.startedAt = startedAt
+        self.pendingTagExpansionSession = pendingTagExpansionSession
+        self.uncoveredTagRepositoryIDs = uncoveredTagRepositoryIDs
+        self.tagExpansionError = tagExpansionError
+    }
 }
 
 private enum PersistedBatchTagReviewKind: String, Codable, Sendable {
@@ -43,6 +62,8 @@ struct BatchAIOrganizationDraftItem: Codable, Sendable {
     let suggestedTagAvailability: [String: BatchAITagSuggestionAvailability]
     private let tagReviewKind: PersistedBatchTagReviewKind
     private let tagReviewFailureMessage: String?
+    /// 可选字段保证旧版本草稿在没有该 key 时仍能恢复，并由 UI 使用通用兜底文案。
+    let ignoreReason: BatchAIIgnoreReason?
     private let belowThresholdTags: [PersistedBelowThresholdTag]
     let finishedAt: Date?
     let didGenerateSummary: Bool
@@ -78,6 +99,7 @@ struct BatchAIOrganizationDraftItem: Codable, Sendable {
             tagReviewKind = .failed
             tagReviewFailureMessage = failure.localizedMessage
         }
+        self.ignoreReason = job.ignoreReason
         self.belowThresholdTags = job.belowThresholdTags.map {
             PersistedBelowThresholdTag(name: $0.name, confidence: $0.confidence)
         }
@@ -120,6 +142,7 @@ struct BatchAIOrganizationDraftItem: Codable, Sendable {
         case .failed:
             job.tagReviewState = .failed(tagReviewFailureMessage.map { .unknown($0) } ?? .interrupted)
         }
+        job.ignoreReason = ignoreReason
         job.belowThresholdTags = belowThresholdTags.map { ($0.name, $0.confidence) }
         job.finishedAt = status == .processing ? .now : finishedAt
         job.didGenerateSummary = didGenerateSummary
@@ -159,6 +182,8 @@ struct GitHubStarListAIOrganizationDraftItem: Codable, Sendable {
     private let applyFailureDetail: String?
     let finishedAt: Date?
     let isExcludedFromAnalysis: Bool
+    /// Optional 保证旧版本草稿仍可解码；缺失时按已写入 GitHub 处理。
+    let isLocallyApplied: Bool?
     let existingListIDs: Set<String>
     let selectedListIDs: Set<String>
     let isSelectedForBulkApply: Bool
@@ -206,6 +231,7 @@ struct GitHubStarListAIOrganizationDraftItem: Codable, Sendable {
         }
         self.finishedAt = job.finishedAt
         self.isExcludedFromAnalysis = job.isExcludedFromAnalysis
+        self.isLocallyApplied = job.isLocallyApplied
         self.existingListIDs = existingListIDs
         self.selectedListIDs = selectedListIDs
         self.isSelectedForBulkApply = isSelectedForBulkApply
@@ -244,7 +270,8 @@ struct GitHubStarListAIOrganizationDraftItem: Codable, Sendable {
             analysisFailure: restoredAnalysisFailure,
             applyState: restoredApplyState,
             finishedAt: status == .analyzing ? .now : finishedAt,
-            isExcludedFromAnalysis: isExcludedFromAnalysis
+            isExcludedFromAnalysis: isExcludedFromAnalysis,
+            isLocallyApplied: isLocallyApplied ?? false
         )
     }
 }

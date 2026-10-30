@@ -71,6 +71,7 @@ struct ExploreModeInfoButton: View {
     @Environment(\.starcatInterfaceScale) private var interfaceScale
 
     let mode: ExploreMode
+    let discoverySource: DiscoverySource
     @State private var isPresented = false
 
     var body: some View {
@@ -87,7 +88,7 @@ struct ExploreModeInfoButton: View {
         .accessibilityLabel(Text(LocalizedStringKey(mode.helpOpenKey)))
         // bottom：箭头贴在触发按钮下沿，弹层向下展开进列表，避免盖住面包屑。
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            ExploreModeHelpPopover(mode: mode)
+            ExploreModeHelpPopover(mode: mode, discoverySource: discoverySource)
                 .appLocaleEnvironment()
         }
     }
@@ -98,14 +99,22 @@ struct ExploreModeHelpPopover: View {
     @Environment(\.starcatInterfaceScale) private var interfaceScale
 
     let mode: ExploreMode
+    let discoverySource: DiscoverySource
+
+    private var isLinuxDo: Bool {
+        mode == .discover && discoverySource == .linuxDo
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 sourceBlock
-                rulesBlock
-                cacheBlock
+                // Linux.do 的说明收进同一个信息入口，不能沿用普通发现的排名和缓存口径。
+                if !isLinuxDo {
+                    rulesBlock
+                    cacheBlock
+                }
             }
             .padding(16)
         }
@@ -117,13 +126,22 @@ struct ExploreModeHelpPopover: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: mode.systemImage)
-                .font(interfaceScale.font(.iconSmall, weight: .semibold))
-                .foregroundStyle(mode.sidebarIconColor)
-                .accessibilityHidden(true)
-            Text(mode.titleKey)
-                .font(interfaceScale.font(.panelTitle, weight: .semibold))
-                .foregroundStyle(.primary)
+            BusinessIcon(
+                isLinuxDo ? .linuxDo : mode.businessIcon,
+                pointSize: (mode.businessIcon.isAsset && !isLinuxDo ? 16 : 13) * interfaceScale.multiplier,
+                weight: .semibold
+            )
+            .foregroundStyle(isLinuxDo ? .indigo : mode.sidebarIconColor)
+            .accessibilityHidden(true)
+            Group {
+                if isLinuxDo {
+                    Text(verbatim: "Linux.do")
+                } else {
+                    Text(mode.titleKey)
+                }
+            }
+            .font(interfaceScale.font(.panelTitle, weight: .semibold))
+            .foregroundStyle(.primary)
         }
     }
 
@@ -132,7 +150,7 @@ struct ExploreModeHelpPopover: View {
             Text("explore.help.source.title")
                 .font(interfaceScale.font(.captionStrong))
                 .foregroundStyle(.primary)
-            Text(LocalizedStringKey(mode.helpSourceKey))
+            Text(LocalizedStringKey(isLinuxDo ? "linuxdo.catalog.description" : mode.helpSourceKey))
                 .font(interfaceScale.font(.caption))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

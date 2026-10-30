@@ -62,6 +62,10 @@ final class InitialRepoWarmupCoordinator {
         job?.phase == .completed
     }
 
+    /// 仅句柄属于 coordinator 的执行可由 cancel 停止；设置页直接 await 的 README 补齐不在此列。
+    /// UI 必须按能力显示按钮，不能把 isRunning 当成存在可取消句柄。
+    var canCancelCurrentRun: Bool { activeTask != nil }
+
     /// stars 全量同步完成后的入口。调用方负责保证已登录与测试 host 门控。
     func startAfterStarsSyncIfNeeded(userID: Int64, isEnabled: Bool) async {
         guard isEnabled else {

@@ -15,14 +15,18 @@ enum MCPAgentSetupPrompt {
     static let cliRepositoryURL = "https://github.com/starcat-app/starcat-cli"
     static let cliInstallCommand = "curl -fsSL https://github.com/starcat-app/starcat-cli/releases/latest/download/install.sh | sh"
     static let windowsCLIInstallCommand = "irm https://github.com/starcat-app/starcat-cli/releases/latest/download/install.ps1 | iex"
+    // 官方 updater 会自行判断是否存在新版本；Homebrew 安装则明确引导回包管理器升级，
+    // 避免 Agent 通过重复执行安装脚本覆盖已有 CLI。
+    static let cliUpdateCommand = "starcat update"
     static let cliVerificationCommand = "starcat doctor"
 
     static var cliAgentInstall: String {
         String(
-            format: String.l10n("settings.mcp.agentSetup.cliPrompt"),
+            format: String.l10n("settings.mcp.agentSetup.cliLifecyclePrompt"),
             cliRepositoryURL,
             cliInstallCommand,
-            windowsCLIInstallCommand
+            windowsCLIInstallCommand,
+            cliUpdateCommand
         )
     }
 
@@ -52,6 +56,20 @@ enum MCPAgentSetupPrompt {
     static var skillAgentInstall: String {
         String(
             format: String.l10n("settings.mcp.agentSetup.skillPrompt"),
+            skillRepositoryURL
+        )
+    }
+
+    /// 一次性配置提示词必须在复制时注入新的 invitation，不能缓存成静态字符串。
+    /// 提示词只携带五分钟、单次有效的配对命令，不包含 endpoint、Local API Key 或长期设备 token。
+    static func completeAgentSetup(invitationURI: String) -> String {
+        String(
+            format: String.l10n("settings.mcp.agentSetup.complete.prompt"),
+            cliRepositoryURL,
+            cliInstallCommand,
+            windowsCLIInstallCommand,
+            cliUpdateCommand,
+            pairingCommand(invitationURI: invitationURI),
             skillRepositoryURL
         )
     }

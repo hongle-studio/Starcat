@@ -716,7 +716,7 @@ private struct SmartCollectionRepoCard: View {
                 ),
                 style: .full
             )
-            MetaBadge(systemImage: "tuningfork", text: repo.forksCount.formattedShort, tint: forkTint)
+            MetaBadge(businessIcon: .forkCount, text: repo.forksCount.formattedShort, tint: forkTint)
             MetaBadge(systemImage: "eye", text: repo.watchersCount.formattedShort, tint: watchersTint)
             MetaBadge(
                 systemImage: "exclamationmark.circle",
@@ -804,7 +804,11 @@ private struct SmartCollectionRepoCard: View {
                     // 维护停滞：归档标识已上移到 stats 行红色徽章，footer 不再重复。
                     ArchivedBadge(iconOnly: true)
                 } else if repo.isFork {
-                    MetaBadge(systemImage: "tuningfork", text: "Fork", tint: forkTint)
+                    MetaBadge(
+                        businessIcon: .forkedRepository,
+                        text: "Fork",
+                        tint: StatSemanticColor.forked.resolved(colorScheme: colorScheme)
+                    )
                 }
 
                 Spacer(minLength: 8)

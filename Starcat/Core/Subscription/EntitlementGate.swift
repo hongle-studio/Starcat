@@ -136,6 +136,17 @@ final class EntitlementGate {
         throw EntitlementGateError.requiresPro(feature: feature)
     }
 
+    /// Pro-only 功能校验（本地 AI 免费，dong4j 2026-09-12 拍板）。
+    ///
+    /// `usesLocalOnly == true` 表示该功能的全部模型依赖都解析到 `.localAI`
+    /// （进程内 MLX 推理，无远程 AI 成本），此时跳过 Pro 校验；远程 provider 行为
+    /// 完全不变。判定由调用方用 `AppSettings.isTaskResolvedToLocalAI(_:)` 组合，
+    /// 门控本身不反查设置层，保持解耦。
+    func requirePro(_ feature: ProFeature, usesLocalOnly: Bool) throws {
+        guard !isProUser, !usesLocalOnly else { return }
+        throw EntitlementGateError.requiresPro(feature: feature)
+    }
+
     func validateTagCreation(currentTagCount: Int) throws {
         guard !isProUser, currentTagCount >= Self.freeTagLimit else { return }
         throw EntitlementGateError.tagLimitReached(limit: Self.freeTagLimit)

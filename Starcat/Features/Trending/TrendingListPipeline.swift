@@ -41,6 +41,9 @@ struct TrendingListFilter: Hashable, Sendable {
     let wikiAvailableRepoIDs: Set<Int64>
     let healthAvailableRepoIDs: Set<Int64>
     let openSSFAvailableRepoIDs: Set<Int64>
+    /// 中栏快速搜索仅参与本地派生，不改变 Trending 网络数据桶。
+    let searchQuery: String
+    var licenseFilter: RepoLicenseFilter = .all
 
     static let all = TrendingListFilter(
         star: .all,
@@ -56,12 +59,14 @@ struct TrendingListFilter: Hashable, Sendable {
         wikiKnownRepoIDs: [],
         wikiAvailableRepoIDs: [],
         healthAvailableRepoIDs: [],
-        openSSFAvailableRepoIDs: []
+        openSSFAvailableRepoIDs: [],
+        searchQuery: ""
     )
 
     /// 查询快照缓存需要把所有影响列表成员关系的输入纳入 key。
     /// 使用枚举 rawValue，避免为了本地缓存把共享筛选枚举扩展成额外协议依赖。
     func hash(into hasher: inout Hasher) {
+        hasher.combine(licenseFilter)
         hasher.combine(star.rawValue)
         hasher.combine(library.rawValue)
         hasher.combine(hideArchived)
@@ -76,10 +81,16 @@ struct TrendingListFilter: Hashable, Sendable {
         hasher.combine(wikiAvailableRepoIDs)
         hasher.combine(healthAvailableRepoIDs)
         hasher.combine(openSSFAvailableRepoIDs)
+        hasher.combine(QuickSearchTextMatcher.normalized(searchQuery))
     }
 
     func matches(_ repo: TrendingRepo) -> Bool {
+        guard licenseFilter.matches(repo.license) else { return false }
         let repoID = repo.ghRepoId
+        guard QuickSearchTextMatcher.matches(
+            searchQuery,
+            candidates: [repo.fullName, repo.description, repo.language]
+        ) else { return false }
         guard star.matches(isStarred: starredRepoIDs.contains(repoID)) else { return false }
         if hideArchived, repo.isArchived ?? false { return false }
         if hideForks, repo.isFork ?? false { return false }

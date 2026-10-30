@@ -70,6 +70,7 @@ struct DatabaseMigrationsV1Tests {
             "rag_message_remote_contexts", "rag_metadata_revision",
             "data_contribution_preferences", "data_contribution_outbox",
             "github_star_list_ai_rules", "github_star_list_ai_auto_ignored_repos",
+            "repo_github_star_list_overrides",
             "awesome_resource_entries", "ai_organization_drafts",
             "ai_organization_draft_items"
         ]
@@ -78,6 +79,22 @@ struct DatabaseMigrationsV1Tests {
                 let exists = try db.tableExists(table)
                 #expect(exists, "Table \(table) should exist")
             }
+        }
+    }
+
+    @Test("v24 应新增 GitHub List 本地覆盖层并清理旧组织限制忽略记录")
+    func githubStarListLocalOverridesMigration() throws {
+        let writer = try makeDB()
+
+        try writer.read { db in
+            #expect(try db.columns(in: "repo_github_star_list_overrides").map(\.name) == [
+                "repo_id", "list_id", "desired_present", "sync_state", "failure_reason", "updated_at"
+            ])
+            let viewCount = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE type = 'view' AND name = 'effective_repo_github_star_lists'
+                """)
+            #expect(viewCount == 1)
         }
     }
 

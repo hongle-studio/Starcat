@@ -212,6 +212,8 @@ final class AwesomeStore {
     /// 搜索、非原始排序和需要全局事实的筛选必须在完整结果集上执行，不能把当前 40 条
     /// 当成全部数据。该入口只在用户真的启用这些能力时补齐剩余本地页，不发远端请求。
     func loadAllRepositoryPages() async {
+        // 来源切换先完成新来源首屏，再取后续页；否则会拿旧来源行数作新来源 offset。
+        await selectionLoadTask?.value
         while hasMoreRepositories, !Task.isCancelled {
             // 用户开始搜索时，列表末尾可能恰好正在预取。等待该页回写后再继续，
             // 否则一次性的搜索 task 会提前返回，并把已加载前缀误当成完整结果。

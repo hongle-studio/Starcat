@@ -59,6 +59,9 @@
 | 62 | [Starcat 自研星标历史服务详细设计](62-Starcat自研星标历史服务详细设计.md) | 独立 History 服务、群体快照聚合、GH Archive 估算、查询契约、删除重算与 Discovery 迁移 |
 | 64 | [ACP 协议接入评估与暂缓方案](64-ACP协议接入评估与暂缓方案.md) | ACP 协议边界、RAG / Agent 双路径候选架构、现有适配器不迁移决策与重新评估门禁 |
 | 65 | [Agent Runtime、RAG 与 AI 服务统一路由方案](65-AgentRuntime与AI服务统一路由方案.md) | Agent / RAG 共享路由、AI 服务 / CLI / Harness / MCP、标准与 Agentic RAG，以及 16 项开发任务与交付门禁 |
+| 68 | [Anthropic Messages API 服务商详细设计](68-Anthropic服务商详细设计.md) | 新增 `.anthropic` adapter：Messages API、tool_use 内部转换、不改业务消息模型；Embedding 门禁关闭 |
+| 69 | [从 CC Switch 导入 AI Provider 详细设计](69-CC-Switch导入Provider详细设计.md) | 从 `~/.cc-switch/cc-switch.db` 一次性导入 BYOK；永远新增 `cc-switch:` 前缀；Direct 探测 / App Store 选择器 |
+| 70 | [Linux.do 项目发现与来源标识接入方案](70-Linux.do项目发现与来源标识接入方案.md) | 2.0.0 设计草案：RSS / API 采集、推广项目识别、独立目录、跨分类来源索引与原帖追溯 |
 
 ---
 
@@ -77,6 +80,8 @@
 - [国际化(i18n)设计](10-国际化(i18n)设计.md) - String Catalog、多语言支持
 - [智能搜索栏交互设计](13-智能搜索栏交互设计.md) - 右上角搜索栏、Pro / AI 状态预留
 - [AI 设置与调用链重构方案](15-AI设置与调用链重构方案.md) - 多服务商 BYOK、模型任务配置、Prompt 与流式调用链
+- [Anthropic Messages API 服务商详细设计](68-Anthropic服务商详细设计.md) - Messages adapter 与设置页 `.anthropic` 类型
+- [从 CC Switch 导入 AI Provider 详细设计](69-CC-Switch导入Provider详细设计.md) - 从 CC Switch SQLite 导入 BYOK Profile
 - [活动页设计](16-活动页设计.md) - 活动聚合页、分类筛选、中栏卡片和右侧详情
 
 ### 技术选型
@@ -96,6 +101,8 @@
 
 | 日期 | 更新内容 |
 |------|---------|
+| 2026-10-12 | 新增 70 文档：Linux.do 接入设计草案，记录通道实测、识别与跨分类来源方案，尚未实施 |
+| 2026-09-13 | 新增 68 / 69 文档：Anthropic Messages 服务商与 CC Switch Provider 导入，均可直接落地 |
 | 2026-08-25 | 新增 65 文档：统一 Agent / RAG 执行路由，规划 AI 服务、CLI、Harness、MCP、Agentic RAG 与安全桥接 |
 | 2026-08-23 | 新增 64 文档：冻结 ACP 候选架构，明确当前暂缓接入、现有路径不迁移和重新评估门禁 |
 | 2026-08-22 | 新增 60 / 61 / 62 文档：冻结匿名数据贡献、自研混合推荐、独立 Star History 服务及迁移落地契约 |

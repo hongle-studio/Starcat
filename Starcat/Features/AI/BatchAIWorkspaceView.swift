@@ -16,11 +16,89 @@ struct BatchAIWorkspacePreflightContext {
     let scope: BatchAIRepositoryScope
     let pendingCount: Int
     let skippedTaggedCount: Int
+    /// 标签库为空时，启动按钮进入纯本地词表引导，不依赖 AI Provider 配置。
+    let requiresTaxonomyBootstrap: Bool
 }
 
 enum BatchAIWorkspaceInitialMode {
     case preflight(BatchAIWorkspacePreflightContext)
+    case taxonomy(TagTaxonomyBootstrapReviewModel)
+    case expansion(TagTaxonomyBootstrapReviewModel)
     case review
+}
+
+enum BatchAIWorkspaceStartOutcome {
+    case reviewStarted
+    case taxonomy(TagTaxonomyBootstrapSession)
+    case cancelled
+    case failed(String?)
+}
+
+/// 首次标签体系的准备页。
+///
+/// 这段本地分析可能需要扫描数千个仓库与 README；必须在用户点击后立即替换预检内容，
+/// 明确告诉用户当前阶段。只有逐仓分析阶段展示确定进度，数据库整批读取与候选聚合继续使用
+/// 系统不确定进度，避免伪造百分比。
+private struct TagTaxonomyBootstrapPreparingView: View {
+    let progress: TagTaxonomyBootstrapProgress
+
+    @Environment(\.starcatInterfaceScale) private var interfaceScale
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: BusinessIcon.Symbol.tags.systemImage)
+                .font(.system(size: 44, weight: .regular))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            Text("batchAI.taxonomy.preparing.title")
+                .font(interfaceScale.font(.panelTitle))
+
+            Text(phaseTitleKey)
+                .font(interfaceScale.font(.body))
+                .foregroundStyle(.secondary)
+
+            if progress.phase == .analyzingRepositories,
+               let total = progress.totalRepositoryCount,
+               total > 0 {
+                ProgressView(
+                    value: Double(progress.completedRepositoryCount),
+                    total: Double(total)
+                )
+                .progressViewStyle(.linear)
+                .frame(width: 360)
+
+                Text(verbatim: String(
+                    format: String.l10n("batchAI.taxonomy.preparing.progressFormat"),
+                    progress.completedRepositoryCount,
+                    total
+                ))
+                .font(interfaceScale.font(.caption))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+            }
+
+            Label("batchAI.taxonomy.preparing.local", systemImage: "lock.shield")
+                .font(interfaceScale.font(.caption))
+                .foregroundStyle(.secondary)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var phaseTitleKey: LocalizedStringKey {
+        switch progress.phase {
+        case .loadingLocalData:
+            "batchAI.taxonomy.preparing.loadingData"
+        case .analyzingRepositories:
+            "batchAI.taxonomy.preparing.analyzing"
+        case .buildingCandidates:
+            "batchAI.taxonomy.preparing.buildingCandidates"
+        }
+    }
 }
 
 struct BatchAIWorkspaceView: View {
@@ -29,13 +107,22 @@ struct BatchAIWorkspaceView: View {
 
     let canPrepareCodeContext: Bool
     let hasUsableExternalSearchProvider: Bool
-    let onStart: (BatchAIRepositoryScope) async -> Bool
+    let onStart: (
+        BatchAIWorkspacePreflightContext,
+        @escaping TagTaxonomyBootstrapProgressHandler
+    ) async -> BatchAIWorkspaceStartOutcome
+    let onConfirmTaxonomy: (TagTaxonomyBootstrapSession, [TagTaxonomyCandidate]) async -> String?
     let onClose: () -> Void
 
     @State private var mode: BatchAIWorkspaceInitialMode
     @State private var isStarting = false
+    @State private var startTask: Task<Void, Never>?
+    @State private var startRequestID: UUID?
+    @State private var taxonomyPreparationProgress: TagTaxonomyBootstrapProgress?
+    @State private var operationError: String?
     @State private var showDiscardConfirmation = false
     @State private var reviewFilter: BatchAIResultFilter = .actionable
+    private let originatingPreflightContext: BatchAIWorkspacePreflightContext?
     @Environment(\.starcatInterfaceScale) private var interfaceScale
     @Environment(\.starcatReduceMotion) private var reduceMotion
     /// 预检要读 AI 任务配置；挂上 dependencies 后，设置页改完 Provider / Key 再回工作区会刷新按钮态。
@@ -47,7 +134,14 @@ struct BatchAIWorkspaceView: View {
         options: Binding<BatchAIQueueOptions>,
         canPrepareCodeContext: Bool,
         hasUsableExternalSearchProvider: Bool,
-        onStart: @escaping (BatchAIRepositoryScope) async -> Bool,
+        onStart: @escaping (
+            BatchAIWorkspacePreflightContext,
+            @escaping TagTaxonomyBootstrapProgressHandler
+        ) async -> BatchAIWorkspaceStartOutcome,
+        onConfirmTaxonomy: @escaping (
+            TagTaxonomyBootstrapSession,
+            [TagTaxonomyCandidate]
+        ) async -> String?,
         onClose: @escaping () -> Void
     ) {
         self.service = service
@@ -56,7 +150,13 @@ struct BatchAIWorkspaceView: View {
         self.canPrepareCodeContext = canPrepareCodeContext
         self.hasUsableExternalSearchProvider = hasUsableExternalSearchProvider
         self.onStart = onStart
+        self.onConfirmTaxonomy = onConfirmTaxonomy
         self.onClose = onClose
+        if case .preflight(let context) = initialMode {
+            self.originatingPreflightContext = context
+        } else {
+            self.originatingPreflightContext = nil
+        }
     }
 
     var body: some View {
@@ -80,18 +180,28 @@ struct BatchAIWorkspaceView: View {
         } message: {
             Text("batchAI.panel.discard.message")
         }
+        .onAppear(perform: presentPendingExpansionIfNeeded)
+        .onChange(of: service.pendingTagExpansionSession) { _, _ in
+            presentPendingExpansionIfNeeded()
+        }
+        .onDisappear {
+            // 固定工作区关闭后不再需要首次分析结果；取消还能阻止迟到回调重新写入已销毁窗口状态。
+            startRequestID = nil
+            startTask?.cancel()
+            startTask = nil
+        }
     }
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "sparkles")
+            Image(systemName: BusinessIcon.Symbol.tags.systemImage)
                 .font(interfaceScale.font(.iconLarge))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text("batchAI.organizeTags.title")
                     .font(interfaceScale.font(.workspaceTitle))
-                Text("batchAI.organizeTags.subtitle.compact")
+                Text(headerSubtitleKey)
                     .font(interfaceScale.font(.caption))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -127,15 +237,46 @@ struct BatchAIWorkspaceView: View {
     private var content: some View {
         switch mode {
         case .preflight(let context):
-            BatchAIOptionsSheet(
-                pendingCount: context.pendingCount,
-                skippedTaggedCount: context.skippedTaggedCount,
-                options: $options,
-                canPrepareCodeContext: canPrepareCodeContext,
-                hasUsableExternalSearchProvider: hasUsableExternalSearchProvider
-            )
+            if let taxonomyPreparationProgress {
+                TagTaxonomyBootstrapPreparingView(progress: taxonomyPreparationProgress)
+            } else {
+                BatchAIOptionsSheet(
+                    pendingCount: context.pendingCount,
+                    skippedTaggedCount: context.skippedTaggedCount,
+                    options: $options,
+                    canPrepareCodeContext: canPrepareCodeContext,
+                    hasUsableExternalSearchProvider: hasUsableExternalSearchProvider,
+                    requiresTaxonomyBootstrap: context.requiresTaxonomyBootstrap
+                )
+            }
+        case .taxonomy(let model):
+            TagTaxonomyBootstrapView(model: model)
+        case .expansion(let model):
+            TagTaxonomyBootstrapView(model: model)
         case .review:
-            BatchAIQueuePanel(service: service) { reviewFilter = $0 }
+            VStack(spacing: 0) {
+                if let error = service.tagExpansionError {
+                    HStack(spacing: 10) {
+                        Label {
+                            Text(verbatim: error)
+                                .lineLimit(2)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                        }
+                        .font(interfaceScale.font(.caption))
+                        .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Button("batchAI.expansion.retry") {
+                            Task { await service.retryTagExpansionDiscovery() }
+                        }
+                        .disabled(service.isRunning)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 42)
+                    Divider()
+                }
+                BatchAIQueuePanel(service: service) { reviewFilter = $0 }
+            }
         }
     }
 
@@ -144,10 +285,11 @@ struct BatchAIWorkspaceView: View {
         Group {
             switch mode {
             case .preflight(let context):
+                let issue = configurationIssue(for: context)
                 HStack(spacing: 10) {
-                    if let configurationIssue {
+                    if let operationError {
                         Label {
-                            Text(verbatim: configurationIssue)
+                            Text(verbatim: operationError)
                                 .lineLimit(2)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -155,6 +297,26 @@ struct BatchAIWorkspaceView: View {
                         .font(interfaceScale.font(.caption))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if let issue {
+                        Label {
+                            Text(verbatim: issue)
+                                .lineLimit(2)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                        }
+                        .font(interfaceScale.font(.caption))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if isPreparingTaxonomy {
+                        Label("batchAI.taxonomy.preparing.local", systemImage: "lock.shield")
+                            .font(interfaceScale.font(.caption))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if context.requiresTaxonomyBootstrap {
+                        Label("batchAI.taxonomy.preflight.local", systemImage: "checkmark.shield")
+                            .font(interfaceScale.font(.caption))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Label {
                             Text(verbatim: String(
@@ -169,13 +331,27 @@ struct BatchAIWorkspaceView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Button("general.cancel", action: onClose)
+                    Button("general.cancel") {
+                        if isPreparingTaxonomy {
+                            cancelTaxonomyPreparation()
+                        } else {
+                            onClose()
+                        }
+                    }
                         .keyboardShortcut(.cancelAction)
-                        .disabled(isStarting)
+                        .disabled(isStarting && !isPreparingTaxonomy)
                     Button {
                         start(context)
                     } label: {
-                        Text("batchAI.generateTags.start")
+                        if isPreparingTaxonomy {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("batchAI.taxonomy.preparing.action")
+                            }
+                        } else {
+                            Text("batchAI.generateTags.start")
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -183,8 +359,45 @@ struct BatchAIWorkspaceView: View {
                         isStarting
                             || !options.isValidForStart
                             || context.pendingCount == 0
-                            || configurationIssue != nil
+                            || issue != nil
                     )
+                }
+                .padding(.horizontal, 20)
+                .frame(height: 58)
+            case .taxonomy(let model):
+                HStack(spacing: 10) {
+                    taxonomyFooterMessage(model)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("batchAI.taxonomy.back") {
+                        guard let originatingPreflightContext else { return }
+                        operationError = nil
+                        mode = .preflight(originatingPreflightContext)
+                    }
+                    .disabled(isStarting || originatingPreflightContext == nil)
+                    Button("batchAI.taxonomy.confirm") {
+                        confirmTaxonomy(model)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isStarting || !model.hasValidSelection)
+                }
+                .padding(.horizontal, 20)
+                .frame(height: 58)
+            case .expansion(let model):
+                HStack(spacing: 10) {
+                    expansionFooterMessage(model)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("batchAI.expansion.skip") {
+                        skipExpansion()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isStarting)
+                    Button("batchAI.expansion.confirm") {
+                        confirmExpansion(model)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isStarting || !model.hasValidSelection)
                 }
                 .padding(.horizontal, 20)
                 .frame(height: 58)
@@ -227,12 +440,58 @@ struct BatchAIWorkspaceView: View {
         }
     }
 
-    private var configurationIssue: String? {
+    private func configurationIssue(for context: BatchAIWorkspacePreflightContext) -> String? {
+        // 空标签库使用本地引导，不应被尚未配置的 LLM / Jev Key 阻塞。
+        guard !context.requiresTaxonomyBootstrap else { return nil }
         // 显式读取任务配置与服务商列表，建立对 AppSettings 的观察，避免只改 Key 后底栏仍显示旧预检。
         _ = dependencies.settings.aiTagsTask
         _ = dependencies.settings.aiSummaryTask
         _ = dependencies.settings.aiProviderProfiles
         return service.configurationIssue(for: options)
+    }
+
+    @ViewBuilder
+    private func taxonomyFooterMessage(_ model: TagTaxonomyBootstrapReviewModel) -> some View {
+        if let error = model.operationError ?? operationError {
+            Label {
+                Text(verbatim: error)
+                    .lineLimit(2)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(interfaceScale.font(.caption))
+            .foregroundStyle(.secondary)
+        } else if !model.hasValidSelection {
+            Label("batchAI.taxonomy.validation", systemImage: "exclamationmark.triangle.fill")
+                .font(interfaceScale.font(.caption))
+                .foregroundStyle(.secondary)
+        } else {
+            Label("batchAI.taxonomy.footer", systemImage: "lock.shield")
+                .font(interfaceScale.font(.caption))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func expansionFooterMessage(_ model: TagTaxonomyBootstrapReviewModel) -> some View {
+        if let error = model.operationError ?? operationError {
+            Label {
+                Text(verbatim: error)
+                    .lineLimit(2)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(interfaceScale.font(.caption))
+            .foregroundStyle(.secondary)
+        } else if !model.hasValidSelection {
+            Label("batchAI.expansion.validation", systemImage: "exclamationmark.triangle.fill")
+                .font(interfaceScale.font(.caption))
+                .foregroundStyle(.secondary)
+        } else {
+            Label("batchAI.expansion.footer", systemImage: "lock.shield")
+                .font(interfaceScale.font(.caption))
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - 审核底栏按 Tab 派生
@@ -292,6 +551,13 @@ struct BatchAIWorkspaceView: View {
 
     private var isReviewMode: Bool {
         if case .review = mode { true } else { false }
+    }
+
+    private var headerSubtitleKey: LocalizedStringKey {
+        if isPreparingTaxonomy { return "batchAI.taxonomy.preparing.subtitle" }
+        if case .taxonomy = mode { return "batchAI.taxonomy.subtitle" }
+        if case .expansion = mode { return "batchAI.expansion.subtitle" }
+        return "batchAI.organizeTags.subtitle.compact"
     }
 
     private var statusPill: some View {
@@ -363,14 +629,99 @@ struct BatchAIWorkspaceView: View {
 
     private func start(_ context: BatchAIWorkspacePreflightContext) {
         guard !isStarting else { return }
+        let requestID = UUID()
         isStarting = true
-        Task {
-            let didStart = await onStart(context.scope)
+        startRequestID = requestID
+        taxonomyPreparationProgress = context.requiresTaxonomyBootstrap ? .loadingLocalData : nil
+        operationError = nil
+        startTask = Task {
+            let outcome = await onStart(context) { progress in
+                // 用户可能已经取消并重新开始；旧任务的迟到进度不能覆盖新一轮窗口状态。
+                guard startRequestID == requestID else { return }
+                taxonomyPreparationProgress = progress
+            }
+            guard startRequestID == requestID, !Task.isCancelled else { return }
             isStarting = false
-            if didStart {
+            startTask = nil
+            startRequestID = nil
+            taxonomyPreparationProgress = nil
+            switch outcome {
+            case .reviewStarted:
+                mode = .review
+            case .taxonomy(let session):
+                mode = .taxonomy(TagTaxonomyBootstrapReviewModel(session: session))
+            case .cancelled:
+                break
+            case .failed(let message):
+                operationError = message
+            }
+        }
+    }
+
+    private var isPreparingTaxonomy: Bool {
+        isStarting && taxonomyPreparationProgress != nil
+    }
+
+    private func cancelTaxonomyPreparation() {
+        guard isPreparingTaxonomy else { return }
+        startRequestID = nil
+        startTask?.cancel()
+        startTask = nil
+        taxonomyPreparationProgress = nil
+        isStarting = false
+        operationError = nil
+    }
+
+    private func confirmTaxonomy(_ model: TagTaxonomyBootstrapReviewModel) {
+        guard !isStarting, model.hasValidSelection else { return }
+        isStarting = true
+        model.operationError = nil
+        Task {
+            let error = await onConfirmTaxonomy(model.session, model.selectedCandidates)
+            isStarting = false
+            if let error {
+                model.operationError = error
+            } else {
                 mode = .review
             }
         }
+    }
+
+    private func confirmExpansion(_ model: TagTaxonomyBootstrapReviewModel) {
+        guard !isStarting, model.hasValidSelection else { return }
+        isStarting = true
+        model.operationError = nil
+        Task {
+            let error = await service.confirmPendingTagExpansion(
+                selectedCandidates: model.selectedCandidates
+            )
+            isStarting = false
+            if let error {
+                model.operationError = error
+            } else {
+                mode = .review
+            }
+        }
+    }
+
+    private func skipExpansion() {
+        guard !isStarting else { return }
+        isStarting = true
+        Task {
+            await service.skipPendingTagExpansion()
+            isStarting = false
+            operationError = nil
+            mode = .review
+        }
+    }
+
+    private func presentPendingExpansionIfNeeded() {
+        guard let session = service.pendingTagExpansionSession else { return }
+        if case .expansion = mode { return }
+        // 预检与首次建词表属于尚未启动的新任务，不能被旧会话的恢复状态覆盖。
+        guard case .review = mode else { return }
+        operationError = nil
+        mode = .expansion(TagTaxonomyBootstrapReviewModel(session: session))
     }
 
     private func closeWorkspace() {

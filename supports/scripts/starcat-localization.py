@@ -93,6 +93,14 @@ class ImportResult(NamedTuple):
     backup_path: Path | None
 
 
+class JsonMember(NamedTuple):
+    """Catalog JSON object 成员的原始字符区间。"""
+
+    key: str
+    value_start: int
+    value_end: int
+
+
 class LocaleReport(NamedTuple):
     """单个 locale 的质量统计。"""
 
@@ -169,8 +177,8 @@ def serialize_catalog(catalog: dict[str, Any]) -> str:
     return text + "\n"
 
 
-def save_catalog(path: Path, catalog: dict[str, Any]) -> None:
-    """同目录临时文件 + `os.replace` 原子写回，避免中断留下半个 Catalog。"""
+def save_catalog_text(path: Path, text: str) -> None:
+    """原子写回已经完成校验的 Catalog 文本。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -181,10 +189,16 @@ def save_catalog(path: Path, catalog: dict[str, Any]) -> None:
     temporary_path = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(serialize_catalog(catalog))
+            handle.write(text)
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+def save_catalog(path: Path, catalog: dict[str, Any]) -> None:
+    """完整生成新 Catalog；导入现有 Catalog 时不得使用这个全量序列化入口。"""
+
+    save_catalog_text(path, serialize_catalog(catalog))
 
 
 def backup_catalog(path: Path, backup_dir: Path) -> Path:
@@ -212,6 +226,325 @@ def backup_catalog(path: Path, backup_dir: Path) -> Path:
     finally:
         temporary_path.unlink(missing_ok=True)
     return backup_path
+
+
+def skip_json_whitespace(text: str, index: int) -> int:
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return index
+
+
+def scan_json_string(text: str, start: int) -> int:
+    """返回 JSON string 结束位置（exclusive），只负责边界扫描。"""
+
+    if start >= len(text) or text[start] != '"':
+        raise LocalizationError(f"Catalog JSON 预期 string：offset={start}")
+    index = start + 1
+    while index < len(text):
+        character = text[index]
+        if character == "\\":
+            index += 2
+            continue
+        if character == '"':
+            return index + 1
+        index += 1
+    raise LocalizationError(f"Catalog JSON string 未闭合：offset={start}")
+
+
+def scan_json_value(text: str, start: int) -> int:
+    """跳过一个已由 `json.loads` 验证过的 JSON value。"""
+
+    start = skip_json_whitespace(text, start)
+    if start >= len(text):
+        raise LocalizationError("Catalog JSON value 缺失")
+    if text[start] == '"':
+        return scan_json_string(text, start)
+    if text[start] in "{[":
+        stack = ["}" if text[start] == "{" else "]"]
+        index = start + 1
+        while index < len(text) and stack:
+            character = text[index]
+            if character == '"':
+                index = scan_json_string(text, index)
+                continue
+            if character in "{[":
+                stack.append("}" if character == "{" else "]")
+            elif character in "}]":
+                if character != stack[-1]:
+                    raise LocalizationError(
+                        f"Catalog JSON 括号不匹配：offset={index}"
+                    )
+                stack.pop()
+            index += 1
+        if stack:
+            raise LocalizationError(f"Catalog JSON value 未闭合：offset={start}")
+        return index
+
+    index = start
+    while index < len(text) and text[index] not in ",}]\r\n\t ":
+        index += 1
+    if index == start:
+        raise LocalizationError(f"Catalog JSON value 无效：offset={start}")
+    return index
+
+
+def json_object_members(
+    text: str,
+    object_start: int,
+    object_end: int | None = None,
+) -> dict[str, JsonMember]:
+    """读取 object 的直接成员区间，不反序列化或重排其余 Catalog 文本。"""
+
+    if object_start >= len(text) or text[object_start] != "{":
+        raise LocalizationError(f"Catalog JSON 预期 object：offset={object_start}")
+    object_end = object_end or scan_json_value(text, object_start)
+    cursor = object_start + 1
+    members: dict[str, JsonMember] = {}
+    while True:
+        cursor = skip_json_whitespace(text, cursor)
+        if cursor >= object_end:
+            raise LocalizationError(f"Catalog JSON object 未闭合：offset={object_start}")
+        if text[cursor] == "}":
+            break
+        key_end = scan_json_string(text, cursor)
+        key = json.loads(text[cursor:key_end])
+        if not isinstance(key, str):
+            raise LocalizationError(f"Catalog JSON key 无效：offset={cursor}")
+        cursor = skip_json_whitespace(text, key_end)
+        if cursor >= object_end or text[cursor] != ":":
+            raise LocalizationError(f"Catalog JSON key 缺少冒号：{key}")
+        value_start = skip_json_whitespace(text, cursor + 1)
+        value_end = scan_json_value(text, value_start)
+        if key in members:
+            raise LocalizationError(f"Catalog JSON object 重复 key：{key}")
+        members[key] = JsonMember(key, value_start, value_end)
+        cursor = skip_json_whitespace(text, value_end)
+        if cursor < object_end and text[cursor] == ",":
+            cursor += 1
+            continue
+        if cursor < object_end and text[cursor] == "}":
+            break
+        raise LocalizationError(f"Catalog JSON 成员分隔符无效：key={key}")
+    return members
+
+
+def line_indentation(text: str, position: int) -> str:
+    line_start = text.rfind("\n", 0, position) + 1
+    match = re.match(r"[ \t]*", text[line_start:position])
+    return match.group(0) if match is not None else ""
+
+
+def object_member_insertion(
+    text: str,
+    object_start: int,
+    object_end: int,
+    rendered_members: list[str],
+) -> tuple[int, int, str]:
+    """生成 object 尾部插入操作；仅替换空 object 内部空白。"""
+
+    if not rendered_members:
+        raise LocalizationError("Catalog object 插入成员不能为空")
+    members = json_object_members(text, object_start, object_end)
+    close = object_end - 1
+    closing_indent = line_indentation(text, object_start)
+    rendered = ",\n".join(rendered_members)
+    if not members:
+        return (
+            object_start + 1,
+            close,
+            "\n" + rendered + "\n" + closing_indent,
+        )
+
+    # 插到首个现有成员之前，新增块自带尾逗号。这样无需把原成员末行 `}` 改成
+    # `},`，Git diff 对非空 object 可以保持纯新增，不会制造大段伪删除。
+    first_member_start = skip_json_whitespace(text, object_start + 1)
+    member_indent = line_indentation(text, first_member_start)
+    if not rendered.startswith(member_indent):
+        raise LocalizationError("Catalog 插入成员缩进与现有 object 不一致")
+    insertion = rendered[len(member_indent) :] + ",\n" + member_indent
+    return first_member_start, first_member_start, insertion
+
+
+def render_string_unit_member(state: str, value: str, indent: str) -> str:
+    return (
+        f'{indent}"stringUnit" : {{\n'
+        f'{indent}  "state" : {json.dumps(state, ensure_ascii=False)},\n'
+        f'{indent}  "value" : {json.dumps(value, ensure_ascii=False)}\n'
+        f"{indent}}}"
+    )
+
+
+def render_locale_member(
+    locale: str,
+    state: str,
+    value: str,
+    indent: str,
+) -> str:
+    return (
+        f"{indent}{json.dumps(locale, ensure_ascii=False)} : {{\n"
+        + render_string_unit_member(state, value, indent + "  ")
+        + f"\n{indent}}}"
+    )
+
+
+def render_localizations_member(
+    updates: dict[str, tuple[str, str]],
+    indent: str,
+) -> str:
+    locale_indent = indent + "  "
+    rendered_locales = ",\n".join(
+        render_locale_member(locale, state, value, locale_indent)
+        for locale, (state, value) in updates.items()
+    )
+    return (
+        f'{indent}"localizations" : {{\n'
+        f"{rendered_locales}\n"
+        f"{indent}}}"
+    )
+
+
+def apply_text_operations(
+    text: str,
+    operations: list[tuple[int, int, str]],
+) -> str:
+    """一次性拼接全部局部更新，避免对大 Catalog 反复切片造成二次复杂度。"""
+
+    parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in sorted(operations, key=lambda item: (item[0], item[1])):
+        if start < cursor or end < start:
+            raise LocalizationError("Catalog 局部写回区间重叠")
+        parts.append(text[cursor:start])
+        parts.append(replacement)
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def patch_catalog_text(
+    text: str,
+    updates: dict[str, dict[str, tuple[str, str]]],
+) -> str:
+    """仅更新目标 locale 的 `stringUnit`，保留 Catalog 其他原始字节与排版。"""
+
+    if not updates:
+        return text
+    # 先用标准解析器验证输入；区间扫描只负责保留排版，不替代 JSON 校验。
+    catalog = json.loads(text)
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("strings"), dict):
+        raise LocalizationError("String Catalog 缺少 strings object")
+
+    root_start = skip_json_whitespace(text, 0)
+    root_end = scan_json_value(text, root_start)
+    root_members = json_object_members(text, root_start, root_end)
+    strings_member = root_members.get("strings")
+    if strings_member is None:
+        raise LocalizationError("String Catalog 缺少 strings object")
+    string_members = json_object_members(
+        text,
+        strings_member.value_start,
+        strings_member.value_end,
+    )
+
+    operations: list[tuple[int, int, str]] = []
+    for key, locale_updates in updates.items():
+        entry = string_members.get(key)
+        if entry is None:
+            raise LocalizationError(f"Catalog 缺少待更新 key：{key}")
+        entry_members = json_object_members(text, entry.value_start, entry.value_end)
+        localizations = entry_members.get("localizations")
+        if localizations is None:
+            indent = line_indentation(text, entry.value_start) + "  "
+            operations.append(
+                object_member_insertion(
+                    text,
+                    entry.value_start,
+                    entry.value_end,
+                    [render_localizations_member(locale_updates, indent)],
+                )
+            )
+            continue
+
+        localization_members = json_object_members(
+            text,
+            localizations.value_start,
+            localizations.value_end,
+        )
+        missing_locales: dict[str, tuple[str, str]] = {}
+        for locale, (state, value) in locale_updates.items():
+            localization = localization_members.get(locale)
+            if localization is None:
+                missing_locales[locale] = (state, value)
+                continue
+            locale_members = json_object_members(
+                text,
+                localization.value_start,
+                localization.value_end,
+            )
+            string_unit = locale_members.get("stringUnit")
+            if string_unit is None:
+                indent = line_indentation(text, localization.value_start) + "  "
+                operations.append(
+                    object_member_insertion(
+                        text,
+                        localization.value_start,
+                        localization.value_end,
+                        [render_string_unit_member(state, value, indent)],
+                    )
+                )
+                continue
+
+            unit_members = json_object_members(
+                text,
+                string_unit.value_start,
+                string_unit.value_end,
+            )
+            missing_unit_members: list[str] = []
+            unit_indent = line_indentation(text, string_unit.value_start) + "  "
+            for name, incoming in (("state", state), ("value", value)):
+                member = unit_members.get(name)
+                encoded = json.dumps(incoming, ensure_ascii=False)
+                if member is None:
+                    missing_unit_members.append(f'{unit_indent}"{name}" : {encoded}')
+                elif text[member.value_start : member.value_end] != encoded:
+                    operations.append((member.value_start, member.value_end, encoded))
+            if missing_unit_members:
+                operations.append(
+                    object_member_insertion(
+                        text,
+                        string_unit.value_start,
+                        string_unit.value_end,
+                        missing_unit_members,
+                    )
+                )
+
+        if missing_locales:
+            locale_indent = line_indentation(text, localizations.value_start) + "  "
+            operations.append(
+                object_member_insertion(
+                    text,
+                    localizations.value_start,
+                    localizations.value_end,
+                    [
+                        render_locale_member(locale, state, value, locale_indent)
+                        for locale, (state, value) in missing_locales.items()
+                    ],
+                )
+            )
+
+    patched = apply_text_operations(text, operations)
+    try:
+        patched_catalog = json.loads(patched)
+    except json.JSONDecodeError as error:
+        raise LocalizationError(f"Catalog 局部写回生成无效 JSON：{error}") from error
+    for key, locale_updates in updates.items():
+        for locale, (state, value) in locale_updates.items():
+            unit = patched_catalog["strings"][key]["localizations"][locale][
+                "stringUnit"
+            ]
+            if unit.get("state") != state or unit.get("value") != value:
+                raise LocalizationError(f"Catalog 局部写回回读不一致：{locale}:{key}")
+    return patched
 
 
 def save_json(path: Path, payload: dict[str, Any]) -> None:
@@ -717,15 +1050,17 @@ def import_package_paths(
     allow_unreviewed: bool = False,
     backup_dir: Path | None = None,
 ) -> ImportResult:
-    """预检全部包，备份原文件后一次性写回；失败时 Catalog 保持不变。"""
+    """预检全部包，局部写回原始 Catalog；失败时 Catalog 保持不变。"""
 
     catalog = load_catalog(catalog_path)
+    original_text = catalog_path.read_text(encoding="utf-8")
     validated = [
         validate_package_for_import(package_path.resolve(), catalog)
         for package_path in package_paths
     ]
     changed = 0
     skipped = 0
+    updates: dict[str, dict[str, tuple[str, str]]] = {}
     for locale, units in validated:
         for key, incoming in units.items():
             if not incoming.target:
@@ -735,27 +1070,42 @@ def import_package_paths(
                 skipped += 1
                 continue
             entry = catalog["strings"][key]
-            localizations = entry.setdefault("localizations", {})
-            localization = localizations.setdefault(locale, {})
-            unit = localization.setdefault("stringUnit", {})
+            localizations = entry.get("localizations", {})
+            localization = (
+                localizations.get(locale, {})
+                if isinstance(localizations, dict)
+                else {}
+            )
+            unit = (
+                localization.get("stringUnit", {})
+                if isinstance(localization, dict)
+                else {}
+            )
             target_state = (
                 incoming.state
                 if incoming.state in APPROVED_STATES
                 else "needs-review-translation"
             )
-            if unit.get("value") == incoming.target and unit.get("state") == target_state:
+            if (
+                isinstance(unit, dict)
+                and unit.get("value") == incoming.target
+                and unit.get("state") == target_state
+            ):
                 continue
-            unit["state"] = target_state
-            unit["value"] = incoming.target
+            updates.setdefault(key, {})[locale] = (
+                target_state,
+                incoming.target,
+            )
             changed += 1
 
     backup_path = None
     if changed:
+        patched_text = patch_catalog_text(original_text, updates)
         backup_path = backup_catalog(
             catalog_path,
             (backup_dir or default_catalog_backup_dir()).resolve(),
         )
-        save_catalog(catalog_path, catalog)
+        save_catalog_text(catalog_path, patched_text)
     return ImportResult(
         changed=changed,
         skipped=skipped,

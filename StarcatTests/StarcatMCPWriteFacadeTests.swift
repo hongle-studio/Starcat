@@ -20,7 +20,10 @@ struct StarcatMCPWriteFacadeTests {
     private func makeSUT(
         isPro: Bool = true,
         allowLocalWrites: Bool = true,
-        allowDestructiveWrites: Bool = false
+        allowBatchWrites: Bool = false,
+        allowDestructiveWrites: Bool = false,
+        allowGitHubStarWrites: Bool = false,
+        starMutationService: MCPStarMutationServiceStub? = nil
     ) throws -> (
         StarcatMCPWriteFacade,
         GRDBRepoNoteRepository,
@@ -32,7 +35,9 @@ struct StarcatMCPWriteFacadeTests {
         let db = try InMemoryDatabaseManager()
         let settings = AppSettings(defaults: UserDefaults(suiteName: "test.starcat.mcp.\(UUID().uuidString)")!)
         settings.mcpAllowLocalWrites = allowLocalWrites
+        settings.mcpAllowBatchWrites = allowBatchWrites
         settings.mcpAllowDestructiveWrites = allowDestructiveWrites
+        settings.mcpAllowGitHubStarWrites = allowGitHubStarWrites
 
         let gate = EntitlementGate(
             entitlementProvider: TestProEntitlementProvider(isPro: isPro),
@@ -74,11 +79,97 @@ struct StarcatMCPWriteFacadeTests {
             repoRepository: repoRepository,
             metadataCapability: metadataCapability,
             tagCapability: tagCapability,
+            starMutationService: starMutationService ?? MCPStarMutationServiceStub(),
             settings: settings,
             entitlementGate: gate,
             auditLog: StarcatMCPAuditLog(fileURL: tmpLog)
         )
         return (facade, noteRepo, repoTagRepo, rawTagRepo, db, refreshCounter)
+    }
+
+    @Test("GitHub Star 写入关闭时拒绝调用远端 Service")
+    func githubStarWriteDisabledRejectsMutation() async throws {
+        let starService = MCPStarMutationServiceStub()
+        let (facade, _, _, _, _, _) = try makeSUT(starMutationService: starService)
+
+        do {
+            _ = try await facade.starRepo(
+                repoID: nil,
+                owner: "apple",
+                name: "swift",
+                dryRun: false
+            )
+            Issue.record("MCP GitHub Star writes disabled should reject the mutation")
+        } catch {
+            #expect(error.localizedDescription.contains("disabled"))
+        }
+
+        #expect(starService.starredTargets.isEmpty)
+    }
+
+    @Test("star_repo 可直接处理尚未进入本地缓存的 GitHub 搜索结果")
+    func starRepoAcceptsExternalOwnerAndName() async throws {
+        var starred = Repo.makeMinimal(owner: "apple", name: "swift")
+        starred.id = 99
+        starred.isStarred = true
+        let starService = MCPStarMutationServiceStub(starResult: starred)
+        let (facade, _, _, _, _, _) = try makeSUT(
+            allowGitHubStarWrites: true,
+            starMutationService: starService
+        )
+
+        let result = try await facade.starRepo(
+            repoID: nil,
+            owner: " apple ",
+            name: " swift ",
+            dryRun: false
+        )
+
+        #expect(result.changed == true)
+        #expect(result.target_full_name == "apple/swift")
+        #expect(result.repo?.id == 99)
+        #expect(starService.starredTargets == ["apple/swift"])
+    }
+
+    @Test("unstar_repo 复用远端 Service 且保留统一仓库选择语义")
+    func unstarRepoDelegatesToStarActionBoundary() async throws {
+        let starService = MCPStarMutationServiceStub()
+        let (facade, _, _, _, db, _) = try makeSUT(
+            allowGitHubStarWrites: true,
+            starMutationService: starService
+        )
+        try await db.insertRepoFixture(id: 7, owner: "octo", name: "remove-me")
+
+        let result = try await facade.unstarRepo(
+            repoID: nil,
+            owner: "octo",
+            name: "remove-me",
+            dryRun: false
+        )
+
+        #expect(result.changed == true)
+        #expect(starService.unstarredTargets == ["octo/remove-me"])
+    }
+
+    @Test("Star dry-run 不调用 GitHub 且仍返回明确目标")
+    func starRepoDryRunDoesNotCallRemoteService() async throws {
+        let starService = MCPStarMutationServiceStub()
+        let (facade, _, _, _, _, _) = try makeSUT(
+            allowGitHubStarWrites: true,
+            starMutationService: starService
+        )
+
+        let result = try await facade.starRepo(
+            repoID: nil,
+            owner: "openai",
+            name: "codex",
+            dryRun: true
+        )
+
+        #expect(result.dry_run == true)
+        #expect(result.changed == true)
+        #expect(result.target_full_name == "openai/codex")
+        #expect(starService.starredTargets.isEmpty)
     }
 
     @Test("本地写入关闭时 upsert_repo_note 被拒绝且不写库")
@@ -225,6 +316,156 @@ struct StarcatMCPWriteFacadeTests {
             Issue.record("Unexpected error type: \(error)")
         }
     }
+
+    @Test("批量写入关闭时拒绝整批操作且不修改仓库")
+    func batchWriteDisabledRejectsAllMutations() async throws {
+        let (facade, noteRepo, _, tagRepo, db, _) = try makeSUT()
+        try await db.insertRepoFixture(id: 1)
+
+        do {
+            _ = try await facade.batchOrganizeRepos(
+                items: [MCPBatchOrganizeItemInput(
+                    repoID: 1,
+                    owner: nil,
+                    name: nil,
+                    tagNames: ["act/test"],
+                    note: "blocked"
+                )],
+                createMissing: true,
+                dryRun: false
+            )
+            Issue.record("MCP batch writes disabled should reject the whole request")
+        } catch {
+            #expect(error.localizedDescription.contains("disabled"))
+        }
+
+        #expect(try await noteRepo.find(repoId: 1) == nil)
+        #expect(try await tagRepo.findByName("act/test") == nil)
+    }
+
+    @Test("批量整理可在一次请求中为多个仓库添加标签和更新笔记")
+    func batchOrganizeWritesTagsAndNotes() async throws {
+        let (facade, noteRepo, repoTagRepo, tagRepo, db, _) = try makeSUT(allowBatchWrites: true)
+        try await db.insertRepoFixture(id: 1, owner: "apple", name: "swift")
+        try await db.insertRepoFixture(id: 2, owner: "openai", name: "codex")
+
+        let result = try await facade.batchOrganizeRepos(
+            items: [
+                MCPBatchOrganizeItemInput(
+                    repoID: 1,
+                    owner: nil,
+                    name: nil,
+                    tagNames: ["act/test"],
+                    note: "Review this repository"
+                ),
+                MCPBatchOrganizeItemInput(
+                    repoID: nil,
+                    owner: "openai",
+                    name: "codex",
+                    tagNames: ["act/test"],
+                    note: nil
+                )
+            ],
+            createMissing: true,
+            dryRun: false
+        )
+
+        let tag = try #require(try await tagRepo.findByName("act/test"))
+        #expect(result.ok == true)
+        #expect(result.requested_count == 2)
+        #expect(result.succeeded_count == 2)
+        #expect(result.failed_count == 0)
+        #expect(result.changed_count == 2)
+        #expect(try await noteRepo.find(repoId: 1)?.content == "Review this repository")
+        #expect(try await noteRepo.find(repoId: 2) == nil)
+        #expect(try await repoTagRepo.fetchTags(forRepo: 1).map(\.id) == [tag.id])
+        #expect(try await repoTagRepo.fetchTags(forRepo: 2).map(\.id) == [tag.id])
+    }
+
+    @Test("批量整理 dry-run 只校验且不写入标签或笔记")
+    func batchOrganizeDryRunDoesNotPersist() async throws {
+        let (facade, noteRepo, repoTagRepo, tagRepo, db, _) = try makeSUT(allowBatchWrites: true)
+        try await db.insertRepoFixture(id: 1)
+
+        let result = try await facade.batchOrganizeRepos(
+            items: [MCPBatchOrganizeItemInput(
+                repoID: 1,
+                owner: nil,
+                name: nil,
+                tagNames: ["act/study"],
+                note: "Preview only"
+            )],
+            createMissing: true,
+            dryRun: true
+        )
+
+        #expect(result.ok == true)
+        #expect(result.dry_run == true)
+        #expect(result.changed_count == 0)
+        #expect(result.results.first?.note_requested == true)
+        #expect(try await noteRepo.find(repoId: 1) == nil)
+        #expect(try await tagRepo.findByName("act/study") == nil)
+        #expect(try await repoTagRepo.fetchTags(forRepo: 1).isEmpty)
+    }
+
+    @Test("批量整理任一项目预检失败时整批不写入")
+    func batchOrganizePreflightFailurePreventsAllWrites() async throws {
+        let (facade, noteRepo, _, tagRepo, db, _) = try makeSUT(allowBatchWrites: true)
+        try await db.insertRepoFixture(id: 1)
+
+        do {
+            _ = try await facade.batchOrganizeRepos(
+                items: [
+                    MCPBatchOrganizeItemInput(
+                        repoID: 1,
+                        owner: nil,
+                        name: nil,
+                        tagNames: ["act/adopt"],
+                        note: "Must remain untouched"
+                    ),
+                    MCPBatchOrganizeItemInput(
+                        repoID: 999,
+                        owner: nil,
+                        name: nil,
+                        tagNames: [],
+                        note: "missing repo"
+                    )
+                ],
+                createMissing: true,
+                dryRun: false
+            )
+            Issue.record("A preflight failure should reject the whole batch")
+        } catch let StarcatMCPError.notFound(message) {
+            #expect(message == "Repo not found: 999")
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
+
+        #expect(try await noteRepo.find(repoId: 1) == nil)
+        #expect(try await tagRepo.findByName("act/adopt") == nil)
+    }
+
+    @Test("批量整理单次最多处理一百个仓库")
+    func batchOrganizeRejectsMoreThanOneHundredItems() async throws {
+        let (facade, _, _, _, _, _) = try makeSUT(allowBatchWrites: true)
+        let items = (0..<101).map { index in
+            MCPBatchOrganizeItemInput(
+                repoID: Int64(index + 1),
+                owner: nil,
+                name: nil,
+                tagNames: [],
+                note: "note"
+            )
+        }
+
+        await #expect(throws: StarcatMCPError.invalidArguments("items must contain no more than 100 repositories")) {
+            _ = try await facade.batchOrganizeRepos(
+                items: items,
+                createMissing: false,
+                dryRun: false
+            )
+        }
+    }
 }
 
 @MainActor
@@ -245,6 +486,27 @@ private final class TestProEntitlementProvider: ProEntitlementProviding {
 @MainActor
 private final class RefreshCounter {
     var count = 0
+}
+
+/// 隔离 GitHub 网络写入；Facade 测试只验证权限、目标解析与业务 Service 委托。
+@MainActor
+private final class MCPStarMutationServiceStub: MCPStarMutationServicing {
+    private let starResult: Repo
+    private(set) var starredTargets: [String] = []
+    private(set) var unstarredTargets: [String] = []
+
+    init(starResult: Repo = Repo.makeMinimal(owner: "test", name: "repo")) {
+        self.starResult = starResult
+    }
+
+    func star(owner: String, repo: String, displayedStarsCount: Int?) async throws -> Repo {
+        starredTargets.append("\(owner)/\(repo)")
+        return starResult
+    }
+
+    func unstar(repo: Repo) async throws {
+        unstarredTargets.append(repo.fullName)
+    }
 }
 
 /// Notification 回调可能脱离 MainActor 执行；锁保护测试观察值，避免并发读写竞态。

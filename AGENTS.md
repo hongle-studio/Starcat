@@ -27,6 +27,12 @@
 > ⚠️ **允许且鼓励只读打开该文件做开工检查。** 需要登记时：在回复里起草拟写入内容，等 dong4j 明确说「可以写总览 / 同步总览 / 记到总览 / 勾上」等之后再改文件。
 > ⚠️ **dong4j 确认后写入时仍须遵守下文勾选与 `> 实现：` 格式**（仅打勾不够）。
 
+> ⚠️ **【铁律 #5】未经 dong4j 明确授权，禁止自行使用 Computer Use（GUI 桌面控制）。（2026-09-13 起生效）**
+> ⚠️ **`computer-use` 系列能力（截屏、鼠标键盘、打开 / 操作应用窗口等）默认一律不用；Agent 不得自行判断「需要看界面」就调用。**
+> ⚠️ **只读操作同样需要授权：包括获取应用 / 浏览器界面状态、读取辅助功能树（AX tree）、截屏；不得以「没有点击」「仅做验证」为由绕过，也不得换用脚本或其它工具执行等价的 GUI 自动化。**
+> ⚠️ **排查 UI / 运行时问题默认只读代码 + Makefile 构建；确需操作屏幕时，先在回复里说明用途与操作范围，等 dong4j 明确说「可以用 computer use / 授权操作屏幕」后再用。**
+> ⚠️ **本铁律与铁律 #2 同层：dong4j 描述现象、贴截图 ≠ 授权操作屏幕，截图用文字分析即可。**
+
 ---
 
 ## 🌿 Git 分支与 Worktree（强制）
@@ -56,6 +62,7 @@
    - **必须紧跟一行 `> 实现：...`**，简述：① 关键技术选择（一句话）② 涉及文件清单 ③ 已知约束 / 后续 TODO（有则写）。
    - 顶部「进度仪表盘」数字 + 「变更日志」同步。
 4. **新技术债**：先在回复里提议 D-编号与条目，**确认后再**追加到第 6 节。
+5. **专项收尾门禁（2026-09-16 起）**：`docs/4-工程进度/` 专项关闭（结果报告落档）时，必须同批把对应功能回写总览 checkbox（`- [x]` + `> 实现：`，写入前仍需 dong4j 确认）；**禁止只留专项文档与 changelog、不回写总览**。
 
 > ⚠️ **dong4j 在 2026-05-30 明确要求**：仅打勾 `[x]` 是不够的，必须有 `> 实现：...` 行。这是 Starcat 项目的硬性工作流约定，所有 AI 协作者必须遵守。
 >
@@ -338,6 +345,13 @@ Section {
 
 ## 跨 Agent 协作规范
 
+### Multica 与 GitHub Issue 同步
+
+- Starcat 主仓库及配套仓库以 Multica 为日常执行入口；每个在办任务必须有唯一的 GitHub 主关联，GitHub 正文同时记录对应 HOM 编号。
+- 验收通过后，在关联 GitHub Issue 记录英文交付证据、按 `completed` 关闭并同步 Project，再把 Multica 设为 `done`；必须回读双方状态。取消对应 `cancelled` / `not planned`，子任务完成不得直接关闭父任务。
+- 任一端更新失败，明确记录“同步待补”，不得宣称双端完成。仅在 Multica 手动切换状态不会自动同步 GitHub；执行者必须完成收尾步骤。
+- 创建、拆分、变更范围及收尾按 [`docs/4-工程进度/任务录入规范.md`](docs/4-工程进度/任务录入规范.md)；当前对应关系见 [`2026-10-07-GitHub与Multica任务对齐.md`](docs/4-工程进度/2026-10-07-GitHub与Multica任务对齐.md)。
+
 ### AI File Wall 协作登记
 
 本仓库启动 `supports/ai-file-wall` 后，Cursor Agent 在首次编辑目标文件前必须调用 MCP 工具 `ai-file-wall.claim_files`，任务结束后调用 `ai-file-wall.release_files`；长任务在 3 分钟内续期一次。Codex 与 Claude Code 由项目 hook 自动登记和释放。该规则只用于显示协作冲突预警，不阻断文件写入。
@@ -418,6 +432,7 @@ Section {
 
 > 单一信任源：[`docs/5-规范/国际化-规范.md`](docs/5-规范/国际化-规范.md) + [`docs/5-规范/i18n-军规.md`](docs/5-规范/i18n-军规.md)
 > 关键 7 条：`String.l10n` / `Text("key")` / `.appLocaleEnvironment()` / locale 注入 / `Localizable.xcstrings` 命名 `{section}.{subsection}.{component}` / 目录编辑必须保持 `"key" : value` 并禁止整文件格式化 / **Catalog 禁止 StrReplace/ApplyPatch 与 JSON 重排写回；只允许 Xcode 或经验证的按行插入（diff 只能新增）**。
+> **全语言交付（2026-10-21 起强制）**：新增或修改国际化文案后，必须同步完成当前全部支持语言（现为 18 种）的配置与校验；禁止只补中英文、复制英语冒充翻译，或把英语兜底当成国际化完成。语言集合以 `AppLocale`（排除 `system`）与 `supports/starcat-localization/locales.json` 为准；提交前核对本次全部 key 的语言覆盖、占位符、编译资源和长文案布局。AI 初稿与人工审核状态必须如实保留，未验收部分明确报告。
 > 自检：提交前 `rg "String\(localized:"` 与 `rg "NSLocalizedString"` 应只命中注释。
 
 ### 问题处理
@@ -427,7 +442,7 @@ Section {
 
 ---
 
-*最后更新：2026-06-26*
+*最后更新：2026-09-13*
 
 
 <claude-mem-context>

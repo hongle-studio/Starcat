@@ -86,6 +86,21 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.9.4"
+  # MLXSwiftLM：内置本地 AI（MLX）运行时，提供 MLXLMCommon / MLXLLM / MLXEmbedders /
+  # MLXRerankers 四个产品。上游处于活跃演进期且尚未提供稳定版本 tag，与 OpenAI、
+  # ConfettiSwiftUI 同策略锁 branch。设计见
+  # docs/2-产品/需求讨论/starcat-local-ai-framework-and-model-plan.md（v1.1）。
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    branch: main
+  # mlx-swift-lm 3.x 不再内置 HuggingFace 下载器 / 分词器，按官方文档引入配套实现：
+  # MLXHuggingFace 宏（#huggingFaceTokenizerLoader）依赖这两个包的 HuggingFace / Tokenizers 产品。
+  swift-transformers:
+    url: https://github.com/huggingface/swift-transformers
+    from: "1.3.0"
+  swift-huggingface:
+    url: https://github.com/huggingface/swift-huggingface
+    from: "0.9.0"
   # BorderBeamKit：上游 SPM 尚未在仓库根发布 Package.swift，Search Center 使用
   # 本地 Vendor 的 line beam 搜索框。来源见 ThirdParty/BorderBeamKit/VENDOR.md。
   BorderBeamKit:
@@ -183,6 +198,20 @@ targets:
       - package: MCPSwiftSDK
         product: MCP
       - package: Aptabase
+      - package: MLXSwiftLM
+        product: MLXLMCommon
+      - package: MLXSwiftLM
+        product: MLXLLM
+      - package: MLXSwiftLM
+        product: MLXEmbedders
+      - package: MLXSwiftLM
+        product: MLXRerankers
+      - package: MLXSwiftLM
+        product: MLXHuggingFace
+      - package: swift-transformers
+        product: Tokenizers
+      - package: swift-huggingface
+        product: HuggingFace
       - package: BorderBeamKit
       - package: ThinkingOrbsKit
       - target: StarcatWidgets
@@ -313,9 +342,26 @@ targets:
         product: MCP
       - package: Aptabase
       - package: Sparkle
+      - package: MLXSwiftLM
+        product: MLXLMCommon
+      - package: MLXSwiftLM
+        product: MLXLLM
+      - package: MLXSwiftLM
+        product: MLXEmbedders
+      - package: MLXSwiftLM
+        product: MLXRerankers
+      - package: MLXSwiftLM
+        product: MLXHuggingFace
+      - package: swift-transformers
+        product: Tokenizers
+      - package: swift-huggingface
+        product: HuggingFace
       - package: BorderBeamKit
       - package: ThinkingOrbsKit
       - target: StarcatDirectWidgets
+      - target: StarcatScreensaver
+        embed: true
+        codeSign: true
     postBuildScripts:
       - name: "Copy Changelog Resource"
         script: |
@@ -424,6 +470,64 @@ targets:
         showEnvVarsInLog: false
         basedOnDependencyAnalysis: false
 
+  # Direct 渠道系统屏保。App Store target 不依赖本 bundle。
+  # Core 只编进可移植模型 / Engine / 快照只读层；安装器和网络缓存留在主应用。
+  StarcatScreensaver:
+    type: bundle
+    platform: macOS
+    sources:
+      - path: StarcatScreensaver
+        excludes:
+          - "**/.DS_Store"
+      - path: Starcat/Features/Ambient/Core
+        excludes:
+          - AmbientCardFactory.swift
+      - path: Starcat/Core/Screensaver
+        excludes:
+          - ScreensaverInstaller.swift
+          - ScreensaverSnapshotPublisher.swift
+          - ScreensaverAvatarCache.swift
+          - ScreensaverRefreshCoordinator.swift
+      - path: Starcat/Resources/Assets.xcassets
+        buildPhase: resources
+    configFiles:
+      Debug: Configs/Build.xcconfig
+      Release: Configs/Build.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.starcat.app.direct.screensaver
+        PRODUCT_NAME: StarcatScreensaver
+        PRODUCT_MODULE_NAME: StarcatScreensaver
+        WRAPPER_EXTENSION: saver
+        MACH_O_TYPE: mh_bundle
+        GENERATE_INFOPLIST_FILE: YES
+        COMBINE_HIDPI_IMAGES: YES
+        SKIP_INSTALL: YES
+        CODE_SIGN_ENTITLEMENTS: StarcatScreensaver/StarcatScreensaver.entitlements
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+        INFOPLIST_KEY_NSPrincipalClass: StarcatScreensaver.StarcatScreenSaverView
+        INFOPLIST_KEY_CFBundleDisplayName: Starcat
+        INFOPLIST_KEY_CFBundleName: Starcat
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDirect
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.starcat.app.direct.debug.screensaver
+    info:
+      path: StarcatScreensaver/Info.generated.plist
+      properties:
+        NSPrincipalClass: StarcatScreensaver.StarcatScreenSaverView
+        CFBundleExecutable: StarcatScreensaver
+    dependencies:
+      - sdk: ScreenSaver.framework
+      - sdk: SwiftUI.framework
+      - sdk: AppKit.framework
+    postBuildScripts:
+      - name: "Auto Bump Version (from git)"
+        script: '"${SRCROOT}/scripts/bump-version.sh"'
+        runOnlyWhenInstalling: false
+        showEnvVarsInLog: false
+        basedOnDependencyAnalysis: false
+
 schemes:
   Starcat:
     build:
@@ -454,6 +558,7 @@ schemes:
     build:
       targets:
         StarcatDirect: all
+        StarcatScreensaver: all
     run:
       config: Debug
     profile:

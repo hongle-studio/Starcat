@@ -1715,7 +1715,7 @@ struct RAGWorkspaceInspector: View {
                         // 不展示 planReason：本节出现本身即表示已开启深度思考，与「状态」重复。
                         planSection(
                             "rag.workspace.inspector.plan.repoContext",
-                            systemImage: "brain.head.profile",
+                            systemImage: BusinessIcon.Symbol.codeContext.systemImage,
                             tint: .indigo,
                             helpTopic: .repoContext
                         ) {
@@ -3046,7 +3046,7 @@ struct RAGWorkspaceInspector: View {
                     toggleRepoContextDebugGroupExpansion(events)
                 } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "brain.head.profile")
+                    Image(systemName: BusinessIcon.Symbol.codeContext.systemImage)
                         .font(iconFont(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 14)

@@ -2,6 +2,97 @@
 
 Release notes for the Mac App Store edition of Starcat.
 
+## 2.0.0-待发布
+
+### New
+
+- Linux.do discovery: Browse verified open-source projects promoted on Linux.do, see provenance badges across repository lists, and open original discussions from repository details.
+- Quick search across lists: Expand the middle-column search field to quickly find repositories and activity items across Manage, Explore, Trending, Weekly, Awesome, Linux.do, notifications, and Undo Star.
+- Repository license filters: Select multiple licenses in the main window and combine them with other filters, with consistent pagination, project counts, and cached results.
+
+### Improvements
+
+- Business icons: Insights icons now match the main window, while similar-repository recommendations, embedding models, and CodeFlow are easier to distinguish.
+- Background task overview: Expand the status panel's task list to see each task's state and available workspace links or stop controls; idle cards are disabled and no longer open tag organization.
+- Background organization entry: After closing repository grouping or tag organization, the middle column keeps showing the current phase and processed counts, with direct access to the task or results.
+- Localized organization status: Task states and actions cover all 18 interface languages, stay on one line in narrow columns, and show their full text on hover.
+- License filter chips: Match sidebar tags with wrapping, content-sized height, and bounded scrolling; colors distinguish license obligation types, with full names and category notes on hover.
+
+### Fixes
+
+- Stars sync: Prevents background grouping work from keeping refresh active; pending organization authorization writes are retried only after a manual refresh.
+- AI organization tabs: Repository grouping and tag organization tabs keep a stable size as counts change, without shifting when switching states.
+- License filter popover: Keeps its size and options stable during repeated selections and clearing, while results and counts continue to update.
+- Middle-column menus: Sort, trending period, and notification filters now show a single dropdown arrow.
+
+## 1.9.0
+
+### New
+
+- Initial tag taxonomy: When the tag library is empty, analyzes all starred repositories locally with visible phase and progress feedback, then lets you confirm a controlled vocabulary before reviewing repository assignments—no AI provider required.
+- Labs decision engines: Choose Jev or the on-device Laya model for repository grouping and tag reuse. Laya runs inside Starcat without Python, with model downloads, runtime testing, residency and memory status, queue details, manual load and unload, and runtime logs.
+- MCP repository management: AI agents can query repositories by tag, Star or Unstar them, and batch-edit tags and notes behind write confirmation and audit protections.
+
+### Improvements
+
+- Expanded interface languages: Adds Arabic, Brazilian Portuguese, Dutch, French, German, Indonesian, Italian, Japanese, Korean, Polish, Russian, Spanish, Traditional Chinese, Turkish, Ukrainian, and Vietnamese, with placeholders and technical literals validated across all 18 localizations.
+- Repository header actions: Click the logo to view the owner card, or click the owner or project name to open its GitHub page in your default browser; project-name clicks no longer copy the full repository name.
+- Shared local AI models: App Store and Direct now use one protected model store on this Mac; existing verified downloads migrate automatically, avoiding duplicate multi-gigabyte copies.
+- Batch tag vocabulary control: Jev first reuses existing tags; uncovered repositories are pooled into one AI request with at most five shared candidates, then reclassified after confirmation. Large reviewed batches now apply through chunked transactions with live progress, while Auto Tidy never expands the vocabulary.
+- AI tag review: Shows whether each suggestion came from Jev, LLM, or local analysis, and explains skipped repositories with specific reasons such as taxonomy coverage, vocabulary misses, or confidence thresholds.
+- Labs Jev OpenRouter fallback: Uses a verified OpenRouter configuration for Jev when no TypeSafe key is set; the native key remains preferred, and the LLM still fills gaps when no existing tag fits.
+- MCP paired devices: Shows each device's pairing date and time, making recent pairings easier to distinguish from older records.
+- MCP setup workflow: Settings provides a complete prompt that can be copied directly to an AI agent, with CLI version checks and updates before installation.
+
+### Fixes
+
+- Tag organization window: Opening Background Tasks from the status panel now closes the popover first, and both entry points use the originating main window to avoid attaching to the wrong window.
+- CLI pairing: With the updated CLI, fixes pairing failures on some networks and provides a re-pairing hint when the certificate changes.
+- GitHub Lists sync: Splits deeply nested GraphQL requests to prevent server-side 502 responses from interrupting synchronization.
+- Sidebar edit controls: Keeps a stable button placeholder so list titles no longer shift when hovering.
+
+## 1.8.0
+
+### New
+
+- Repository file download: Browse the file tree from repository details, preview source and images, then download selected files including Git LFS.
+- External Star alerts: While Starcat is active, detects Stars added through GitHub, a browser, or other tools, surfaces them as an avatar alert in All Repositories, and syncs them with one click.
+- Labs decision engine: Adds an optional, off-by-default TypeSafe Jev experiment. Manual GitHub Lists grouping and tag generation can reuse existing categories first; when new tags are allowed and needed, the configured LLM fills the gap. Includes separate setup and connection testing.
+
+### Improvements
+
+- GitHub Lists grouping: When OAuth restrictions block remote writes for organization repositories, keeps their grouping locally with a clear status and supports retrying after authorization; batch updates now run concurrently for shorter waits.
+- Star history motion: Animates Insight charts and README Star-history cards the first time they enter view, with the total Star count updating in sync; Reduce Motion and image exports remain static.
+
+### Fixes
+
+- README image loading: Works around intermittent GitHub camo proxy failures, falls back to Starcat's native Star-history card when an embedded card cannot load, and keeps a visible fallback for other failed README images.
+
+## 1.7.0
+
+### New
+
+- Local AI: Built-in on-device models power summarization, tagging, and chat without an API key, free to use and enabled by default on first launch. Manage local models by category with Hugging Face and ModelScope downloads, enable a local reranker for Knowledge Base retrieval, and check model status and memory in the toolbar status panel. Real-time run logs can be viewed and cleared.
+- Anthropic and CC Switch: Anthropic joins the AI provider list through the Messages API, and existing provider configurations can be imported from CC Switch in one click.
+- Settings reorganization: Notifications and Keyboard Shortcuts become separate pages, the general page groups are reorganized, and the legacy search shortcut is removed.
+- README translation services: Adds System Translation and Google Translation, per-notification engine selection, and centralized translation settings with system language pack management.
+- Contributors row: Repository details gain a contributors row with three overlapping avatars and an overflow count; click to view the full list.
+- Insight redesign: My Insights and activity overview cards follow the new prototype, and insights now open from Explore, Trending, Weekly, and Activity details.
+- Own forks: Forks are grouped by ownership, your fork shows its upstream, and ahead/behind decides Contribute and one-click sync.
+- Private group badge: Private groups keep a green shield after their name in the sidebar, independent of hover.
+
+### Improvements
+
+- Star status badge: Lists use filled and outlined star badges to show Star state instead of the green checkmark.
+- Language menu: Now shows each language in its native name only.
+- Semantic search feedback: The search footer shows retrieval progress, semantic match scores, and vector coverage, and semantic recall now includes README content.
+
+### Fixes
+
+- AI panel cursor isolation: Fixes the AI summary and global search panels inheriting cursor behavior from main-window content underneath.
+- Interface rendering: Fixes low-contrast yellow tag dots in light mode and metadata pills clipped in narrow columns.
+- Star history cards: Fixes card detection behind GitHub camo image proxying and duplicate injection when a README already embeds a history card.
+
 ## 1.6.1
 
 Starcat 1.6.1 focuses on issues found after the 1.6.0 release across interface layout, filtering, search, and authorization, while refining macOS 26 Liquid Glass, Star history, and AI organization.

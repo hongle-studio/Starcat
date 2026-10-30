@@ -270,6 +270,7 @@ actor AIModelPricingCatalog {
     private static func providerAlias(_ rawValue: String) -> String {
         switch normalize(rawValue) {
         case "openaicompatible", "openai": "openai"
+        case "anthropic", "claude": "anthropic"
         case "deepseek": "deepseek"
         case "openrouter": "openrouter"
         case "azureopenai", "azure": "azure"

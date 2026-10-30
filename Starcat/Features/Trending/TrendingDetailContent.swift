@@ -13,7 +13,7 @@
 //  本 ContentView 同时提供两块内容：
 //  - **heroExtension**：`TrendingContributorsSection`（GitHub Trending 页面顶部贡献者列）
 //    跟着 hero 一起折叠收起。需要外部通过 `RepoDetailScaffold(heroExtension:)` 接入。
-//  - **body slot**：`ReadmeStateView`（README WebView + 翻译入口可选）
+//  - **body slot**：`RepoDetailInsightsHost` 包住 `ReadmeStateView`（已 star 才出洞察）
 //
 //  R-01 v1.5 修订（2026-06-10 下午, dong4j bug 反馈）：
 //  - tags / notes / release 三段（`RepoLocalSections`）**从 ContentView 迁回 Scaffold
@@ -54,43 +54,45 @@ struct TrendingDetailContent: View {
     @Environment(AuthSession.self) private var authSession
 
     var body: some View {
-        // v1.5 修订（2026-06-10）：RepoLocalSections 已迁回 Scaffold metadataPanel,
-        // 本 ContentView body 仅剩 ReadmeStateView,无需再包 VStack。
-        ReadmeStateView(
-            state: readmeVM.state,
-            contentScope: .trending(owner: repo.owner, repo: repo.name),
-            baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
-            onScrollReportChange: onScrollReport,
-            // R-01：仅本地命中（id != 0）的 repo 才提供翻译入口。
-            // 避免 ephemeral repo 用 id=0 走翻译缓存造成串扰。
-            translationControl: repo.id != 0 ? ReadmeTranslationControl(
-                repo: repo,
-                translationVM: translationVM,
-                settings: settings
-            ) : nil
-        ) {
-            // README 重新加载走 trending 链路。
-            //
-            // **为什么不调 readmeVM.reload(repo:)**：reload 内部走 manage 缓存表（PK
-            // = repo_id）,用 ephemeral repo（id=0）会撞坏外键。trending 场景永远
-            // 走 trending_readmes 表（PK = owner/repo）,即便本地命中（id != 0）的
-            // 已 star 仓库也用 trending 入口刷 readme,保证 Trending 页面体验一致——
-            // 用户在 trending row 点开看到的 README 永远来自 trending API 路径,
-            // 不与 manage 详情页的 SWR 状态机相互污染。
-            // HOM-201 P1-4（2026-06-14）:onRetry 是用户主动刷新(底部 cacheFooter 刷新按钮),
-            // 必须绕过 softTtl 短路,否则按 6h TTL 6 小时内会被忽略不刷新。
-            readmeVM.loadTrending(
-                owner: repo.owner,
-                repo: repo.name,
-                isLoggedIn: authSession.state.isAuthenticated,
-                forceRefresh: true
-            )
-        } onLogin: {
-            // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
-            // （让用户在 sheet 内可选 Device Flow / PAT，详见 AuthSession.requestLoginSheet 注释）
-            authSession.requestLoginSheet()
+        // 已 star 时与星标详情共用 README / 洞察切换；README 仍走 trending 缓存路径。
+        RepoDetailInsightsHost(repo: repo, onScrollReport: onScrollReport) {
+            ReadmeStateView(
+                state: readmeVM.state,
+                contentScope: .trending(owner: repo.owner, repo: repo.name),
+                baseURL: URL(string: repo.htmlUrl).map(ReadmeWebView.repositoryContentBaseURL),
+                onScrollReportChange: onScrollReport,
+                // R-01：仅本地命中（id != 0）的 repo 才提供翻译入口。
+                // 避免 ephemeral repo 用 id=0 走翻译缓存造成串扰。
+                translationControl: repo.id != 0 ? ReadmeTranslationControl(
+                    repo: repo,
+                    translationVM: translationVM,
+                    settings: settings
+                ) : nil,
+                starHistoryRepo: repo
+            ) {
+                // README 重新加载走 trending 链路。
+                //
+                // **为什么不调 readmeVM.reload(repo:)**：reload 内部走 manage 缓存表（PK
+                // = repo_id）,用 ephemeral repo（id=0）会撞坏外键。trending 场景永远
+                // 走 trending_readmes 表（PK = owner/repo）,即便本地命中（id != 0）的
+                // 已 star 仓库也用 trending 入口刷 readme,保证 Trending 页面体验一致——
+                // 用户在 trending row 点开看到的 README 永远来自 trending API 路径,
+                // 不与 manage 详情页的 SWR 状态机相互污染。
+                // HOM-201 P1-4（2026-06-14）:onRetry 是用户主动刷新(底部 cacheFooter 刷新按钮),
+                // 必须绕过 softTtl 短路,否则按 6h TTL 6 小时内会被忽略不刷新。
+                readmeVM.loadTrending(
+                    owner: repo.owner,
+                    repo: repo.name,
+                    isLoggedIn: authSession.state.isAuthenticated,
+                    forceRefresh: true
+                )
+            } onLogin: {
+                // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
+                // （让用户在 sheet 内可选 Device Flow / PAT，详见 AuthSession.requestLoginSheet 注释）
+                authSession.requestLoginSheet()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "organizations": {
+    "starcat-app": {
+      "project": {
+        "owner": "starcat-app",
+        "number": 1
+      },
+      "fields": {
+        "status": "Status",
+        "workType": "Work Type",
+        "area": "Area"
+      },
+      "phases": {
+        "issue_created": "Backlog",
+        "scheduled": "Ready",
+        "implementation_started": "In Progress",
+        "review_started": "In Review",
+        "acceptance_ready": "Acceptance",
+        "completed": "Done",
+        "reopened": "Backlog"
+      },
+      "itemLimit": 10000,
+      "autoAddWaitSeconds": 8,
+      "newItemSettleSeconds": 3,
+      "verificationDelaySeconds": 2
+    }
+  },
+  "repositories": {}
+}

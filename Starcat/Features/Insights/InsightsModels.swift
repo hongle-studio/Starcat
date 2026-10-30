@@ -47,7 +47,7 @@ enum InsightsTopic: String, CaseIterable, Identifiable, Sendable {
         case .overview:     return "rectangle.3.group.fill"
         case .organization: return "tray.full.fill"
         case .technology:   return "chevron.left.forwardslash.chevron.right"
-        case .health:       return "heart.text.square.fill"
+        case .health:       return BusinessIcon.Symbol.repositoryHealth.systemImage
         }
     }
 
@@ -167,25 +167,25 @@ enum InsightsSelection: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var systemImage: String {
+    /// 分析入口与主侧栏共享业务语义；许可证必须走矢量资源，不能传给 SF Symbols。
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .overviewSummary:         return "rectangle.3.group.fill"
-        case .allActions:              return "checklist"
-        case .organizationSummary:     return "chart.bar.xaxis"
-        case .untagged:                return "tag.slash.fill"
-        case .unread:                  return "book.closed.fill"
-        case .missingReadme:           return "doc.questionmark.fill"
-        case .missingIndexableContent: return "doc.text.magnifyingglass"
-        case .indexIssues:             return "exclamationmark.magnifyingglass"
-        case .technologySummary:       return "chart.bar.fill"
-        case .languages:               return "chevron.left.forwardslash.chevron.right"
-        case .topics:                  return "square.grid.2x2.fill"
-        case .licenses:                return "checkmark.seal.fill"
-        case .healthSummary:           return "heart.text.square.fill"
-        case .healthPending:           return "heart.text.square.fill"
-        case .openSSFPending:          return "shield.lefthalf.filled"
-        case .maintenanceRisk:         return "wrench.and.screwdriver.fill"
-        case .securityRisk:            return "lock.trianglebadge.exclamationmark.fill"
+        case .overviewSummary:         return .system("rectangle.3.group.fill")
+        case .allActions:              return .system("checklist")
+        case .organizationSummary:     return .system("chart.bar.xaxis")
+        case .untagged:                return .business(.untagged)
+        case .unread:                  return .system("book.closed.fill")
+        case .missingReadme:           return .system("doc.questionmark.fill")
+        case .missingIndexableContent: return .system("doc.text.magnifyingglass")
+        case .indexIssues:             return .system("exclamationmark.magnifyingglass")
+        case .technologySummary:       return .system("chart.bar.fill")
+        case .languages:               return .business(.languages)
+        case .topics:                  return .system("square.grid.2x2.fill")
+        case .licenses:                return .business(.license)
+        case .healthSummary, .healthPending: return .business(.repositoryHealth)
+        case .openSSFPending:          return .system("shield.lefthalf.filled")
+        case .maintenanceRisk:         return .system("wrench.and.screwdriver.fill")
+        case .securityRisk:            return .system("lock.trianglebadge.exclamationmark.fill")
         }
     }
 

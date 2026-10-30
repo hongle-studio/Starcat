@@ -21,6 +21,8 @@ import GRDB
 protocol RepoEmbeddingRepositoryProtocol: Sendable {
     func fetchEmbeddings(model: String, repoIDs: [Int64]) async throws -> [RepoEmbedding]
     func fetchEmbeddingsByRepoID(model: String, repoIDs: [Int64]) async throws -> [Int64: RepoEmbedding]
+    /// 当前模型在给定候选仓里已有向量的条数。Search Center 底栏覆盖率用，不拉 BLOB。
+    func countEmbeddings(model: String, repoIDs: [Int64]) async throws -> Int
     func upsert(_ embeddings: [RepoEmbedding]) async throws
 }
 
@@ -50,12 +52,39 @@ struct GRDBRepoEmbeddingRepository: RepoEmbeddingRepositoryProtocol {
         return Dictionary(uniqueKeysWithValues: rows.map { ($0.repoId, $0) })
     }
 
+    func countEmbeddings(model: String, repoIDs: [Int64]) async throws -> Int {
+        guard !repoIDs.isEmpty else { return 0 }
+        // 分块避免 SQLite 变量上限；覆盖率只关心 COUNT，不必一次塞进全部 ID。
+        var total = 0
+        let chunkSize = 500
+        var start = repoIDs.startIndex
+        while start < repoIDs.endIndex {
+            let end = repoIDs.index(start, offsetBy: chunkSize, limitedBy: repoIDs.endIndex) ?? repoIDs.endIndex
+            let chunk = Array(repoIDs[start..<end])
+            total += try await countEmbeddingsChunk(model: model, repoIDs: chunk)
+            start = end
+        }
+        return total
+    }
+
     func upsert(_ embeddings: [RepoEmbedding]) async throws {
         guard !embeddings.isEmpty else { return }
         try await database.writer.write { db in
             for var embedding in embeddings {
                 try embedding.save(db)
             }
+        }
+    }
+
+    private func countEmbeddingsChunk(model: String, repoIDs: [Int64]) async throws -> Int {
+        try await database.writer.read { db in
+            let placeholders = Array(repeating: "?", count: repoIDs.count).joined(separator: ",")
+            var args: [any DatabaseValueConvertible] = [model]
+            args.append(contentsOf: repoIDs)
+            return try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM repo_embeddings
+                WHERE model = ? AND repo_id IN (\(placeholders))
+                """, arguments: StatementArguments(args)) ?? 0
         }
     }
 }

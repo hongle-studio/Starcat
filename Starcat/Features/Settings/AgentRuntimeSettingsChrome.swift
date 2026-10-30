@@ -35,7 +35,9 @@ struct AgentRuntimeGuideNotice: View {
             Button("settings.integration.agentRuntime.openGuide.action") {
                 openURL(destination)
             }
-            .controlSize(.small)
+            // 次操作按钮统一 `.regular`（设置页规范 §5.1）：`.small` 会让这颗
+            // 按钮文案比同页其它 bordered 按钮小一号。
+            .controlSize(.regular)
         }
         .padding(10)
         .background(
@@ -76,8 +78,8 @@ struct AgentRuntimePathRow<Actions: View>: View {
 
             HStack(spacing: 8) {
                 Text(verbatim: displayedPath)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.primary)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)

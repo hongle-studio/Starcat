@@ -194,35 +194,35 @@ struct AIUsageDashboardView: View {
                 title: "ai.usage.metric.totalTokens",
                 value: compact(summary.totalTokens),
                 detail: String(format: String.l10n("ai.usage.metric.knownRateFormat"), percent(summary.usageAvailabilityRate)),
-                icon: "sum",
+                icon: .system("sum"),
                 tint: .accentColor
             )
             metricCard(
                 title: "ai.usage.metric.inputTokens",
                 value: compact(summary.inputTokens),
                 detail: String.l10n("ai.usage.metric.inputHint"),
-                icon: "arrow.down.left",
+                icon: .system("arrow.down.left"),
                 tint: .cyan
             )
             metricCard(
                 title: "ai.usage.metric.outputTokens",
                 value: compact(summary.outputTokens),
                 detail: String.l10n("ai.usage.metric.outputHint"),
-                icon: "arrow.up.right",
+                icon: .system("arrow.up.right"),
                 tint: .purple
             )
             metricCard(
                 title: "ai.usage.metric.calls",
                 value: compact(summary.callCount),
                 detail: String(format: String.l10n("ai.usage.metric.successRateFormat"), percent(summary.successRate)),
-                icon: "bolt.horizontal.circle",
+                icon: .system("bolt.horizontal.circle"),
                 tint: .green
             )
             metricCard(
                 title: "ai.usage.metric.embeddingItems",
                 value: compact(summary.embeddingItemCount),
                 detail: String.l10n("ai.usage.metric.embeddingHint"),
-                icon: "point.3.connected.trianglepath.dotted",
+                icon: AIModelCapability.embedding.iconSource,
                 tint: .orange
             )
             metricCard(
@@ -231,7 +231,7 @@ struct AIUsageDashboardView: View {
                     ? currency(summary.estimatedCostUSD)
                     : String.l10n("agent.workspace.inspector.value.unavailable"),
                 detail: "\(String.l10n("ai.usage.source.estimated")) · \(percent(summary.pricingCoverageRate))",
-                icon: "dollarsign.circle",
+                icon: .system("dollarsign.circle"),
                 tint: .mint
             )
         }
@@ -241,7 +241,7 @@ struct AIUsageDashboardView: View {
         title: LocalizedStringKey,
         value: String,
         detail: String,
-        icon: String,
+        icon: BusinessIcon.Source,
         tint: Color
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -250,7 +250,7 @@ struct AIUsageDashboardView: View {
                     .font(interfaceScale.font(.caption, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Image(systemName: icon)
+                BusinessIcon(source: icon, pointSize: (icon.isAsset ? 16 : 13) * interfaceScale.multiplier)
                     .foregroundStyle(tint)
             }
             Text(value)

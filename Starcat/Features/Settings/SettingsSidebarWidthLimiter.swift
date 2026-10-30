@@ -263,6 +263,12 @@ struct SettingsWindowSizeLimiter: NSViewRepresentable {
 
         window.contentMinSize = contentSize
         window.contentMaxSize = contentSize
+        // 2026-09-12 实测（macOS 27，正式版与 dev 均复现）：min==max 的钉死语义不再
+        // 阻止用户拖拽（736×720 可被拖到 900×900），系统不再保证相等约束的不可缩放
+        // 行为。设置窗口没有用户拖拽场景，直接摘除 .resizable 彻底固定，并禁用
+        // 绿色缩放按钮；min/max 钉死保留作为低层兜底。
+        window.styleMask.remove(.resizable)
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
         let frameSize = window.frameRect(
             forContentRect: NSRect(origin: .zero, size: contentSize)
         ).size

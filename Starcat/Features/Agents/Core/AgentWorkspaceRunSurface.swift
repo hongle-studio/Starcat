@@ -533,7 +533,7 @@ struct AgentWorkspaceRunSurface: View {
             }
 
             if activeRuntimeBackend == .builtinLoop, viewModel.selectedModelID == nil {
-                Label("agent.workspace.model.required", systemImage: "sparkles")
+                Label("agent.workspace.model.required", systemImage: BusinessIcon.Symbol.models.systemImage)
                     .font(agentFont(.caption))
                     .foregroundStyle(.secondary)
             } else if activeRuntimeBackend == .deepSeekHarness, selectedDeepSeekSelection == nil {
@@ -1072,7 +1072,7 @@ struct AgentWorkspaceRunSurface: View {
                 }
             }
         } label: {
-            Label(viewModel.selectedModelDisplayName, systemImage: "sparkles")
+            Label(viewModel.selectedModelDisplayName, systemImage: BusinessIcon.Symbol.models.systemImage)
                 .font(agentFont(.caption, weight: .semibold))
                 .lineLimit(1)
         }
@@ -1129,7 +1129,7 @@ struct AgentWorkspaceRunSurface: View {
                 }
             }
         } label: {
-            Label(activeRuntimeBackend.displayName, systemImage: "point.3.connected.trianglepath.dotted")
+            Label(activeRuntimeBackend.displayName, systemImage: BusinessIcon.Symbol.terminal.systemImage)
                 .font(agentFont(.caption, weight: .semibold))
                 .lineLimit(1)
         }
@@ -1255,7 +1255,7 @@ struct AgentWorkspaceRunSurface: View {
                 }
             }
         } label: {
-            Label(selectedDeepSeekSelection?.model.name ?? "—", systemImage: "sparkles")
+            Label(selectedDeepSeekSelection?.model.name ?? "—", systemImage: BusinessIcon.Symbol.models.systemImage)
                 .font(agentFont(.caption, weight: .semibold))
                 .lineLimit(1)
         }
@@ -1336,7 +1336,7 @@ struct AgentWorkspaceRunSurface: View {
         } label: {
             Label(
                 selectedCodexModelSelection?.displayName ?? "Codex",
-                systemImage: codexModelCatalogError == nil ? "sparkles" : "exclamationmark.triangle"
+                systemImage: codexModelCatalogError == nil ? BusinessIcon.Symbol.models.systemImage : "exclamationmark.triangle"
             )
             .font(agentFont(.caption, weight: .semibold))
             .lineLimit(1)

@@ -155,11 +155,12 @@ enum AIChatStreamEvent: Equatable, Sendable {
     case completed(AIChatResponse)
 }
 
-/// 统一 OpenAI-compatible 推理流，避免业务 UI 依赖某一家 provider 的字段名称。
+/// 统一远程 Provider 与 Local MLX 的推理流，避免业务 UI 依赖某一家模型的输出协议。
 ///
 /// 原生 `reasoning_content` 优先；部分兼容服务只把推理包在正文开头的 `<think>` 标签里，
-/// 因此只识别开头标签，并正确处理标签被拆到多个 SSE chunk 的情况。这样不会误吞回答
-/// 中用于讲解协议或代码的普通 `<think>` 文本。
+/// Local MLX 的部分模板还会把开始标签预填进 prompt，生成流只返回思考正文与结束标签。
+/// 状态机只在流起点和 reasoning/answer 边界处理 framing，并支持标签跨 chunk，正文开始后
+/// 完全透传，因此不会误吞回答中用于讲解协议或代码的普通 `<think>` 文本。
 struct AIStreamReasoningNormalizer {
     private enum Source: Equatable {
         case probing
@@ -168,13 +169,28 @@ struct AIStreamReasoningNormalizer {
         case content
     }
 
-    private static let openingTag = "<think>"
-    private static let closingTag = "</think>"
-
-    private var source: Source = .probing
+    private let openingTag: String
+    private let closingTag: String
+    private var source: Source
     private var probe = ""
     private var taggedTail = ""
+    private var shouldProbeLeadingOpeningTag: Bool
+    private var shouldStripLeadingClosingTags = false
+    private var contentBoundaryProbe = ""
     private var emittedReasoning = false
+
+    init(
+        openingTag: String = "<think>",
+        closingTag: String = "</think>",
+        startsInsideReasoning: Bool = false
+    ) {
+        self.openingTag = openingTag
+        self.closingTag = closingTag
+        source = startsInsideReasoning ? .tagged : .probing
+        // 部分本地模板已在 prompt 尾部预填 `<think>`，但模型仍可能重复生成它。
+        // 只探测 reasoning 流的第一个有效字符，避免误吞思考正文里的普通标签文本。
+        shouldProbeLeadingOpeningTag = startsInsideReasoning
+    }
 
     mutating func ingest(content: String?, nativeReasoning: String?) -> [AIChatStreamEvent] {
         var events: [AIChatStreamEvent] = []
@@ -187,15 +203,19 @@ struct AIStreamReasoningNormalizer {
         guard let content, !content.isEmpty else { return events }
 
         switch source {
-        case .native, .content:
+        case .native:
             events.append(.delta(content))
+        case .content:
+            if let answer = ingestContentBoundary(content), !answer.isEmpty {
+                events.append(.delta(answer))
+            }
         case .probing:
             probe += content
             let leadingWhitespace = probe.prefix { $0.isWhitespace }
             let candidate = String(probe.dropFirst(leadingWhitespace.count))
-            if candidate.count < Self.openingTag.count {
+            if candidate.count < openingTag.count {
                 // 开始标签被拆开时先保留，不要把 `<thi` 误当成正文输出。
-                guard Self.openingTag.hasPrefix(candidate) else {
+                guard openingTag.hasPrefix(candidate) else {
                     source = .content
                     events.append(.delta(probe))
                     probe = ""
@@ -203,10 +223,10 @@ struct AIStreamReasoningNormalizer {
                 }
                 return events
             }
-            if candidate.hasPrefix(Self.openingTag) {
+            if candidate.hasPrefix(openingTag) {
                 source = .tagged
                 probe = ""
-                events.append(contentsOf: ingestTagged(String(candidate.dropFirst(Self.openingTag.count))))
+                events.append(contentsOf: ingestTagged(String(candidate.dropFirst(openingTag.count))))
             } else {
                 source = .content
                 events.append(.delta(probe))
@@ -224,8 +244,16 @@ struct AIStreamReasoningNormalizer {
         if source == .probing, !probe.isEmpty {
             events.append(.delta(probe))
         } else if source == .tagged, !taggedTail.isEmpty {
-            emittedReasoning = true
-            events.append(.reasoningDelta(taggedTail))
+            let candidate = taggedTail.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 生成恰好截断在 framing 中间时不把 `<thi` 当 reasoning 展示。
+            if !candidate.isEmpty
+                && !(shouldProbeLeadingOpeningTag && openingTag.hasPrefix(candidate))
+            {
+                emittedReasoning = true
+                events.append(.reasoningDelta(taggedTail))
+            }
+        } else if source == .content, let answer = finishContentBoundaryProbe() {
+            events.append(.delta(answer))
         }
         if emittedReasoning {
             events.append(.reasoningCompleted)
@@ -234,24 +262,41 @@ struct AIStreamReasoningNormalizer {
     }
 
     private mutating func ingestTagged(_ text: String) -> [AIChatStreamEvent] {
-        let buffered = taggedTail + text
-        if let closingRange = buffered.range(of: Self.closingTag) {
+        var buffered = taggedTail + text
+        taggedTail = ""
+
+        if shouldProbeLeadingOpeningTag {
+            let leadingWhitespace = buffered.prefix { $0.isWhitespace }
+            let candidate = String(buffered.dropFirst(leadingWhitespace.count))
+            if candidate.isEmpty
+                || (candidate.count < openingTag.count && openingTag.hasPrefix(candidate))
+            {
+                taggedTail = buffered
+                return []
+            }
+            shouldProbeLeadingOpeningTag = false
+            if candidate.hasPrefix(openingTag) {
+                buffered = String(candidate.dropFirst(openingTag.count))
+            }
+        }
+
+        if let closingRange = buffered.range(of: closingTag) {
             let reasoning = String(buffered[..<closingRange.lowerBound])
             let answer = String(buffered[closingRange.upperBound...])
-            taggedTail = ""
             source = .content
+            shouldStripLeadingClosingTags = true
             var events: [AIChatStreamEvent] = []
             if !reasoning.isEmpty {
                 emittedReasoning = true
                 events.append(.reasoningDelta(reasoning))
             }
-            if !answer.isEmpty {
+            if let answer = ingestContentBoundary(answer), !answer.isEmpty {
                 events.append(.delta(answer))
             }
             return events
         }
 
-        let heldSuffix = Self.longestClosingTagPrefix(in: buffered)
+        let heldSuffix = longestClosingTagPrefix(in: buffered)
         let emittedCount = buffered.count - heldSuffix.count
         let reasoning = String(buffered.prefix(emittedCount))
         taggedTail = heldSuffix
@@ -260,7 +305,40 @@ struct AIStreamReasoningNormalizer {
         return [.reasoningDelta(reasoning)]
     }
 
-    private static func longestClosingTagPrefix(in text: String) -> String {
+    /// reasoning 结束后只在正文边界吞掉重复 `</think>`；正文一旦开始即完全透传。
+    private mutating func ingestContentBoundary(_ text: String) -> String? {
+        guard shouldStripLeadingClosingTags else { return text }
+        contentBoundaryProbe += text
+
+        while true {
+            let leadingWhitespace = contentBoundaryProbe.prefix { $0.isWhitespace }
+            let candidate = String(contentBoundaryProbe.dropFirst(leadingWhitespace.count))
+            guard !candidate.isEmpty else { return nil }
+            if candidate.count < closingTag.count, closingTag.hasPrefix(candidate) {
+                return nil
+            }
+            if candidate.hasPrefix(closingTag) {
+                contentBoundaryProbe = String(
+                    candidate.dropFirst(closingTag.count).drop(while: { $0.isWhitespace }))
+                continue
+            }
+
+            shouldStripLeadingClosingTags = false
+            let answer = contentBoundaryProbe
+            contentBoundaryProbe = ""
+            return answer
+        }
+    }
+
+    private mutating func finishContentBoundaryProbe() -> String? {
+        guard !contentBoundaryProbe.isEmpty else { return nil }
+        let candidate = contentBoundaryProbe.trimmingCharacters(in: .whitespacesAndNewlines)
+        contentBoundaryProbe = ""
+        if candidate.isEmpty || closingTag.hasPrefix(candidate) { return nil }
+        return candidate
+    }
+
+    private func longestClosingTagPrefix(in text: String) -> String {
         for length in stride(from: min(closingTag.count - 1, text.count), through: 1, by: -1) {
             let suffix = String(text.suffix(length))
             if closingTag.hasPrefix(suffix) { return suffix }
@@ -286,6 +364,25 @@ protocol AIClientProtocol: AITextGenerating {
     func embeddings(inputs: [String], model: String?) async throws -> [[Float]]
     func listModels() async throws -> [AIModelDescriptor]
     func testConnection() async throws
+}
+
+/// Starcat 统一 AI 客户端工厂。
+///
+/// `.localAI` 走进程内 MLX（`LocalMLXClient`，无 Key / 无网络），`.anthropic` 走
+/// Messages API（`AnthropicClient`），其余 provider 走 OpenAI-compatible HTTP
+///（`OpenAIClient`）。各业务的 makeClient 工厂只应调用本函数，不要再按 provider
+/// 自行分支；本地模型未安装时由 `LocalMLXClient` 在解析阶段抛
+/// `LocalAIError.modelNotInstalled`。
+enum AIClientFactory {
+    static func make(configuration: AIClientConfiguration) throws -> any AIClientProtocol {
+        if configuration.provider == .localAI {
+            return LocalMLXClient.makeClient(configuration: configuration)
+        }
+        if configuration.provider == .anthropic {
+            return try AnthropicClient(configuration: configuration)
+        }
+        return try OpenAIClient(configuration: configuration)
+    }
 }
 
 /// AI 客户端错误。

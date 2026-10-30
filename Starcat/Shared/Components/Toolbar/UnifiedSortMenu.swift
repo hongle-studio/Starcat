@@ -98,14 +98,12 @@ struct UnifiedSortMenu<Option: Hashable & Identifiable>: View {
             }
             .pickerStyle(.inline)
         } label: {
+            // Menu 自带系统下拉指示器，label 不再手绘箭头，避免出现双箭头。
             HStack(spacing: 8) {
                 Image(systemName: "arrow.up.arrow.down.circle")
                     .foregroundStyle(.secondary)
                 Text(displayName(selection))
                     .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             .accessibilityLabel("list.sort")
             .accessibilityValue(displayName(selection))

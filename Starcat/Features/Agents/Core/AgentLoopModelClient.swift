@@ -276,13 +276,13 @@ enum AgentLoopModelClientFactory {
         selectedModelID: String? = nil,
         keychain: any KeychainManaging = KeychainManager.shared
     ) throws -> any AgentLoopModelClient {
-        let task = settings.aiChatTask
+        let task = settings.resolvedAITask(settings.aiChatTask)
         let selection = selectedModelID.flatMap { selectedID in
             settings.aiProviderProfiles.lazy
                 .filter { $0.isEnabled }
                 .compactMap { profile in
                     profile.models.first(where: {
-                        $0.id == selectedID && $0.isEnabled && $0.capability != .embedding
+                        $0.id == selectedID && $0.isEnabled && $0.capability != .embedding && $0.capability != .rerank
                     }).map { (profile, $0) }
                 }
                 .first
@@ -292,6 +292,10 @@ enum AgentLoopModelClientFactory {
             throw AgentLoopModelError.missingProvider
         }
 
+        // 当前 MLX 适配器没有工具协议；在读取凭据/加载权重之前拒绝，而非执行途中失败。
+        guard profile.provider != .localAI else {
+            throw AgentLoopModelError.toolCallingUnsupported(model: selection?.1.name ?? task.resolvedModelName)
+        }
         let apiKey = (try? keychain.loadAIKey(forProvider: profile.id))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !apiKey.isEmpty || profile.provider.allowsEmptyAPIKey else {
@@ -302,16 +306,13 @@ enum AgentLoopModelClientFactory {
         let resolvedModel = selection?.1.name ?? (taskModel.isEmpty ? settings.aiChatModel : taskModel)
         let descriptor = profile.models.first(where: { $0.name == resolvedModel })
         let capability = descriptor?.capability ?? AIModelCapability.inferred(from: resolvedModel)
-        guard capability != .embedding else {
+        guard capability != .embedding && capability != .rerank else {
             throw AgentLoopModelError.toolCallingUnsupported(model: resolvedModel)
         }
 
         // 显式选择模型时读取该 descriptor 的参数；没有选择时保持全局 chat task 行为。
-        let parameters = selection?.1.parameters
-            ?? (selection == nil
-                ? settings.effectiveParameters(for: task)
-                : AIModelParameters.defaults(for: capability))
-        let client = try OpenAIClient(configuration: AIClientConfiguration(
+        let parameters = selection?.1.effectiveParameters ?? task.parameters
+        let client = try AIClientFactory.make(configuration: AIClientConfiguration(
             providerID: profile.id,
             provider: profile.provider,
             apiKey: apiKey,

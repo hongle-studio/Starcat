@@ -11,6 +11,47 @@ import Foundation
 import Sparkle
 #endif
 
+/// Direct 版可选的更新源。
+///
+/// 正式版与开发版使用不同 appcast，避免旧客户端、官网和 Homebrew 把预览构建
+/// 误判为正式最新版。开发版 appcast 同时包含正式版条目，因此选择开发版的用户
+/// 仍能在正式版构建号更新时回到稳定版本。
+enum DirectUpdateChannel: String, CaseIterable, Identifiable {
+    case stable
+    case development
+
+    static let preferenceKey = "directUpdateChannel"
+
+    var id: String { rawValue }
+
+    var feedURL: URL {
+        switch self {
+        case .stable:
+            URL(string: "https://starcat.ink/appcast.xml")!
+        case .development:
+            URL(string: "https://starcat.ink/appcast-development.xml")!
+        }
+    }
+}
+
+#if canImport(Sparkle)
+/// Sparkle 2 推荐通过 delegate 动态提供 feed，而不是调用会把 URL 另存进
+/// UserDefaults 的已废弃 `setFeedURL`。通道切换因此只修改 Starcat 自己的偏好，
+/// 不会留下覆盖 Info.plist 的 Sparkle 历史状态。
+@MainActor
+private final class DirectUpdateFeedDelegate: NSObject, SPUUpdaterDelegate {
+    var channel: DirectUpdateChannel
+
+    init(channel: DirectUpdateChannel) {
+        self.channel = channel
+    }
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        channel.feedURL.absoluteString
+    }
+}
+#endif
+
 /// Direct 版自动更新入口。
 ///
 /// App Store target 不链接 Sparkle；本文件通过 `canImport(Sparkle)` 保证同一份源码在
@@ -27,25 +68,56 @@ final class DirectUpdateController {
     /// Sparkle 公钥是否已配置。未配置时不启动 updater，避免开发环境误触发更新检查。
     let isConfigured: Bool
 
+    /// 当前 Direct 更新通道。非法或缺失的历史偏好一律回退到正式版。
+    private(set) var updateChannel: DirectUpdateChannel
+
+    private let preferences: UserDefaults
+
     #if canImport(Sparkle)
+    private let updaterDelegate: DirectUpdateFeedDelegate
     private let updaterController: SPUStandardUpdaterController?
     #endif
 
-    init(startingUpdater: Bool = true, bundle: Bundle = .main) {
+    init(
+        startingUpdater: Bool = true,
+        bundle: Bundle = .main,
+        preferences: UserDefaults = .standard
+    ) {
+        let resolvedChannel = DirectUpdateChannel(
+            rawValue: preferences.string(forKey: DirectUpdateChannel.preferenceKey) ?? ""
+        ) ?? .stable
+        self.preferences = preferences
+        self.updateChannel = resolvedChannel
         self.isDirectBuild = DistributionChannel.resolve(from: bundle).isDirect
         self.isConfigured = Self.configuredPublicKey(in: bundle) != nil
 
         #if canImport(Sparkle)
+        let updaterDelegate = DirectUpdateFeedDelegate(channel: resolvedChannel)
+        self.updaterDelegate = updaterDelegate
         if isDirectBuild, isConfigured, !TestEnvironment.isRunning {
             self.updaterController = SPUStandardUpdaterController(
                 startingUpdater: startingUpdater,
-                updaterDelegate: nil,
+                updaterDelegate: updaterDelegate,
                 userDriverDelegate: nil
             )
         } else {
             self.updaterController = nil
         }
         #endif
+    }
+
+    /// 保存更新通道，并立即用新 feed 执行一次用户主动检查。
+    ///
+    /// Sparkle 只会安装构建号更高的版本，因此从开发版切回正式版不会触发降级；
+    /// 用户会等到后续构建号更高的正式版再更新。
+    func selectUpdateChannel(_ channel: DirectUpdateChannel) {
+        guard isDirectBuild else { return }
+        updateChannel = channel
+        preferences.set(channel.rawValue, forKey: DirectUpdateChannel.preferenceKey)
+        #if canImport(Sparkle)
+        updaterDelegate.channel = channel
+        #endif
+        checkForUpdates()
     }
 
     /// 当前是否允许用户主动触发检查更新。

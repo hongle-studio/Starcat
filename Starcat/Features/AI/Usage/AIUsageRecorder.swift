@@ -124,7 +124,7 @@ enum AIUsageEventFactory {
             return .network
         case AIClientError.timedOut, AIEmbeddingError.timedOut:
             return .timeout
-        case AIClientError.emptyResponse, AIClientError.responseTruncated,
+        case AIClientError.emptyResponse, AIClientError.responseTruncated, LocalAIError.repetitiveOutput,
              AIEmbeddingError.invalidResponse, AIEmbeddingError.emptyResponse:
             return .invalidResponse
         default:

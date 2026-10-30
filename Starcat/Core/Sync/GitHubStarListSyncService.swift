@@ -5,7 +5,8 @@
 //  GitHub Stars List 同步与用户写入操作协调层。
 //
 //  设计约束：
-//  - GitHub 是远端真源；所有用户写操作必须先 mutation 成功，再更新本地缓存。
+//  - GitHub 是远端真源；正常写入先 mutation 成功再更新远端缓存。
+//  - 只有明确命中组织 OAuth 限制时才降级为本地覆盖；网络、鉴权和其它错误仍然抛出。
 //  - `updateUserListsForItem` 是替换式写入，所以 add/remove/批量新增都先读取本地完整
 //    membership，计算目标集合后一次提交。
 //  - 本服务只处理 GitHub List，不处理 Starcat Tags / Smart Collections。
@@ -17,49 +18,145 @@ import GRDB
 /// 批量更新 GitHub Stars List membership 的结果摘要。
 ///
 /// 单条失败不会中断后续仓库；已经处于目标状态的仓库计入 skipped，避免重复 mutation。
-struct GitHubStarListBatchMembershipSummary: Equatable {
+struct GitHubStarListBatchMembershipSummary: Equatable, Sendable {
     let total: Int
     let succeeded: Int
     let skipped: Int
     let failed: Int
+    /// 已计入 succeeded，但当前只在 Starcat 内生效的数量。
+    let savedLocally: Int
+
+    init(total: Int, succeeded: Int, skipped: Int, failed: Int, savedLocally: Int = 0) {
+        self.total = total
+        self.succeeded = succeeded
+        self.skipped = skipped
+        self.failed = failed
+        self.savedLocally = savedLocally
+    }
 }
+
+/// 一次 membership 写入最终落在 GitHub，还是暂存在 Starcat 本地。
+enum GitHubStarListMembershipWriteLocation: Equatable, Sendable {
+    case github
+    case local
+}
+
+/// AI 批量新增既要知道实际新增了哪些 Lists，也要向审核页暴露写入位置。
+struct GitHubStarListMembershipWriteResult: Equatable, Sendable {
+    let changedListIDs: Set<String>
+    let location: GitHubStarListMembershipWriteLocation
+}
+
+/// 待回写本地覆盖的一次重试汇总。
+struct GitHubStarListPendingMembershipSyncSummary: Equatable, Sendable {
+    let total: Int
+    let synced: Int
+    let stillPending: Int
+    let failed: Int
+}
+
+/// 同步服务只依赖 GitHub Lists API，避免测试批量调度时必须经过 URLSession 的串行 Stub 队列。
+protocol GitHubStarListAPIClientProtocol: AnyObject, Sendable {
+    func starLists(login: String) async throws -> GitHubStarListRemoteSnapshot
+    func createUserList(
+        name: String,
+        description: String?,
+        isPrivate: Bool
+    ) async throws -> GitHubStarListRemoteRecord
+    func updateUserList(
+        id: String,
+        name: String,
+        description: String?,
+        isPrivate: Bool
+    ) async throws -> GitHubStarListRemoteRecord
+    func deleteUserList(id: String) async throws
+    func updateUserListsForRepository(
+        owner: String,
+        name: String,
+        listIds: [String]
+    ) async throws -> [GitHubStarListRemoteRecord]
+}
+
+extension GitHubAPIClient: GitHubStarListAPIClientProtocol {}
 
 @MainActor
 @Observable
 final class GitHubStarListSyncService {
 
-    private let apiClient: GitHubAPIClient
+    /// GitHub mutation 保持小规模并发，缩短批量等待，同时避免把大量请求瞬间压到 GitHub。
+    private static let batchMembershipConcurrency = 3
+
+    private let apiClient: any GitHubStarListAPIClientProtocol
     private let repository: any GitHubStarListRepositoryProtocol
+
+    /// 受限 owner 从现有本地覆盖恢复；普通快照读取不能清空，否则每次 Stars 刷新都会重试必败写入。
+    /// 显式重试按 owner 首条绕过限制，成功后才解除该 owner 的内存限制。
+    private var locallyRestrictedOwners: Set<String> = []
+    private var didRestoreRestrictions = false
+    private var snapshotTask: Task<Void, Never>?
+    private var membershipRetryTask: Task<GitHubStarListPendingMembershipSyncSummary, Never>?
+    private var generation: UInt64 = 0
+    private var isResetting = false
 
     private(set) var isSyncing = false
     private(set) var lastErrorMessage: String?
+    /// 后台分组数据落盘后通知主窗口读取本地结果，不再次发起远端同步。
+    private(set) var snapshotRevision: UInt64 = 0
 
     init(
-        apiClient: GitHubAPIClient,
+        apiClient: any GitHubStarListAPIClientProtocol,
         repository: any GitHubStarListRepositoryProtocol
     ) {
         self.apiClient = apiClient
         self.repository = repository
     }
 
-    /// 从 GitHub 拉取完整 list 快照并覆盖本地缓存。
+    /// 只读 GitHub 快照，不混入授权重试。并行入口共享同一轮，句柄仅由服务/切库屏障取消。
     func sync(login: String) async {
-        guard !login.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !isResetting, !login.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if let snapshotTask { await snapshotTask.value; return }
+        let scope = generation
         isSyncing = true
-        defer { isSyncing = false }
-
-        do {
-            let snapshot = try await apiClient.starLists(login: login)
-            try await repository.replaceRemoteSnapshot(
-                lists: snapshot.lists,
-                memberships: snapshot.memberships,
-                syncedAt: Date()
-            )
-            lastErrorMessage = nil
-        } catch {
-            lastErrorMessage = error.localizedDescription
-            AppLog.network.error("GitHub star lists sync failed: \(error.localizedDescription, privacy: .public)")
+        let task = Task { @MainActor in
+            do {
+                let snapshot = try await self.apiClient.starLists(login: login)
+                try Task.checkCancellation()
+                try await self.repository.replaceRemoteSnapshot(
+                    lists: snapshot.lists, memberships: snapshot.memberships, syncedAt: Date()
+                )
+                try Task.checkCancellation()
+                self.lastErrorMessage = nil
+                self.snapshotRevision &+= 1
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.lastErrorMessage = error.localizedDescription
+                AppLog.network.error("GitHub star lists sync failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
+        snapshotTask = task
+        await task.value
+        if generation == scope { snapshotTask = nil; isSyncing = false }
+    }
+
+    /// 数据库所有者在 reopen 前调用，保证旧快照/授权回写不会落入新账号的库。
+    func resetForAccountChange() async {
+        isResetting = true
+        generation &+= 1
+        let oldSnapshot = snapshotTask
+        let oldRetry = membershipRetryTask
+        oldSnapshot?.cancel()
+        oldRetry?.cancel()
+        await oldSnapshot?.value
+        await oldRetry?.value
+        snapshotTask = nil
+        membershipRetryTask = nil
+        locallyRestrictedOwners.removeAll()
+        didRestoreRestrictions = false
+        isSyncing = false
+        lastErrorMessage = nil
+        isResetting = false
     }
 
     @discardableResult
@@ -180,8 +277,13 @@ final class GitHubStarListSyncService {
         ))
     }
 
-    func addRepo(_ repo: Repo, toList listID: String) async throws {
-        _ = try await addRepo(repo, toLists: [listID])
+    @discardableResult
+    func addRepo(
+        _ repo: Repo,
+        toList listID: String
+    ) async throws -> GitHubStarListMembershipWriteLocation {
+        let result = try await addRepo(repo, toLists: [listID])
+        return result.location
     }
 
     /// 把同一仓库的多个批准建议合并成至多一次 GitHub mutation。
@@ -189,25 +291,93 @@ final class GitHubStarListSyncService {
     /// 应用前重新读取最新 membership，保证用户在 AI 审核期间手动新增的其它 Lists 不会
     /// 被替换式 mutation 覆盖。目标已经全部存在时直接 no-op，实现安全重试幂等。
     @discardableResult
-    func addRepo(_ repo: Repo, toLists requestedListIDs: Set<String>) async throws -> Set<String> {
-        guard !requestedListIDs.isEmpty else { return [] }
+    func addRepo(
+        _ repo: Repo,
+        toLists requestedListIDs: Set<String>
+    ) async throws -> GitHubStarListMembershipWriteResult {
+        guard !requestedListIDs.isEmpty else {
+            return GitHubStarListMembershipWriteResult(
+                changedListIDs: [],
+                location: try await currentWriteLocation(forRepo: repo.id)
+            )
+        }
         let existingListIDs = Set(try await repository.listIds(forRepo: repo.id))
         let addedListIDs = requestedListIDs.subtracting(existingListIDs)
-        guard !addedListIDs.isEmpty else { return [] }
-        try await replaceRepoLists(repo, with: Array(existingListIDs.union(addedListIDs)))
-        return addedListIDs
+        guard !addedListIDs.isEmpty else {
+            return GitHubStarListMembershipWriteResult(
+                changedListIDs: [],
+                location: try await currentWriteLocation(forRepo: repo.id)
+            )
+        }
+        let location = try await replaceRepoLists(
+            repoID: repo.id,
+            owner: repo.owner,
+            name: repo.name,
+            with: Array(existingListIDs.union(addedListIDs))
+        )
+        return GitHubStarListMembershipWriteResult(
+            changedListIDs: addedListIDs,
+            location: location
+        )
     }
 
-    func removeRepo(_ repo: Repo, fromList listID: String) async throws {
+    @discardableResult
+    func removeRepo(
+        _ repo: Repo,
+        fromList listID: String
+    ) async throws -> GitHubStarListMembershipWriteLocation {
         var listIDs = Set(try await repository.listIds(forRepo: repo.id))
         listIDs.remove(listID)
-        try await replaceRepoLists(repo, with: Array(listIDs))
+        return try await replaceRepoLists(
+            repoID: repo.id,
+            owner: repo.owner,
+            name: repo.name,
+            with: Array(listIDs)
+        )
     }
 
     /// 把一个仓库的 membership 精确替换成审核页当前勾选集合。
     /// 该入口用于编辑“已应用”结果，必须允许同时新增和移除分组。
-    func setLists(for repo: Repo, listIDs: Set<String>) async throws {
-        try await replaceRepoLists(repo, with: Array(listIDs))
+    @discardableResult
+    func setLists(
+        for repo: Repo,
+        listIDs: Set<String>
+    ) async throws -> GitHubStarListMembershipWriteLocation {
+        try await replaceRepoLists(
+            repoID: repo.id,
+            owner: repo.owner,
+            name: repo.name,
+            with: Array(listIDs)
+        )
+    }
+
+    /// 用户显式要求同步某个本地分组时，绕过本轮 owner 失败缓存并重新探测授权。
+    @discardableResult
+    func retryLocalMembership(for repo: Repo) async throws -> GitHubStarListMembershipWriteLocation {
+        locallyRestrictedOwners.remove(normalizedOwner(repo.owner))
+        let desiredListIDs = try await repository.listIds(forRepo: repo.id)
+        return try await replaceRepoLists(
+            repoID: repo.id,
+            owner: repo.owner,
+            name: repo.name,
+            with: desiredListIDs,
+            forceRemote: true
+        )
+    }
+
+    /// 仅主动刷新或显式重试调用；重复点击共享当前批次，不排队，也不在完成后自行循环。
+    func retryPendingLocalMemberships() async -> GitHubStarListPendingMembershipSyncSummary {
+        if let membershipRetryTask { return await membershipRetryTask.value }
+        guard !isResetting else { return .init(total: 0, synced: 0, stillPending: 0, failed: 0) }
+        let scope = generation
+        let task = Task { @MainActor in await self.reconcilePendingLocalMemberships() }
+        membershipRetryTask = task
+        let result = await task.value
+        if generation == scope {
+            membershipRetryTask = nil
+            if result.synced > 0 { snapshotRevision &+= 1 }
+        }
+        return result
     }
 
     /// 为一批仓库统一设置某个分组的 membership，同时保留它们已有的其它分组。
@@ -219,11 +389,101 @@ final class GitHubStarListSyncService {
         membershipIn listID: String,
         shouldBelong: Bool
     ) async -> GitHubStarListBatchMembershipSummary {
+        guard !targets.isEmpty else {
+            return GitHubStarListBatchMembershipSummary(
+                total: 0,
+                succeeded: 0,
+                skipped: 0,
+                failed: 0
+            )
+        }
+
+        // 同一 owner 必须串行：首个仓库命中组织 OAuth 限制后，后续仓库才能直接走本地覆盖，
+        // 避免三路并发同时发出已知必败的 GitHub 请求。不同 owner 之间仍可并行。
+        var ownerOrder: [String] = []
+        var targetsByOwner: [String: [BatchStarTarget]] = [:]
+        for target in targets {
+            let ownerKey = normalizedOwner(target.owner)
+            if targetsByOwner[ownerKey] == nil {
+                ownerOrder.append(ownerKey)
+            }
+            targetsByOwner[ownerKey, default: []].append(target)
+        }
+        let ownerBatches = ownerOrder.compactMap { targetsByOwner[$0] }
+
+        var lanes = Array(repeating: [[BatchStarTarget]](), count: Self.batchMembershipConcurrency)
+        for (index, batch) in ownerBatches.enumerated() {
+            lanes[index % Self.batchMembershipConcurrency].append(batch)
+        }
+        let firstBatches = lanes[0]
+        let secondBatches = lanes[1]
+        let thirdBatches = lanes[2]
+
+        // 固定三条 MainActor lane，网络 await 时彼此让出执行权。这里不用动态 TaskGroup，
+        // 是为了避开 Swift 6 region-based isolation checker 对 actor-isolated group closure 的误报。
+        async let firstLane = updateRepoBatches(
+            firstBatches,
+            membershipIn: listID,
+            shouldBelong: shouldBelong
+        )
+        async let secondLane = updateRepoBatches(
+            secondBatches,
+            membershipIn: listID,
+            shouldBelong: shouldBelong
+        )
+        async let thirdLane = updateRepoBatches(
+            thirdBatches,
+            membershipIn: listID,
+            shouldBelong: shouldBelong
+        )
+        let partialSummaries = await [firstLane, secondLane, thirdLane]
+
+        return GitHubStarListBatchMembershipSummary(
+            total: targets.count,
+            succeeded: partialSummaries.reduce(0) { $0 + $1.succeeded },
+            skipped: partialSummaries.reduce(0) { $0 + $1.skipped },
+            failed: partialSummaries.reduce(0) { $0 + $1.failed },
+            savedLocally: partialSummaries.reduce(0) { $0 + $1.savedLocally }
+        )
+    }
+
+    /// 一条 lane 内顺序领取 owner 批次；三条 lane 同时在途，整体并发上限固定为 3。
+    private func updateRepoBatches(
+        _ batches: [[BatchStarTarget]],
+        membershipIn listID: String,
+        shouldBelong: Bool
+    ) async -> GitHubStarListBatchMembershipSummary {
+        var summaries: [GitHubStarListBatchMembershipSummary] = []
+        for batch in batches {
+            guard !Task.isCancelled else { break }
+            summaries.append(await updateRepoBatch(
+                batch,
+                membershipIn: listID,
+                shouldBelong: shouldBelong
+            ))
+        }
+        return GitHubStarListBatchMembershipSummary(
+            total: summaries.reduce(0) { $0 + $1.total },
+            succeeded: summaries.reduce(0) { $0 + $1.succeeded },
+            skipped: summaries.reduce(0) { $0 + $1.skipped },
+            failed: summaries.reduce(0) { $0 + $1.failed },
+            savedLocally: summaries.reduce(0) { $0 + $1.savedLocally }
+        )
+    }
+
+    /// 一个 owner 内顺序处理，跨 owner 由 `updateRepos` 以固定三个 Worker 调度。
+    private func updateRepoBatch(
+        _ targets: [BatchStarTarget],
+        membershipIn listID: String,
+        shouldBelong: Bool
+    ) async -> GitHubStarListBatchMembershipSummary {
         var succeeded = 0
         var skipped = 0
         var failed = 0
+        var savedLocally = 0
 
         for target in targets {
+            guard !Task.isCancelled else { break }
             do {
                 var listIDs = Set(try await repository.listIds(forRepo: target.ghRepoId))
                 let didChange: Bool
@@ -238,8 +498,16 @@ final class GitHubStarListSyncService {
                     continue
                 }
 
-                try await replaceRepoLists(target, with: Array(listIDs))
+                let location = try await replaceRepoLists(
+                    repoID: target.ghRepoId,
+                    owner: target.owner,
+                    name: target.name,
+                    with: Array(listIDs)
+                )
                 succeeded += 1
+                if location == .local {
+                    savedLocally += 1
+                }
             } catch {
                 failed += 1
                 AppLog.network.error("GitHub star list batch membership update failed for \(target.fullName, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -250,32 +518,144 @@ final class GitHubStarListSyncService {
             total: targets.count,
             succeeded: succeeded,
             skipped: skipped,
-            failed: failed
+            failed: failed,
+            savedLocally: savedLocally
         )
     }
 
-    private func replaceRepoLists(_ repo: Repo, with listIDs: [String]) async throws {
+    /// 先尝试 GitHub；只有可识别的组织 OAuth 限制才保存本地完整期望。
+    private func replaceRepoLists(
+        repoID: Int64,
+        owner: String,
+        name: String,
+        with listIDs: [String],
+        forceRemote: Bool = false
+    ) async throws -> GitHubStarListMembershipWriteLocation {
         let sortedIDs = Array(Set(listIDs)).sorted()
-        _ = try await apiClient.updateUserListsForRepository(
-            owner: repo.owner,
-            name: repo.name,
-            listIds: sortedIDs
-        )
-        // 账号切换会取消批量队列。远端 mutation 若恰好已完成，仍必须在写当前数据库前
-        // 再检查一次取消，避免旧账号结果落进刚切换的新账号作用域；旧账号下次同步会回读远端。
-        try Task.checkCancellation()
-        try await repository.setListIds(forRepo: repo.id, listIds: sortedIDs)
+        let ownerKey = normalizedOwner(owner)
+
+        if !forceRemote, !didRestoreRestrictions {
+            let pending = try await repository.fetchPendingLocalMembershipSyncs()
+            try Task.checkCancellation()
+            locallyRestrictedOwners.formUnion(pending.map { normalizedOwner($0.repo.owner) })
+            didRestoreRestrictions = true
+        }
+
+        if !forceRemote, locallyRestrictedOwners.contains(ownerKey) {
+            try Task.checkCancellation()
+            try await repository.setLocalListIds(
+                forRepo: repoID,
+                listIds: sortedIDs,
+                failureReason: GitHubStarListAIAutoIgnoreReason.organizationOAuthRestriction.rawValue
+            )
+            return .local
+        }
+
+        do {
+            _ = try await apiClient.updateUserListsForRepository(
+                owner: owner,
+                name: name,
+                listIds: sortedIDs
+            )
+            // 账号切换会取消批量队列。远端 mutation 若恰好已完成，仍必须在写当前数据库前
+            // 再检查一次取消，避免旧账号结果落进刚切换的新账号作用域；旧账号下次同步会回读远端。
+            try Task.checkCancellation()
+            try await repository.setListIds(forRepo: repoID, listIds: sortedIDs)
+            locallyRestrictedOwners.remove(ownerKey)
+            return .github
+        } catch {
+            guard Self.isOrganizationOAuthRestriction(error) else { throw error }
+            // 降级写本地前同样检查取消，避免旧账号的失败回调污染新账号数据库。
+            try Task.checkCancellation()
+            locallyRestrictedOwners.insert(ownerKey)
+            try await repository.setLocalListIds(
+                forRepo: repoID,
+                listIds: sortedIDs,
+                failureReason: error.localizedDescription
+            )
+            return .local
+        }
     }
 
-    private func replaceRepoLists(_ target: BatchStarTarget, with listIDs: [String]) async throws {
-        let sortedIDs = Array(Set(listIDs)).sorted()
-        _ = try await apiClient.updateUserListsForRepository(
-            owner: target.owner,
-            name: target.name,
-            listIds: sortedIDs
-        )
-        try Task.checkCancellation()
-        try await repository.setListIds(forRepo: target.ghRepoId, listIds: sortedIDs)
+    private func currentWriteLocation(forRepo repoID: Int64) async throws -> GitHubStarListMembershipWriteLocation {
+        if try await repository.hasLocalListOverrides(forRepo: repoID) {
+            return .local
+        }
+        return .github
+    }
+
+    private func reconcilePendingLocalMemberships() async -> GitHubStarListPendingMembershipSyncSummary {
+        let pending: [GitHubStarListPendingMembershipSync]
+        do {
+            pending = try await repository.fetchPendingLocalMembershipSyncs()
+        } catch {
+            AppLog.database.error("Load pending GitHub star list memberships failed: \(error.localizedDescription, privacy: .public)")
+            return GitHubStarListPendingMembershipSyncSummary(total: 0, synced: 0, stillPending: 0, failed: 1)
+        }
+
+        // 先恢复已知限制；每个 owner 的首条会显式验证，失败不再触碰同组织其余仓库。
+        locallyRestrictedOwners.formUnion(pending.map { normalizedOwner($0.repo.owner) })
+        didRestoreRestrictions = true
+        let grouped = Dictionary(grouping: pending) { normalizedOwner($0.repo.owner) }
+        let batches = grouped.keys.sorted().compactMap { grouped[$0] }
+        var lanes = Array(repeating: [[GitHubStarListPendingMembershipSync]](), count: Self.batchMembershipConcurrency)
+        for (index, batch) in batches.enumerated() { lanes[index % Self.batchMembershipConcurrency].append(batch) }
+        let firstBatches = lanes[0]
+        let secondBatches = lanes[1]
+        let thirdBatches = lanes[2]
+        // 与批量分组共用固定三路模式，避免动态 MainActor TaskGroup 的 isolation 诊断。
+        async let first = reconcilePendingBatches(firstBatches)
+        async let second = reconcilePendingBatches(secondBatches)
+        async let third = reconcilePendingBatches(thirdBatches)
+        let results = await [first, second, third]
+        return .init(total: pending.count,
+                     synced: results.reduce(0) { $0 + $1.synced },
+                     stillPending: results.reduce(0) { $0 + $1.stillPending },
+                     failed: results.reduce(0) { $0 + $1.failed })
+    }
+
+    /// 一条 lane 内逐组织处理；失败只终止当前组织，不擦除尚未同步的本地期望。
+    private func reconcilePendingBatches(_ batches: [[GitHubStarListPendingMembershipSync]]) async -> GitHubStarListPendingMembershipSyncSummary {
+        var synced = 0
+        var failed = 0
+        let total = batches.reduce(0) { $0 + $1.count }
+        for batch in batches {
+            guard !Task.isCancelled else { break }
+            for (index, item) in batch.enumerated() {
+                guard !Task.isCancelled else { break }
+                do {
+                    // 领取后重新读当前期望，避免批次排队期间的本地编辑被旧快照覆盖。
+                    let desired = try await repository.listIds(forRepo: item.repo.id)
+                    try Task.checkCancellation()
+                    let location = try await replaceRepoLists(repoID: item.repo.id, owner: item.repo.owner,
+                                                             name: item.repo.name, with: desired,
+                                                             forceRemote: index == 0)
+                    guard location == .github else { break }
+                    synced += 1
+                } catch {
+                    guard !Task.isCancelled else { break }
+                    failed += 1
+                    AppLog.network.error("GitHub star list local override reconciliation failed: \(error.localizedDescription, privacy: .public)")
+                    break
+                }
+            }
+        }
+        return .init(total: total, synced: synced, stillPending: total - synced - failed, failed: failed)
+    }
+
+    private func normalizedOwner(_ owner: String) -> String {
+        owner.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// GraphQL mutation 的 HTTP 状态通常仍是 200，因此必须匹配 GraphQL message，不能按 403 粗判。
+    private static func isOrganizationOAuthRestriction(_ error: Error) -> Bool {
+        guard let networkError = error as? NetworkError,
+              case .clientError(_, let message) = networkError else {
+            return false
+        }
+        let normalized = (message ?? "").lowercased()
+        return normalized.contains("organization has enabled oauth app access restrictions")
+            || normalized.contains("third-parties is limited")
     }
 
     private func requireList(id: String) async throws -> GitHubStarList {

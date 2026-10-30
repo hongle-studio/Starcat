@@ -24,6 +24,37 @@ struct AppSettingsTests {
         return defaults
     }
 
+    @Test("决策引擎:首次升级迁移 Jev POC 开关且后续只读新配置")
+    func migratesLegacyJevDecisionSettingsOnce() {
+        let defaults = makeIsolatedDefaults()
+        defaults.set(true, forKey: "settings.labs.typesafe.enabled.v1")
+        defaults.set(true, forKey: "settings.labs.typesafe.grouping.v1")
+        defaults.set(false, forKey: "settings.labs.typesafe.tags.v1")
+
+        let migrated = AppSettings(defaults: defaults)
+        #expect(migrated.decisionEngineEnabled)
+        #expect(migrated.decisionEngineID == .jev)
+        #expect(migrated.decisionGroupingSuggestionsEnabled)
+        #expect(!migrated.decisionTagSuggestionsEnabled)
+
+        migrated.decisionEngineID = .laya
+        migrated.decisionEngineEnabled = false
+        // legacy 值仍留在磁盘也不能在下一次启动覆盖用户的新选择。
+        defaults.set(true, forKey: "settings.labs.typesafe.enabled.v1")
+        let reloaded = AppSettings(defaults: defaults)
+        #expect(!reloaded.decisionEngineEnabled)
+        #expect(reloaded.decisionEngineID == .laya)
+    }
+
+    @Test("决策引擎:新安装默认关闭并选择 Jev")
+    func decisionEngineDefaults() {
+        let settings = AppSettings(defaults: makeIsolatedDefaults())
+        #expect(!settings.decisionEngineEnabled)
+        #expect(settings.decisionEngineID == .jev)
+        #expect(!settings.decisionGroupingSuggestionsEnabled)
+        #expect(!settings.decisionTagSuggestionsEnabled)
+    }
+
     // R-01 §3.1.1（2026-06-10 P1）：RepoListDensity 枚举 + AppSettings.listDensity
     // 属性已彻底删除。原 defaultDensity / densityPersists / invalidValueFallsBack
     // 三个测试随之失效（之前为保签名稳定保留单 case 是「自留技术债」，现在所有
@@ -103,6 +134,7 @@ struct AppSettingsTests {
         )
         settings.mcpServiceEnabled = true
         settings.mcpServicePort = 7777
+        settings.mcpAllowGitHubStarWrites = true
         settings.mcpAllowDestructiveWrites = true
         settings.aiRepoContextMaximumArchiveMB = 90
         settings.setCustomURL("https://example.com", for: .trending)
@@ -139,6 +171,7 @@ struct AppSettingsTests {
         #expect(settings.refreshCurrentContentShortcut == StarcatShortcutCatalog.refreshCurrentContentDefault)
         #expect(settings.mcpServiceEnabled == false)
         #expect(settings.mcpServicePort == AppSettings.defaultMCPServicePort)
+        #expect(settings.mcpAllowGitHubStarWrites == false)
         #expect(settings.mcpAllowDestructiveWrites == false)
         #expect(settings.aiRepoContextMaximumArchiveMB == AppSettings.defaultAIRepoContextMaximumArchiveMB)
         #expect(settings.customServiceURL(for: .trending) == nil)
@@ -267,13 +300,14 @@ struct AppSettingsTests {
         #expect(restored.interestedLanguages == ["Go", "swift", "TypeScript"])
     }
 
-    @Test("全局筛选: Star、语言与信号状态可持久化")
+    @Test("全局筛选: Star、语言、许可证与信号状态可持久化")
     func globalFilterStatePersists() {
         let defaults = makeIsolatedDefaults()
         let settings = AppSettings(defaults: defaults)
 
         settings.starFilter = .unstarred
         settings.globalFilterLanguages = AppSettings.normalizedLanguageList(["TypeScript", "Swift"])
+        settings.globalFilterLicenses = [" MIT License ", "Apache-2.0", "mit"]
         settings.wikiAvailabilityFilter = .available
         settings.healthAvailabilityFilter = .missing
         settings.openSSFAvailabilityFilter = .available
@@ -281,6 +315,8 @@ struct AppSettingsTests {
         let restored = AppSettings(defaults: defaults)
         #expect(restored.starFilter == .unstarred)
         #expect(restored.globalFilterLanguages == ["Swift", "TypeScript"])
+        #expect(restored.licenseFilter == RepoLicenseFilter(["MIT", "Apache-2.0"]))
+        #expect(restored.globalFilterLicenses == ["apache-2.0", "mit"])
         #expect(restored.wikiAvailabilityFilter == .available)
         #expect(restored.healthAvailabilityFilter == .missing)
         #expect(restored.openSSFAvailabilityFilter == .available)
@@ -310,15 +346,13 @@ struct AppSettingsTests {
 
     // MARK: - 快捷键偏好
 
-    @Test("快捷键: AI 发送独立，六项应用命令默认启用并使用预设键位")
+    @Test("快捷键: AI 发送独立，五项应用命令默认启用并使用预设键位")
     func shortcutDefaults() {
         let settings = AppSettings(defaults: makeIsolatedDefaults())
         #expect(settings.aiChatRequiresCommandReturn == false)
         #expect(settings.keyboardShortcutsEnabled)
         #expect(settings.globalSearchShortcut == .globalSearchDefault)
         #expect(settings.globalSearchShortcutEnabled)
-        #expect(settings.regularSearchShortcut == .regularSearchDefault)
-        #expect(settings.regularSearchShortcutEnabled)
         #expect(settings.readmeFindShortcut == StarcatShortcutCatalog.readmeFindDefault)
         #expect(settings.readmeFindShortcutEnabled)
         #expect(settings.refreshCurrentContentShortcut == StarcatShortcutCatalog.refreshCurrentContentDefault)
@@ -327,19 +361,16 @@ struct AppSettingsTests {
         #expect(settings.knowledgeRAGShortcutEnabled)
         #expect(settings.selectedRepoAIShortcut == StarcatShortcutCatalog.openSelectedRepoAIDefault)
         #expect(settings.selectedRepoAIShortcutEnabled)
-        #expect(settings.regularSearchShortcut.displayText == "⇧⌘F")
         #expect(settings.readmeFindShortcut.displayText == "⌘F")
-        #expect(settings.regularSearchShortcut.displaySegments == ["⇧", "⌘", "F"])
     }
 
-    @Test("快捷键: 六项键位与两层开关持久化，AI 发送方式不随总开关改变")
+    @Test("快捷键: 五项键位与两层开关持久化，AI 发送方式不随总开关改变")
     func shortcutSettingsPersist() {
         let defaults = makeIsolatedDefaults()
         let settings = AppSettings(defaults: defaults)
         settings.aiChatRequiresCommandReturn = true
         settings.keyboardShortcutsEnabled = false
         settings.globalSearchShortcutEnabled = false
-        settings.regularSearchShortcutEnabled = false
         settings.readmeFindShortcutEnabled = false
         settings.refreshCurrentContentShortcutEnabled = false
         settings.knowledgeRAGShortcutEnabled = false
@@ -348,13 +379,6 @@ struct AppSettingsTests {
             key: "p",
             command: true,
             option: true,
-            control: false,
-            shift: false
-        )
-        settings.regularSearchShortcut = .init(
-            key: "g",
-            command: true,
-            option: false,
             control: false,
             shift: false
         )
@@ -392,8 +416,6 @@ struct AppSettingsTests {
         #expect(restored.keyboardShortcutsEnabled == false)
         #expect(restored.globalSearchShortcut.displayText == "⌥⌘P")
         #expect(restored.globalSearchShortcutEnabled == false)
-        #expect(restored.regularSearchShortcut.displayText == "⌘G")
-        #expect(restored.regularSearchShortcutEnabled == false)
         #expect(restored.readmeFindShortcut.displayText == "⌥⌘F")
         #expect(restored.readmeFindShortcutEnabled == false)
         #expect(restored.refreshCurrentContentShortcut.displayText == "⌥⌘R")
@@ -446,13 +468,11 @@ struct AppSettingsTests {
         #expect(StarcatShortcutCatalog.openSelectedRepoAIDefault.validationError == nil)
         #expect(formerAboutShortcut.validationError == nil)
         #expect(KeyboardShortcutConfiguration.globalSearchDefault.validationError == nil)
-        #expect(KeyboardShortcutConfiguration.regularSearchDefault.validationError == nil)
         #expect(StarcatShortcutCatalog.readmeFindDefault.validationError == nil)
-        #expect(KeyboardShortcutConfiguration.regularSearchDefault.displaySegments == ["⇧", "⌘", "F"])
         #expect(StarcatShortcutCatalog.readmeFindDefault.displaySegments == ["⌘", "F"])
     }
 
-    @Test("快捷键: 六个可配置动作不能使用相同组合")
+    @Test("快捷键: 五个可配置动作不能使用相同组合")
     func configurableShortcutConflict() {
         let candidate = KeyboardShortcutConfiguration.globalSearchDefault
 
@@ -460,15 +480,12 @@ struct AppSettingsTests {
             candidate.validationError(conflictingWith: [.globalSearchDefault])
                 == .duplicateConfiguredAction
         )
-        #expect(candidate.validationError(conflictingWith: [.regularSearchDefault]) == nil)
         #expect(
-            KeyboardShortcutConfiguration.regularSearchDefault.validationError(
-                conflictingWith: [StarcatShortcutCatalog.readmeFindDefault]
-            ) == nil
+            candidate.validationError(conflictingWith: [StarcatShortcutCatalog.readmeFindDefault]) == nil
         )
     }
 
-    @Test("快捷键: 任意持久化重复配置都会让六项一起回退默认组合")
+    @Test("快捷键: 任意持久化重复配置都会让五项一起回退默认组合")
     func duplicatedStoredShortcutsFallBackTogether() throws {
         let defaults = makeIsolatedDefaults()
         let duplicated = KeyboardShortcutConfiguration(
@@ -485,47 +502,10 @@ struct AppSettingsTests {
         let settings = AppSettings(defaults: defaults)
 
         #expect(settings.globalSearchShortcut == .globalSearchDefault)
-        #expect(settings.regularSearchShortcut == .regularSearchDefault)
         #expect(settings.readmeFindShortcut == StarcatShortcutCatalog.readmeFindDefault)
         #expect(settings.refreshCurrentContentShortcut == StarcatShortcutCatalog.refreshCurrentContentDefault)
         #expect(settings.knowledgeRAGShortcut == StarcatShortcutCatalog.openKnowledgeRAGDefault)
         #expect(settings.selectedRepoAIShortcut == StarcatShortcutCatalog.openSelectedRepoAIDefault)
-    }
-
-    @Test("快捷键: 磁盘上的旧常规搜索 ⌘F 迁到 ⌘⇧F，README 使用 ⌘F")
-    func legacyRegularSearchCommandFMigratesToShiftCommandF() throws {
-        let defaults = makeIsolatedDefaults()
-        let encoded = String(
-            decoding: try JSONEncoder().encode(KeyboardShortcutConfiguration.legacyRegularSearchDefault),
-            as: UTF8.self
-        )
-        defaults.set(encoded, forKey: AppSettings.Keys.regularSearchShortcut)
-
-        let settings = AppSettings(defaults: defaults)
-
-        #expect(settings.regularSearchShortcut == .regularSearchDefault)
-        #expect(settings.readmeFindShortcut == StarcatShortcutCatalog.readmeFindDefault)
-        #expect(settings.regularSearchShortcut.displayText == "⇧⌘F")
-        #expect(settings.readmeFindShortcut.displayText == "⌘F")
-    }
-
-    @Test("快捷键: 用户自定义的常规搜索键位不会被 README 拆分覆盖")
-    func customRegularSearchShortcutIsPreserved() throws {
-        let defaults = makeIsolatedDefaults()
-        let custom = KeyboardShortcutConfiguration(
-            key: "g",
-            command: true,
-            option: false,
-            control: false,
-            shift: false
-        )
-        let encoded = String(decoding: try JSONEncoder().encode(custom), as: UTF8.self)
-        defaults.set(encoded, forKey: AppSettings.Keys.regularSearchShortcut)
-
-        let settings = AppSettings(defaults: defaults)
-
-        #expect(settings.regularSearchShortcut == custom)
-        #expect(settings.readmeFindShortcut == StarcatShortcutCatalog.readmeFindDefault)
     }
 
     @Test("快捷键路由: 重复激活同一栏保持当前栏")
@@ -681,10 +661,6 @@ struct AppSettingsTests {
                 isEnabled: true
             ) {}
             .starcatReadmeFindCommand(identity: "appkit-host-regression") {}
-            .starcatListSearchCommand(
-                identity: "appkit-host-regression",
-                isEnabled: false
-            ) {}
             // 必须位于消费命令路由的 modifier 外层，模拟 appHostEnvironment 的注入顺序。
             .starcatCommandRouterEnvironment(router)
 
@@ -703,22 +679,18 @@ struct AppSettingsTests {
         #expect(window.contentViewController === hostingController)
     }
 
-    @Test("快捷键路由: README 查找与列表搜索互不按栏分流")
-    func commandRouterFindAndListSearchAreIndependent() {
+    @Test("快捷键路由: 无 focused 值时 README 查找回退到主窗口登记")
+    func commandRouterFindFallsBackToRegisteredReadme() {
         let router = StarcatCommandRouter()
         var calls: [String] = []
-        router.registerListSearchAction(
-            StarcatCommandAction(title: "list", isEnabled: true) { calls.append("list") },
-            ownerID: UUID()
-        )
         router.registerReadmeFindAction(
             StarcatCommandAction(title: "readme", isEnabled: true) { calls.append("readme") },
             ownerID: UUID()
         )
         router.activate(.detail)
-        router.performListSearch()
         router.performReadmeFind()
-        #expect(calls == ["list", "readme"])
+        #expect(calls == ["readme"])
+        #expect(router.isReadmeFindAvailable())
     }
 
     @Test("快捷键路由: 独立 README 窗 focused 查找优先于主窗口登记")
@@ -737,20 +709,14 @@ struct AppSettingsTests {
         #expect(router.isReadmeFindAvailable(preferred: focusedReadme))
     }
 
-    @Test("快捷键路由: 没有 README 时查找按键忽略，不影响列表搜索")
+    @Test("快捷键路由: 没有 README 时查找按键静默忽略")
     func commandRouterReadmeFindNoopsWhenUnavailable() {
         let router = StarcatCommandRouter()
         var calls: [String] = []
-        router.registerListSearchAction(
-            StarcatCommandAction(title: "list", isEnabled: true) { calls.append("list") },
-            ownerID: UUID()
-        )
         router.activate(.detail)
         router.performReadmeFind()
-        router.performListSearch()
-        #expect(calls == ["list"])
+        #expect(calls.isEmpty)
         #expect(router.isReadmeFindAvailable() == false)
-        #expect(router.isListSearchAvailable())
     }
 
     // MARK: - AI BYOK 设置
@@ -763,9 +729,20 @@ struct AppSettingsTests {
         #expect(s.aiChatModel == "gpt-4o-mini")
         #expect(s.aiEmbeddingModel == "text-embedding-3-small")
         #expect(s.aiProviderProfiles.count == 1)
-        #expect(s.aiSummaryTask.providerID == s.aiProviderProfiles[0].id)
-        #expect(s.aiTagsTask.providerID == s.aiProviderProfiles[0].id)
-        #expect(s.aiEmbeddingTask.providerID == s.aiProviderProfiles[0].id)
+        // 2026-09-12 本地 AI 首启动默认（dong4j 拍板）：Apple Silicon 上未配置过的任务
+        // 默认指向内置 Local AI；Intel 回退 legacy provider。
+        if LocalAIHardwareSupport.isLocalAIAvailable {
+            #expect(s.aiSummaryTask.providerID == LocalAIModelCatalog.builtInProfileID)
+            #expect(s.aiTagsTask.providerID == LocalAIModelCatalog.builtInProfileID)
+            #expect(s.aiEmbeddingTask.providerID == LocalAIModelCatalog.builtInProfileID)
+            #expect(s.aiChatTask.providerID == LocalAIModelCatalog.builtInProfileID)
+            #expect(s.aiSummaryTask.modelID == LocalAIModelCatalog.llm.displayName)
+            #expect(s.aiEmbeddingTask.modelID == LocalAIModelCatalog.embedding.displayName)
+        } else {
+            #expect(s.aiSummaryTask.providerID == s.aiProviderProfiles[0].id)
+            #expect(s.aiTagsTask.providerID == s.aiProviderProfiles[0].id)
+            #expect(s.aiEmbeddingTask.providerID == s.aiProviderProfiles[0].id)
+        }
         // 2026-06-14 v4 占位符归一化（dong4j 拍板）：
         // 旧 `{context}` 黑盒拆成 5 个透明占位符（{outputLanguage} + {metadata} +
         // {readme} + {codeContext} + {externalContext}）；旧硬编中文章节标题
@@ -781,7 +758,6 @@ struct AppSettingsTests {
         // - provider 跟 summary 同（首次升级时复用同一 profile + chatModel）
         // - systemPrompt 含全部 6 占位符
         // - userPromptTemplate 留空（chat 用户消息走 messages 数组，不用模板包装）
-        #expect(s.aiChatTask.providerID == s.aiProviderProfiles[0].id)
         #expect(s.aiChatTask.prompt.systemPrompt.contains("{outputLanguage}"))
         #expect(s.aiChatTask.prompt.systemPrompt.contains("{metadata}"))
         #expect(s.aiChatTask.prompt.systemPrompt.contains("{readme}"))
@@ -1263,6 +1239,69 @@ struct AppSettingsTests {
         #expect(try JSONDecoder().decode(AIServiceProvider.self, from: encoded) == provider)
     }
 
+    @Test("AI: Anthropic 一等 Provider 默认值与持久化契约")
+    func anthropicProviderPreset() throws {
+        let provider = AIServiceProvider.anthropic
+        #expect(provider.displayName == "Anthropic")
+        #expect(provider.defaultProfileName == "Anthropic")
+        #expect(provider.defaultBaseURL == "https://api.anthropic.com")
+        #expect(provider.defaultChatModel == "claude-sonnet-4-5")
+        #expect(provider.defaultEmbeddingModel.isEmpty)
+        #expect(!provider.supportsEmbeddingEndpoint)
+        #expect(!provider.allowsEmptyAPIKey)
+        #expect(provider.iconAssetName == "claudecode")
+        #expect(AIServiceProvider.userSelectableCases.contains(.anthropic))
+
+        let encoded = try JSONEncoder().encode(provider)
+        #expect(try JSONDecoder().decode(AIServiceProvider.self, from: encoded) == provider)
+    }
+
+    @Test("AI: 未知 provider 不能让整表服务商解码失败，写回时要原样保留")
+    func unknownAIProviderProfileIsSkippedAndPreserved() throws {
+        let defaults = makeIsolatedDefaults()
+        let raw = """
+        [
+          {"baseURL":"https://api.openai.com/v1","displayName":"Keep Me","id":"keep-me","isEnabled":true,"lastTestStatus":{"kind":"notTested"},"models":[],"provider":"openAICompatible"},
+          {"baseURL":"https://example.invalid/v1","displayName":"Future","id":"future-profile","isEnabled":true,"lastTestStatus":{"kind":"notTested"},"models":[],"provider":"notShippedYet"}
+        ]
+        """
+        defaults.set(raw, forKey: AppSettings.Keys.aiProviderProfiles)
+
+        let loaded = AppSettings(defaults: defaults)
+        #expect(loaded.aiProviderProfiles.map(\.id) == ["keep-me"])
+        let persistedAfterLoad = try #require(defaults.string(forKey: AppSettings.Keys.aiProviderProfiles))
+        #expect(persistedAfterLoad.contains("notShippedYet"))
+        #expect(persistedAfterLoad.contains("future-profile"))
+
+        var profiles = loaded.aiProviderProfiles
+        profiles[0].displayName = "Keep Me Edited"
+        loaded.aiProviderProfiles = profiles
+
+        let persistedAfterEdit = try #require(defaults.string(forKey: AppSettings.Keys.aiProviderProfiles))
+        #expect(persistedAfterEdit.contains("Keep Me Edited"))
+        #expect(persistedAfterEdit.contains("notShippedYet"))
+        #expect(persistedAfterEdit.contains("future-profile"))
+
+        let reloaded = AppSettings(defaults: defaults)
+        #expect(reloaded.aiProviderProfiles.map(\.id) == ["keep-me"])
+        #expect(reloaded.aiProviderProfiles[0].displayName == "Keep Me Edited")
+    }
+
+    @Test("AI: 未知模型 capability 归到 unknown，不拖垮整条 profile")
+    func unknownAIModelCapabilityFallsBackWithoutDroppingProfile() throws {
+        let defaults = makeIsolatedDefaults()
+        let raw = """
+        [
+          {"baseURL":"https://api.openai.com/v1","displayName":"Keep","id":"keep-cap","isEnabled":true,"lastTestStatus":{"kind":"notTested"},"models":[{"capability":"quantum","id":"keep-cap::q","isCustom":false,"isEnabled":true,"name":"q-model","providerID":"keep-cap"}],"provider":"openAICompatible"}
+        ]
+        """
+        defaults.set(raw, forKey: AppSettings.Keys.aiProviderProfiles)
+
+        let loaded = AppSettings(defaults: defaults)
+        #expect(loaded.aiProviderProfiles.map(\.id) == ["keep-cap"])
+        #expect(loaded.aiProviderProfiles[0].models.map(\.capability) == [.unknown])
+    }
+
     @Test("AI: provider 只有测试成功且启用后才算正式配置")
     func aiProviderProfileVerifiedState() {
         let draft = AIProviderProfile(
@@ -1478,7 +1517,7 @@ struct AppSettingsTests {
         #expect(AIModelCapability.inferred(from: "tts-1-hd") == .tts)
         #expect(AIModelCapability.inferred(from: "whisper-1") == .asr)
         #expect(AIModelCapability.inferred(from: "deepseek-v4-flash") == .chat)
-        #expect(AIModelCapability.unknown.systemImage == "questionmark.circle")
+        #expect(AIModelCapability.unknown.iconSource == .system("questionmark.circle"))
     }
 
     @Test("AI: effectiveParameters 优先用模型粒度覆盖")
@@ -1889,13 +1928,14 @@ struct AutoTidySettingsTests {
         #expect(opts.autoApplyTags == false)
     }
 
-    @Test("makeBatchOptions: 勾了标签 → autoApplyTags=true（自动模式明示同意）")
+    @Test("makeBatchOptions: 勾了标签 → 自动应用并允许空词表冷启动")
     func batchOptionsAutoApply() {
         var t = AutoTidySettings.default
         t.enabled = true
         let opts = t.makeBatchOptions()
         #expect(opts.actions == [.tags])
         #expect(opts.autoApplyTags == true)
+        #expect(opts.autoCreateMissingTags == true)
         #expect(opts.confidenceThreshold == 0.90)
     }
 

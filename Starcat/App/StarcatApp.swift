@@ -197,6 +197,16 @@ struct StarcatApp: App {
         )
         .defaultLaunchBehavior(.suppressed)
 
+        Window("localai.logs.title", id: LocalAILogWindowSelection.sceneID) {
+            LocalAILogWindowView()
+                .environment(dependencies?.settings ?? AppSettings.shared)
+                .environment(\.starcatInterfaceScale, dependencies?.settings.interfaceScale ?? .standard)
+                .appLocaleEnvironment()
+        }
+        .defaultSize(width: 960, height: 620)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
+
         Window("agent.workspace.window.title", id: AgentWorkspaceWindowController.sceneID) {
             if let dependencies {
                 AgentWorkspaceSceneRoot(dependencies: dependencies)
@@ -244,6 +254,7 @@ struct StarcatApp: App {
                 .environment(dependencies)
                 .environment(dependencies.authSession)
                 .environment(dependencies.syncManager)
+                .environment(dependencies.externalStarInbox)
                 .environment(dependencies.settings)
                 .environment(dependencies.telemetryManager)
                 .environment(dependencies.subscriptionManager)
@@ -341,12 +352,19 @@ struct StarcatApp: App {
                 .environment(\.layoutDirection, localeStore.selection.effectiveLayoutDirection)
                 .environment(\.starcatInterfaceScale, dependencies.settings.interfaceScale)
                 .id(localeStore.selection.rawValue)
+                // 系统翻译 Session 必须挂在存活的 SwiftUI 树上；零尺寸宿主不占布局。
+                .background {
+                    SystemTranslationSessionHost(broker: SystemTranslationSessionBroker.shared)
+                }
         }
         .starcatMCPPairingApprovalPresenter(store: dependencies.mcpDeviceStore)
         .task {
             await updateController.checkAutomaticallyIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // 另一渠道可能在本 App 非活跃期间安装或删除共享模型；回到前台时刷新
+            // manifest 快照与内置 profile，不依赖跨进程通知常驻唤醒应用。
+            LocalAIModelManager.shared.refreshFromSharedStorage()
             Task {
                 await updateController.checkAutomaticallyIfNeeded()
             }
@@ -559,20 +577,9 @@ private struct StarcatAppCommands: Commands {
     @FocusedValue(\.starcatRefreshAction) private var focusedRefreshAction
     @FocusedValue(\.starcatRepositoryAIAction) private var focusedRepositoryAIAction
     @FocusedValue(\.starcatReadmeFindAction) private var focusedReadmeFindAction
-    @FocusedValue(\.starcatListSearchAction) private var focusedListSearchAction
 
     var body: some Commands {
         CommandMenu("commands.actions.menu") {
-            Button("commands.actions.findInList") {
-                commandRouter.performListSearch(preferred: focusedListSearchAction)
-            }
-            .keyboardShortcut(
-                settings.keyboardShortcutsEnabled && settings.regularSearchShortcutEnabled
-                    ? settings.regularSearchShortcut.swiftUIShortcut
-                    : nil
-            )
-            .disabled(!commandRouter.isListSearchAvailable(preferred: focusedListSearchAction))
-
             Button("commands.actions.findInReadme") {
                 commandRouter.performReadmeFind(preferred: focusedReadmeFindAction)
             }
@@ -816,6 +823,13 @@ struct DebugMenuCommands: Commands {
             }
             .disabled(!FirstRunOnboardingPreferences.canReplayManually)
 
+            Button("Replay App Store Import Prompt") {
+                NotificationCenter.default.post(
+                    name: AppStoreToDirectImportIdentity.debugReplayNotification,
+                    object: nil
+                )
+            }
+
             Toggle(
                 "Activate Pro",
                 isOn: Binding(
@@ -826,22 +840,6 @@ struct DebugMenuCommands: Commands {
                     }
                 )
             )
-
-            Divider()
-
-            Button("ambient.menu.openRepos") {
-                if let dependencies {
-                    AmbientWindowController.show(dependencies: dependencies, scene: .repos)
-                }
-            }
-            .disabled(dependencies == nil)
-
-            Button("ambient.menu.openOwners") {
-                if let dependencies {
-                    AmbientWindowController.show(dependencies: dependencies, scene: .owners)
-                }
-            }
-            .disabled(dependencies == nil)
 
             Divider()
 

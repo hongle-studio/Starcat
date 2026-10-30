@@ -32,12 +32,12 @@ enum AgentRepositorySource: String, CaseIterable, Codable, Hashable, Sendable {
 
     var systemImage: String {
         switch self {
-        case .local: return "internaldrive"
-        case .starred: return "star.fill"
-        case .knowledge: return "books.vertical"
-        case .weekly: return "newspaper"
-        case .trending: return "flame"
-        case .discovery: return "sparkles"
+        case .local: return BusinessIcon.Symbol.storage.systemImage
+        case .starred: return BusinessIcon.Symbol.stars.systemImage
+        case .knowledge: return BusinessIcon.Symbol.library.systemImage
+        case .weekly: return BusinessIcon.Symbol.weekly.systemImage
+        case .trending: return BusinessIcon.Symbol.trending.systemImage
+        case .discovery: return BusinessIcon.Symbol.discovery.systemImage
         }
     }
 }

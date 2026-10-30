@@ -68,8 +68,8 @@ struct ActivityReleaseDetailScaffoldShell: View {
             ),
             fallbackAccentColor: item.category.iconColor,
             starHelpKey: repo.isStarred ? "repo.unstar" : "repo.star",
-            onStarTapped: {
-                try await handleStarTapped(repo: repo)
+            onStarTapped: { cleanupScope in
+                try await handleStarTapped(repo: repo, cleanupScope: cleanupScope)
             }
         ) { onScrollReport in
             ActivityReleaseDetailContent(
@@ -124,13 +124,20 @@ struct ActivityReleaseDetailScaffoldShell: View {
         }
     }
 
-    private func handleStarTapped(repo: Repo) async throws {
+    private func handleStarTapped(
+        repo: Repo,
+        cleanupScope: RepositoryUnstarCleanupScope?
+    ) async throws {
         guard authSession.state.isAuthenticated else {
             // 2026-06-29：只弹登录 sheet，不强制走 Device Flow
             authSession.requestLoginSheet()
             return
         }
-        try await dependencies.starActionService.toggle(repo: repo)
+        if let cleanupScope {
+            try await dependencies.starActionService.unstar(repo: repo, cleanupScope: cleanupScope)
+        } else {
+            try await dependencies.starActionService.toggle(repo: repo)
+        }
 
         displayRepo = dependencies.starredRegistry.applyingDisplayState(to: repo)
 

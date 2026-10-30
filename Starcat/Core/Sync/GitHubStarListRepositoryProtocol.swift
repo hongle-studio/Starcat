@@ -6,7 +6,7 @@
 //
 //  设计约束：
 //  - GitHub 是分组关系的远端真源；完整同步使用快照覆盖。
-//  - 用户主动 mutation 成功后才写本地，避免乐观更新导致 UI 与 GitHub 分叉。
+//  - 正常写入仍以 mutation 成功为准；只有明确的组织 OAuth 限制才保存本地覆盖。
 //  - `未分组` 是查询语义，不落数据库实体。
 //
 
@@ -32,6 +32,13 @@ protocol GitHubStarListRepositoryProtocol: Sendable {
     /// 替换某 repo 的 GitHub List 集合。
     func setListIds(forRepo repoId: Int64, listIds: [String]) async throws
 
+    /// 保存某 repo 的完整本地期望；Repository 只落与当前远端快照不同的覆盖行。
+    func setLocalListIds(
+        forRepo repoId: Int64,
+        listIds: [String],
+        failureReason: String
+    ) async throws
+
     // MARK: - 查询
 
     func fetchAllLists() async throws -> [GitHubStarList]
@@ -39,6 +46,15 @@ protocol GitHubStarListRepositoryProtocol: Sendable {
     func findList(id: String) async throws -> GitHubStarList?
 
     func listIds(forRepo repoId: Int64) async throws -> [String]
+
+    /// 只读取 GitHub 已确认的远端关系，不合并本地覆盖。
+    func remoteListIds(forRepo repoId: Int64) async throws -> [String]
+
+    /// 当前仓库是否仍有尚未回写 GitHub 的本地 membership 差异。
+    func hasLocalListOverrides(forRepo repoId: Int64) async throws -> Bool
+
+    /// 返回所有仍需回写 GitHub 的本地期望；每个仓库只生成一个精确目标集合。
+    func fetchPendingLocalMembershipSyncs() async throws -> [GitHubStarListPendingMembershipSync]
 
     /// 一次性返回所有真实 list 的 starred repo 计数。
     func repoCountsByList() async throws -> [String: Int]

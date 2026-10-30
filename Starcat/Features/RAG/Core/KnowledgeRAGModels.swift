@@ -834,6 +834,7 @@ struct RAGRerankDiagnostics: Codable, Equatable, Sendable {
         switch provider {
         case .huggingFaceTEI: return String.l10n("rag.workspace.rerank.provider.tei")
         case .cohereCompatible: return String.l10n("rag.workspace.rerank.provider.cohere")
+        case .localMLX: return String.l10n("rag.workspace.rerank.provider.localmlx")
         case nil: return String.l10n("rag.workspace.debug.retrieval.error.none")
         }
     }

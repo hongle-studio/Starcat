@@ -59,7 +59,8 @@ struct LocalSemanticSearchProvider: SearchProvider {
                     sources: [.localSemantic],
                     localRepo: repo,
                     remoteRepo: nil,
-                    semanticScore: hit.displayScore
+                    semanticScore: hit.displayScore,
+                    semanticReason: hit.reason
                 )
             }
             return SearchProviderPage(

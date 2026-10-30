@@ -98,7 +98,8 @@ final class WorkspaceSceneWindowReference {
 struct WorkspaceSceneWindowReader: NSViewRepresentable {
 
     let reference: WorkspaceSceneWindowReference
-    let minimumContentSize: NSSize
+    /// 只读取父窗口时传 nil，主窗口尺寸继续由 MainWindowFrameModifier 独占管理。
+    let minimumContentSize: NSSize?
 
     func makeNSView(context: Context) -> ProbeView {
         let view = ProbeView()
@@ -112,8 +113,10 @@ struct WorkspaceSceneWindowReader: NSViewRepresentable {
     }
 
     private func configure(window: NSWindow?) {
-        guard let window else { return }
         reference.window = window
+        // HomeView 离开窗口时清掉引用，异步预检返回后不能把旧审核页挂到登录页上。
+        guard let window else { return }
+        guard let minimumContentSize else { return }
 
         // `contentMinSize` 与 `minSize` 分别描述内容区和含标题栏外框，不能复用同一数值。
         let minimumFrameSize = window.frameRect(

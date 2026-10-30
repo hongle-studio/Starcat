@@ -10,10 +10,13 @@
 //  - `render(snapshot:)` → 把快照拼成 embedding 模型的输入字符串
 //
 //  关键约束：
-//  - **三级降级主体**（决策 D / dong4j 2026-06-12 决策）：
-//      1. AI 摘要存在且非空 → 用摘要（最语义化、最稳定）
-//      2. README 存在 → 用 `ReadmePreprocessor` 处理后的纯文本
+//  - **主体拼装**（2026-09-15 修订，取代原决策 D 的互斥三级降级）：
+//      1. AI 摘要与 README 都有 → 摘要在前、README 在后，中间空一行
+//      2. 只有其中一份 → 用那一份
 //      3. 都没有 → 用 `description + topics` 兜底
+//    旧逻辑「有摘要就丢掉 README」，Search Center 会漏掉标题/口号类字面查询
+//    （例如 README H1 里的 "AI Knowledge Base for macOS"）。摘要仍放前面，
+//    因为更短、更稳；README 截断长度仍由调用方传入。
 //    无论走哪级，**元数据尾巴和用户笔记永远拼接**（dong4j 2026-06-12：
 //    "三级降级策略只适用于自然语言主体，元数据/笔记永远会被拼上"）。
 //  - **元数据字段筛选**（决策 D）：保留 fullName / description / language / topics /
@@ -78,7 +81,7 @@ enum IndexedTextBuilder {
     /// - `{topics}` → `snapshot.metadata.topics ?? ""`（已是 `"a, b, c"` 形式）
     /// - `{license}` → `snapshot.metadata.license ?? ""`
     /// - `{homepage}` → `snapshot.metadata.homepage ?? ""`
-    /// - `{body}` → `snapshot.body`（三级降级产物，可为空字符串）
+    /// - `{body}` → `snapshot.body`（摘要 + README 并存后的主体，可为空字符串）
     /// - `{notes}` → `snapshot.notes ?? ""`
     ///
     /// **空数据**：dict 里有 key 但 value 是空字符串 → 替换为空（label / 换行保留）；
@@ -103,34 +106,39 @@ enum IndexedTextBuilder {
         return AIPromptConfiguration.render(template: userPromptTemplate, placeholders: placeholders)
     }
 
-    // MARK: - 私有：三级降级主体
+    // MARK: - 私有：主体拼装
 
-    /// 三级降级选取主体（决策 D）：AI 摘要 > README 纯文本 > description+topics 兜底。
+    /// 选取主体：摘要与 README 并存，都没有才用 description+topics 兜底。
     ///
-    /// 兜底层不再附加 "Description: ..." 前缀（防止跟元数据尾巴重复），只把 description
-    /// 与 topics 拼成一段自然语言主体——
+    /// 摘要放前面，是因为它短且经过用户确认，语义更稳；README 保留标题、口号、
+    /// 功能列表，否则向量和 snapshot 字面加分都看不见这些句子。
+    /// 兜底层不附加 "Description: ..." 前缀（防止跟元数据尾巴重复）。
     /// 如果连这两个都为空，body 就是空字符串，metadata 单独承担描述性。
     private static func chooseBody(
         aiSummary: String?,
         readmePlainText: String?,
         repo: Repo
     ) -> String {
-        if let summary = normalizeOptional(aiSummary), !summary.isEmpty {
+        let summary = normalizeOptional(aiSummary)
+        let readme = normalizeOptional(readmePlainText)
+        switch (summary, readme) {
+        case let (summary?, readme?):
+            return summary + "\n\n" + readme
+        case let (summary?, nil):
             return summary
-        }
-        if let readme = normalizeOptional(readmePlainText), !readme.isEmpty {
+        case let (nil, readme?):
             return readme
+        case (nil, nil):
+            var parts: [String] = []
+            if let desc = normalizeOptional(repo.description) {
+                parts.append(desc)
+            }
+            let topics = repo.topicsArray
+            if !topics.isEmpty {
+                parts.append(topics.joined(separator: ", "))
+            }
+            return parts.joined(separator: "\n")
         }
-        // 兜底：description + topics（不带前缀，避免与元数据尾巴的 "Description:" 重复）
-        var parts: [String] = []
-        if let desc = normalizeOptional(repo.description) {
-            parts.append(desc)
-        }
-        let topics = repo.topicsArray
-        if !topics.isEmpty {
-            parts.append(topics.joined(separator: ", "))
-        }
-        return parts.joined(separator: "\n")
     }
 
     // MARK: - 私有：归一化

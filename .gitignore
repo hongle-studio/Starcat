@@ -76,7 +76,7 @@ CoreSimulator/
 
 # CI/CD leftovers from other templates.
 # Track only the repository-root community files. Nested `.github/` directories
-# (including scaffold templates under `.claude/skills/`) stay ignored.
+# (including scaffold templates under `skills/`) stay ignored.
 **/.github/
 !/.github/
 !/.github/**

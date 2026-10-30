@@ -70,6 +70,7 @@ private struct AppHostEnvironmentContainer<Content: View>: View {
             .environment(dependencies)
             .environment(dependencies.authSession)
             .environment(dependencies.syncManager)
+            .environment(dependencies.externalStarInbox)
             .environment(dependencies.settings)
             .environment(dependencies.subscriptionManager)
             .environment(dependencies.directLicenseManager)

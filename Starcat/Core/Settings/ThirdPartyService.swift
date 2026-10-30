@@ -109,19 +109,19 @@ enum ThirdPartyService: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// 设置页行首 SF Symbol。
+    /// 设置页行首图标；相似推荐与详情入口共享匹配语义，不再借用 MCP 连接图。
     /// 选取依据：与该服务在主 UI 的图标语义一致——trending 用 `flame`（"热"），
     /// weekly 用 `newspaper`（与 Explore Weekly 同款），sharing 用
     /// `square.and.arrow.up`（macOS 标准分享语义）。
-    var systemImage: String {
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .trending: return "flame.fill"
-        case .weekly:   return "newspaper"
-        case .sharing:  return "square.and.arrow.up"
-        case .wiki:     return "book.pages"
-        case .recommend: return "point.3.connected.trianglepath.dotted"
-        case .discovery: return "safari"
-        case .history:   return "chart.xyaxis.line"
+        case .trending: return .system("flame.fill")
+        case .weekly:   return .system("newspaper")
+        case .sharing:  return .system("square.and.arrow.up")
+        case .wiki:     return .system("book.pages")
+        case .recommend: return .business(.recommendations)
+        case .discovery: return .system("safari")
+        case .history:   return .system("chart.xyaxis.line")
         }
     }
 

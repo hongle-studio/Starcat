@@ -689,7 +689,7 @@ struct GRDBMyInsightsSnapshotProvider: MyInsightsSnapshotProviding, Sendable {
             metadata = (
                 "insights.action.untagged",
                 "insights.action.untagged.detail",
-                "tag.slash.fill",
+                BusinessIcon.Symbol.untagged.systemImage,
                 "orange"
             )
         case .unread:
@@ -724,7 +724,7 @@ struct GRDBMyInsightsSnapshotProvider: MyInsightsSnapshotProviding, Sendable {
             metadata = (
                 "insights.action.healthPending",
                 "insights.action.healthPending.detail",
-                "heart.text.square.fill",
+                BusinessIcon.Symbol.repositoryHealth.systemImage,
                 "pink"
             )
         case .openSSFPending:

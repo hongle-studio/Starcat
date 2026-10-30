@@ -39,7 +39,8 @@
 //    `v14-ai-usage-events` / `v15-repo-pins` / `v16-repository-insights` /
 //    `v17-my-projects` / `v18-rag-structured-citations` / `v19-release-1.4.0` /
 //    `v20-release-1.5.0` / `v21-star-history-github-official-only` /
-//    `v22-ai-organization-drafts`
+//    `v22-ai-organization-drafts` / `v23-public-repo-star-history` /
+//    `v24-github-star-list-local-overrides`
 //
 //  **1.4.0 开发期迁移（已由正式 v19 合并接管）**：
 //  `v19-agent-message-contract` 至 `v26-github-timeline-conversations` 仅在开发构建中出现过。
@@ -119,6 +120,81 @@ enum DatabaseMigrations {
         registerV20(into: &migrator)
         registerV21(into: &migrator)
         registerV22(into: &migrator)
+        registerV23(into: &migrator)
+        registerV24(into: &migrator)
+    }
+
+    // MARK: - v24-github-star-list-local-overrides：组织限制下的本地分组覆盖（2026-09-21）
+
+    /// `repo_github_star_lists` 仍然只保存 GitHub 远端快照；本地覆盖独立保存用户期望，
+    /// 避免下一次完整同步删除受组织 OAuth 限制而暂时无法回写的分组。
+    ///
+    /// `effective_repo_github_star_lists` 是业务查询的唯一合并入口：远端关系叠加本地新增、
+    /// 再扣除本地移除。这样 Sidebar、未分组筛选和 AI 上下文不会各自实现一套合并逻辑。
+    private static func registerV24(into migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v24-github-star-list-local-overrides") { db in
+            try db.create(table: "repo_github_star_list_overrides") { table in
+                table.column("repo_id", .integer)
+                    .notNull()
+                    .references("repos", column: "id", onDelete: .cascade)
+                table.column("list_id", .text)
+                    .notNull()
+                    .references("github_star_lists", column: "id", onDelete: .cascade)
+                table.column("desired_present", .boolean).notNull()
+                table.column("sync_state", .text).notNull()
+                table.column("failure_reason", .text)
+                table.column("updated_at", .text).notNull()
+                table.primaryKey(["repo_id", "list_id"])
+            }
+            try db.create(
+                index: "idx_repo_github_star_list_overrides_list",
+                on: "repo_github_star_list_overrides",
+                columns: ["list_id"]
+            )
+            try db.execute(sql: """
+                CREATE VIEW effective_repo_github_star_lists AS
+                SELECT remote.repo_id, remote.list_id
+                FROM repo_github_star_lists remote
+                LEFT JOIN repo_github_star_list_overrides local
+                  ON local.repo_id = remote.repo_id AND local.list_id = remote.list_id
+                WHERE local.desired_present IS NULL OR local.desired_present = 1
+                UNION
+                SELECT repo_id, list_id
+                FROM repo_github_star_list_overrides
+                WHERE desired_present = 1
+                """)
+
+            // 旧记录只有 repo 和失败原因，没有当时的目标 Lists，不能伪造本地分组。
+            // 清除后让这些仓库重新进入 AI 判断；新的目标集合会由本地覆盖表完整保存。
+            if try db.tableExists("github_star_list_ai_auto_ignored_repos") {
+                try db.execute(
+                    sql: """
+                        DELETE FROM github_star_list_ai_auto_ignored_repos
+                        WHERE reason = ?
+                        """,
+                    arguments: [GitHubStarListAIAutoIgnoreReason.organizationOAuthRestriction.rawValue]
+                )
+            }
+        }
+    }
+
+    // MARK: - v23-public-repo-star-history：公开 README 详情的官方历史缓存（2026-09-10）
+
+    /// Trending / Discovery / Weekly 详情中的公开仓库可能只是内存里的 ephemeral Repo，
+    /// 不允许为了缓存历史而伪造 `repos` 行。独立使用 owner/repo 主键，既保持外键边界，
+    /// 也让这些详情页能复用 GitHub 官方 API 的 ETag / 周数据缓存。
+    private static func registerV23(into migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v23-public-repo-star-history") { db in
+            try db.create(table: "public_repo_star_history") { table in
+                table.column("owner", .text).notNull()
+                table.column("repo", .text).notNull()
+                table.column("payload_json", .blob).notNull()
+                table.column("fetched_at", .text).notNull()
+                table.column("stale_after", .text).notNull()
+                table.column("response_etag", .text)
+                table.primaryKey(["owner", "repo"])
+            }
+        }
     }
 
     // MARK: - v22-ai-organization-drafts：恢复未确认的 AI 整理结果（2026-09-08）

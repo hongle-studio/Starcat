@@ -1256,6 +1256,56 @@ struct KnowledgeRAGCoreTests {
         #expect(events.contains(.reasoningCompleted))
     }
 
+    @Test("Local AI：prompt 预填 think 开始标签时分离裸结束标签")
+    func localReasoningRouterHandlesPrimedThinkStream() {
+        var router = AIStreamReasoningNormalizer(startsInsideReasoning: true)
+        var events = router.ingest(content: "先分析请求</th", nativeReasoning: nil)
+        events += router.ingest(content: "ink>正式回答", nativeReasoning: nil)
+        events += router.finish()
+
+        #expect(reasoningText(in: events) == "先分析请求")
+        #expect(answerText(in: events) == "正式回答")
+        #expect(events.contains(.reasoningCompleted))
+    }
+
+    @Test("Local AI：预填模式吞掉重复开始与结束标签")
+    func localReasoningRouterRemovesRepeatedFraming() {
+        var router = AIStreamReasoningNormalizer(startsInsideReasoning: true)
+        var events = router.ingest(content: "<thi", nativeReasoning: nil)
+        events += router.ingest(content: "nk>先分析</think>\n</th", nativeReasoning: nil)
+        events += router.ingest(content: "ink>\n正式回答", nativeReasoning: nil)
+        events += router.finish()
+
+        #expect(reasoningText(in: events) == "先分析")
+        #expect(answerText(in: events) == "正式回答")
+    }
+
+    @Test("Local AI：关闭思考后普通正文保持原样")
+    func localReasoningRouterPassesThroughPlainResponse() {
+        var router = AIStreamReasoningNormalizer(startsInsideReasoning: false)
+        var events = router.ingest(content: "直接", nativeReasoning: nil)
+        events += router.ingest(content: "回答", nativeReasoning: nil)
+        events += router.finish()
+
+        #expect(reasoningText(in: events).isEmpty)
+        #expect(answerText(in: events) == "直接回答")
+        #expect(!events.contains(.reasoningCompleted))
+    }
+
+    private func reasoningText(in events: [AIChatStreamEvent]) -> String {
+        events.compactMap { event -> String? in
+            if case .reasoningDelta(let text) = event { return text }
+            return nil
+        }.joined()
+    }
+
+    private func answerText(in events: [AIChatStreamEvent]) -> String {
+        events.compactMap { event -> String? in
+            if case .delta(let text) = event { return text }
+            return nil
+        }.joined()
+    }
+
     @Test("用户可见步骤使用真实起止时间计算耗时")
     func executionStepUsesPersistedDuration() {
         let startedAt = Date(timeIntervalSinceReferenceDate: 10_000)

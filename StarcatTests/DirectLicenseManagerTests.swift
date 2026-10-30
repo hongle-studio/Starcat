@@ -2,7 +2,7 @@
 //  DirectLicenseManagerTests.swift
 //  StarcatTests
 //
-//  Direct License 冷启动权益恢复测试。
+//  Direct License 冷启动权益恢复、HTTP 错误分层与脱敏诊断回归测试。
 //
 
 import Foundation
@@ -248,6 +248,109 @@ struct DirectLicenseManagerTests {
         #expect(result)
         #expect(URLProtocolStub.receivedRequests.count == 1)
         #expect(manager.runtimeState == DirectLicenseRuntimeState.verifiedActive)
+    }
+
+    @Test("License HTTP 错误按业务 code 分层，未知故障保留权益", arguments: [
+        (404, "LICENSE_NOT_FOUND", DirectLicenseAPIError.licenseNotFound, false),
+        (403, "ACTIVATION_LIMIT_REACHED", .activationLimitReached, true),
+        (502, "PROVIDER_ERROR", .temporaryServerFailure(statusCode: 502, code: "provider_error"), true),
+        (503, "PROVIDER_NOT_CONFIGURED", .temporaryServerFailure(statusCode: 503, code: "provider_not_configured"), true),
+        (403, "LICENSE_EXPIRED", .licenseRejected(code: "license_expired"), false),
+        (401, "", .unauthorizedClient, true),
+        (404, "", .invalidResponse, true),
+        (502, "SENSITIVE-LICENSE-KEY", .temporaryServerFailure(statusCode: 502, code: nil), true)
+    ])
+    func mapsLicenseHTTPErrors(
+        status: Int,
+        code: String,
+        expected: DirectLicenseAPIError,
+        preservesEntitlement: Bool
+    ) async throws {
+        URLProtocolStub.reset()
+        defer { URLProtocolStub.reset() }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "code": code,
+            "message": "SENSITIVE-LICENSE-KEY customer@example.com",
+            "traceID": "SENSITIVE-LICENSE-KEY\nFORGED-LOG"
+        ])
+        URLProtocolStub.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            return (response, data)
+        }
+        do {
+            _ = try await Self.testAPI().activate(DirectLicenseActivationRequest(licenseKey: "KEY", deviceID: "Mac", appVersion: "1.8.0"))
+            Issue.record("Expected activation to fail")
+        } catch let error as DirectLicenseAPIError {
+            #expect(error == expected)
+            #expect(error.preservesLocalEntitlement == preservesEntitlement)
+            #expect(!error.diagnosticCode.contains("SENSITIVE-LICENSE-KEY"))
+        }
+        // activate 有副作用，收到错误也不能自动重试而重复占用席位。
+        #expect(URLProtocolStub.receivedRequests.count == 1)
+    }
+
+    @Test("未知上游故障与路由 404 不撤销已保存的 Pro", arguments: [502, 403, 404])
+    func unknownUpstreamFailuresPreserveStoredPro(status: Int) async throws {
+        URLProtocolStub.reset()
+        defer { URLProtocolStub.reset() }
+        URLProtocolStub.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"code":"PROVIDER_ERROR","message":"SENSITIVE-LICENSE-KEY"}"#.utf8))
+        }
+        let store = try Self.seededStore(plan: .monthly)
+        let manager = DirectLicenseManager(api: Self.testAPI(), store: store)
+
+        let result = await manager.validateStoredLicense()
+
+        #expect(result)
+        #expect(manager.entitlement.isActive)
+        #expect(try store.loadCredential() != nil)
+        #expect(manager.validationRecord.lastErrorCode?.contains("SENSITIVE-LICENSE-KEY") == false)
+    }
+
+    @Test("明确的授权码不存在业务错误撤销已保存的 Pro")
+    func missingLicenseBusinessErrorRevokesStoredPro() async throws {
+        URLProtocolStub.reset()
+        defer { URLProtocolStub.reset() }
+        URLProtocolStub.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"code":"LICENSE_NOT_FOUND"}"#.utf8))
+        }
+        let store = try Self.seededStore(plan: .monthly)
+        let manager = DirectLicenseManager(api: Self.testAPI(), store: store)
+
+        let result = await manager.validateStoredLicense()
+
+        #expect(!result)
+        #expect(!manager.entitlement.isActive)
+        #expect(manager.runtimeState == .revoked)
+        #expect(try store.loadCredential() == nil)
+        #expect(manager.lastErrorMessage == String.l10n("settings.pro.direct.error.licenseNotFound"))
+    }
+
+    @Test("网络错误使用本地化提示，不暴露底层请求内容")
+    func transportFailureUsesLocalizedMessage() async throws {
+        URLProtocolStub.reset()
+        defer { URLProtocolStub.reset() }
+        URLProtocolStub.requestHandler = { _ in throw URLError(.notConnectedToInternet) }
+        do {
+            _ = try await Self.testAPI().activate(DirectLicenseActivationRequest(licenseKey: "KEY", deviceID: "Mac", appVersion: "1.8.0"))
+            Issue.record("Expected transport failure")
+        } catch let error as DirectLicenseAPIError {
+            #expect(error == .transport(code: URLError.notConnectedToInternet.rawValue))
+            #expect(error.errorDescription == String.l10n("settings.pro.direct.error.transport"))
+            #expect(error.preservesLocalEntitlement)
+        }
+    }
+
+    @Test("诊断仅接受固定 code 与 UUID trace，不采信原始消息")
+    func diagnosticsRejectSensitiveServerFields() {
+        #expect(DirectLicenseAPIError.safeServerCode("SENSITIVE-LICENSE-KEY") == nil)
+        #expect(DirectLicenseAPIError.safeServerCode("License key not found") == nil)
+        #expect(DirectLicenseAPIError.temporaryServerFailure(statusCode: 502, code: "SECRET").diagnosticCode == "http_502")
+        #expect(DirectLicenseAPIError.safeTraceID("SENSITIVE-LICENSE-KEY\nFORGED-LOG") == nil)
+        #expect(DirectLicenseAPIError.safeTraceID("customer@example.com") == nil)
+        #expect(DirectLicenseAPIError.safeTraceID("550E8400-E29B-41D4-A716-446655440000") == "550e8400-e29b-41d4-a716-446655440000")
     }
 
     private nonisolated static func seededStore(

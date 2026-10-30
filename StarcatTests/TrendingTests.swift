@@ -86,7 +86,8 @@ private func makeTrendingRepo(
     language: String? = "Swift",
     stars: Int = 1_000,
     forks: Int = 100,
-    change: Int = 50
+    change: Int = 50,
+    license: String? = nil
 ) -> TrendingRepo {
     let parts = fullName.split(separator: "/", maxSplits: 1)
     let owner = parts.count > 0 ? String(parts[0]) : ""
@@ -104,6 +105,7 @@ private func makeTrendingRepo(
         language: language,
         stars: stars,
         forks: forks,
+        licenseSpdx: license,
         trending: StarcatRepoCardDTO.TrendingExtension(
             change: change,
             contributors: [
@@ -739,7 +741,8 @@ struct TrendingTests {
             wikiKnownRepoIDs: [keep.ghRepoId],
             wikiAvailableRepoIDs: [keep.ghRepoId],
             healthAvailableRepoIDs: [keep.ghRepoId],
-            openSSFAvailableRepoIDs: [keep.ghRepoId]
+            openSSFAvailableRepoIDs: [keep.ghRepoId],
+            searchQuery: ""
         ))
 
         #expect(vm.displayedRepos.map(\.fullName) == [keep.fullName])
@@ -759,7 +762,8 @@ struct TrendingTests {
             wikiKnownRepoIDs: [drop.ghRepoId],
             wikiAvailableRepoIDs: [],
             healthAvailableRepoIDs: [],
-            openSSFAvailableRepoIDs: []
+            openSSFAvailableRepoIDs: [],
+            searchQuery: ""
         ))
 
         #expect(vm.displayedRepos.map(\.fullName) == [drop.fullName])
@@ -806,6 +810,32 @@ struct TrendingTests {
         )
         #expect(await pipeline.derivationCountForTesting() == 3,
                 "同桶新事实源必须淘汰旧 prepared snapshot 并重新派生")
+    }
+
+    @Test("Trending 许可证参与 prepared cache 身份，多选过滤完整桶")
+    func licensePreparedCacheIdentity() async throws {
+        let pipeline = TrendingListPipeline()
+        let identity = TrendingQueryIdentity(period: .daily)
+        let repos = [
+            makeTrendingRepo(fullName: "owner/mit", license: "MIT License"),
+            makeTrendingRepo(fullName: "owner/apache", license: "Apache-2.0"),
+            makeTrendingRepo(fullName: "owner/gpl", license: "GPL-3.0")
+        ]
+        func context(_ selected: [String]) -> TrendingDerivationContext {
+            var filter = TrendingListFilter.all
+            filter.licenseFilter = RepoLicenseFilter(selected)
+            return TrendingDerivationContext(sort: .recommended, filter: filter, languagePreferences: [:],
+                                             selectedLanguage: .all, interestedLanguages: [])
+        }
+        let a = context(["MIT", "Apache-2.0"])
+        let first = await pipeline.prepare(repos: repos, for: identity, context: a)
+        #expect(Set(first.repos.map(\.fullName)) == ["owner/mit", "owner/apache"])
+        let b = try #require(await pipeline.preparedSnapshot(for: identity, context: context(["GPL-3.0"])))
+        #expect(b.repos.map(\.fullName) == ["owner/gpl"])
+        let count = await pipeline.derivationCountForTesting()
+        let again = try #require(await pipeline.preparedSnapshot(for: identity, context: context(["apache-2.0", "mit"])))
+        #expect(again.repos == first.repos)
+        #expect(await pipeline.derivationCountForTesting() == count)
     }
 
     @Test("Trending prepared snapshot LRU 超过 12 项后淘汰最旧 context")

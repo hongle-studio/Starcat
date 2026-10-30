@@ -49,6 +49,7 @@ final class ExploreDiscoveryViewModel {
     /// 设置页「感兴趣语言」镜像。「其他」分类的本地过滤依赖它，由 View onChange 同步。
     var interestedLanguages: [String] = []
 
+    private(set) var licenseOptions: [String] = []
     private var bulkAllRepos: [DiscoveryRepoDTO] = []
     private var filteredLocalRepos: [DiscoveryRepoDTO] = []
     /// 已完成 filter / sort 的查询结果；命中时只发布首屏，不再扫描 bulk。
@@ -71,6 +72,8 @@ final class ExploreDiscoveryViewModel {
         topic: String?,
         platform: String?,
         sort: ExploreSortOption,
+        searchQuery: String = "",
+        licenseFilter: RepoLicenseFilter = .all,
         showsRefreshIndicator: Bool = false
     ) async {
         let queryIdentity = Self.queryIdentity(
@@ -79,6 +82,8 @@ final class ExploreDiscoveryViewModel {
             topic: topic,
             platform: platform,
             sort: sort,
+            searchQuery: searchQuery,
+            licenseFilter: licenseFilter,
             interestedLanguages: Set(self.interestedLanguages.map { $0.lowercased() })
         )
         let requestID = UUID()
@@ -120,6 +125,8 @@ final class ExploreDiscoveryViewModel {
                 topic: topic,
                 platform: platform,
                 sort: sort,
+                searchQuery: searchQuery,
+                licenseFilter: licenseFilter,
                 bumpRevision: true,
                 requestID: requestID
             )
@@ -165,6 +172,8 @@ final class ExploreDiscoveryViewModel {
                 topic: topic,
                 platform: platform,
                 sort: sort,
+                searchQuery: searchQuery,
+                licenseFilter: licenseFilter,
                 bumpRevision: true,
                 requestID: requestID
             )
@@ -197,6 +206,8 @@ final class ExploreDiscoveryViewModel {
                     topic: topic,
                     platform: platform,
                     sort: sort,
+                    searchQuery: searchQuery,
+                    licenseFilter: licenseFilter,
                     requestID: requestID
                 )
             }
@@ -250,7 +261,9 @@ final class ExploreDiscoveryViewModel {
         language: String?,
         topic: String?,
         platform: String?,
-        sort: ExploreSortOption
+        sort: ExploreSortOption,
+        searchQuery: String = "",
+        licenseFilter: RepoLicenseFilter = .all
     ) async {
         let queryIdentity = Self.queryIdentity(
             mode: mode,
@@ -258,6 +271,8 @@ final class ExploreDiscoveryViewModel {
             topic: topic,
             platform: platform,
             sort: sort,
+            searchQuery: searchQuery,
+            licenseFilter: licenseFilter,
             interestedLanguages: Set(self.interestedLanguages.map { $0.lowercased() })
         )
         guard publishedQueryIdentity == queryIdentity else { return }
@@ -302,6 +317,8 @@ final class ExploreDiscoveryViewModel {
         topic: String?,
         platform: String?,
         sort: ExploreSortOption,
+        searchQuery: String = "",
+        licenseFilter: RepoLicenseFilter = .all,
         interestedLanguages: Set<String> = []
     ) -> String {
         // 「其他」分类的过滤结果依赖感兴趣语言，identity 必须纳入，避免命中脏快照。
@@ -314,6 +331,8 @@ final class ExploreDiscoveryViewModel {
             mode == .discover ? (topic ?? "__all__") : "__topic_unused__",
             mode == .discover ? (platform ?? "__all__") : "__platform_unused__",
             sort.normalized(for: mode).id,
+            QuickSearchTextMatcher.normalized(searchQuery),
+            licenseFilter.cacheKey,
         ].joined(separator: "|")
     }
 
@@ -324,6 +343,8 @@ final class ExploreDiscoveryViewModel {
         topic: String?,
         platform: String?,
         sort: ExploreSortOption,
+        searchQuery: String,
+        licenseFilter: RepoLicenseFilter,
         bumpRevision: Bool,
         requestID: UUID
     ) async {
@@ -335,11 +356,14 @@ final class ExploreDiscoveryViewModel {
             topic: topic,
             platform: platform,
             sort: sort,
+            searchQuery: searchQuery,
+            licenseFilter: licenseFilter,
             bumpRevision: bumpRevision,
             requestID: requestID
         )
         guard !shouldStop(requestID: requestID) else { return }
         bulkAllRepos = snapshot.repos
+        licenseOptions = RepoLicenseFilter.options(snapshot.repos.map(\.licenseSpdx))
         latestSummary = snapshot.summary
         lastRefreshedAt = snapshot.lastFetchedAt
     }
@@ -351,6 +375,8 @@ final class ExploreDiscoveryViewModel {
         topic: String?,
         platform: String?,
         sort: ExploreSortOption,
+        searchQuery: String,
+        licenseFilter: RepoLicenseFilter,
         requestID: UUID
     ) async {
         clearPreparedSnapshots()
@@ -361,11 +387,14 @@ final class ExploreDiscoveryViewModel {
             topic: topic,
             platform: platform,
             sort: sort,
+            searchQuery: searchQuery,
+            licenseFilter: licenseFilter,
             bumpRevision: true,
             requestID: requestID
         )
         guard !shouldStop(requestID: requestID) else { return }
         bulkAllRepos = result.repos
+        licenseOptions = RepoLicenseFilter.options(result.repos.map(\.licenseSpdx))
         latestSummary = result.summary
         lastRefreshedAt = Date()
     }
@@ -377,6 +406,8 @@ final class ExploreDiscoveryViewModel {
         topic: String?,
         platform: String?,
         sort: ExploreSortOption,
+        searchQuery: String,
+        licenseFilter: RepoLicenseFilter,
         bumpRevision: Bool,
         requestID: UUID
     ) async {
@@ -391,6 +422,8 @@ final class ExploreDiscoveryViewModel {
                 topic: topic,
                 platform: platform,
                 sort: sort,
+                searchQuery: searchQuery,
+                licenseFilter: licenseFilter,
                 interestedLanguages: interested
             )
         }
@@ -403,6 +436,8 @@ final class ExploreDiscoveryViewModel {
             topic: topic,
             platform: platform,
             sort: sort,
+            searchQuery: searchQuery,
+            licenseFilter: licenseFilter,
             interestedLanguages: Set(self.interestedLanguages.map { $0.lowercased() })
         )
         let prepared = PreparedSnapshot(filteredRepos: filtered)
@@ -453,9 +488,12 @@ final class ExploreDiscoveryViewModel {
         topic: String?,
         platform: String?,
         sort: ExploreSortOption,
+        searchQuery: String,
+        licenseFilter: RepoLicenseFilter,
         interestedLanguages: Set<String>
     ) -> [DiscoveryRepoDTO] {
         var filtered = sourceRepos
+        if licenseFilter.isActive { filtered.removeAll { !licenseFilter.matches($0.licenseSpdx) } }
 
         switch mode {
         case .discover:
@@ -482,6 +520,18 @@ final class ExploreDiscoveryViewModel {
             }
         case .trending, .weekly, .awesome:
             break
+        }
+
+        filtered = filtered.filter { repo in
+            QuickSearchTextMatcher.matches(
+                searchQuery,
+                candidates: [
+                    repo.fullName,
+                    repo.description,
+                    repo.language,
+                    repo.topics.joined(separator: " "),
+                ]
+            )
         }
 
         filtered.sort(by: makeLocalSorter(sort.normalized(for: mode), mode: mode))

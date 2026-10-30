@@ -251,6 +251,71 @@ struct GitHubRepoDTO: Decodable, Equatable {
     /// 搜索相关度（仅 `/search/repositories` 返回，best-match 排序时有意义）。
     let score: Double?
 
+    /// 直接上游。仅 `GET /repos/{owner}/{repo}` 在 `fork == true` 时返回；
+    /// `/user/repos`、`/user/starred`、search 列表都没有这个字段，必须按 nil 解码。
+    ///
+    /// 存储属性不能写 `= nil`：Swift 合成 `init(from:)` 会跳过有默认值的字段，
+    /// GET /repos 明明带了 parent 也会解成 nil。fixture 走下面的 memberwise，parent 默认 nil。
+    let parent: GitHubForkParentDTO?
+
+    init(
+        id: Int64,
+        name: String,
+        fullName: String,
+        owner: GitHubUserDTO,
+        description: String?,
+        language: String?,
+        stargazersCount: Int,
+        forksCount: Int,
+        watchersCount: Int,
+        topics: [String]?,
+        license: GitHubLicenseDTO?,
+        homepage: String?,
+        htmlUrl: String,
+        cloneUrl: String?,
+        sshUrl: String?,
+        isPrivate: Bool,
+        fork: Bool,
+        archived: Bool,
+        pushedAt: String?,
+        createdAt: String?,
+        updatedAt: String?,
+        openIssuesCount: Int?,
+        defaultBranch: String?,
+        disabled: Bool?,
+        isTemplate: Bool?,
+        score: Double?,
+        parent: GitHubForkParentDTO? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.fullName = fullName
+        self.owner = owner
+        self.description = description
+        self.language = language
+        self.stargazersCount = stargazersCount
+        self.forksCount = forksCount
+        self.watchersCount = watchersCount
+        self.topics = topics
+        self.license = license
+        self.homepage = homepage
+        self.htmlUrl = htmlUrl
+        self.cloneUrl = cloneUrl
+        self.sshUrl = sshUrl
+        self.isPrivate = isPrivate
+        self.fork = fork
+        self.archived = archived
+        self.pushedAt = pushedAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.openIssuesCount = openIssuesCount
+        self.defaultBranch = defaultBranch
+        self.disabled = disabled
+        self.isTemplate = isTemplate
+        self.score = score
+        self.parent = parent
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -283,6 +348,30 @@ struct GitHubRepoDTO: Decodable, Equatable {
         case disabled
         case isTemplate
         case score
+        case parent
+    }
+}
+
+/// fork 网络里的直接上游（GitHub `parent`，不是 `source`）。
+///
+/// GitHub 网页 “forked from xuxueli/xxl-job” 对应 `parent.full_name`。
+/// `source` 是整条 fork 链的根；第一版只展示直接上游，避免把二次 fork 标成更远的源头。
+/// 不用完整 `GitHubRepoDTO` 嵌套：上游对象不再带 `parent`，强解会引入无意义递归。
+struct GitHubForkParentDTO: Decodable, Equatable, Sendable {
+    let fullName: String
+    let htmlUrl: String
+    let defaultBranch: String?
+
+    /// `owner/name` 的 owner 段；fullName 非法时为空串，调用方应视为上游不可用。
+    var ownerLogin: String {
+        String(fullName.split(separator: "/", maxSplits: 1).first ?? "")
+    }
+
+    /// `owner/name` 的 name 段。
+    var repoName: String {
+        let parts = fullName.split(separator: "/", maxSplits: 1)
+        guard parts.count == 2 else { return "" }
+        return String(parts[1])
     }
 }
 
@@ -307,6 +396,52 @@ struct GitHubSubscriptionDTO: Codable, Equatable {
 struct GitHubSubscriptionRequestDTO: Encodable {
     let subscribed: Bool
     let ignored: Bool
+}
+
+// MARK: - Git Tree（详情页按文件勾选下载）
+
+/// `GET /repos/{owner}/{repo}/git/trees/{ref}?recursive=1` 的响应。
+///
+/// GitHub 在条目超过约 10 万时仍返回 200，但 `truncated == true`，树不完整。
+/// UI 必须展示截断提示，不能假装这是全量列表。
+struct GitHubGitTreeDTO: Decodable, Equatable, Sendable {
+    let sha: String
+    let truncated: Bool
+    let tree: [GitHubGitTreeEntryDTO]
+}
+
+/// 递归 tree 里的单条路径。
+///
+/// `type`：`blob` 文件 / `tree` 目录 / `commit` 子模块。
+/// `mode`：`100644` 普通文件、`100755` 可执行、`120000` 符号链接、`160000` 子模块、`040000` 目录。
+/// `size` 只在 blob 上出现。
+struct GitHubGitTreeEntryDTO: Decodable, Equatable, Sendable {
+    let path: String
+    let mode: String
+    let type: String
+    let sha: String
+    let size: Int?
+    let url: String?
+}
+
+/// `GET /repos/{owner}/{repo}/branches` 的最小字段。切文件树只需要名字。
+struct GitHubRepoBranchDTO: Decodable, Equatable, Sendable {
+    let name: String
+}
+
+/// `GET /repos/{owner}/{repo}/commits?path=` 的最小字段，给预览侧栏「上次提交」。
+struct GitHubCommitSummaryDTO: Decodable, Equatable, Sendable {
+    let sha: String
+    let commit: GitHubCommitSummaryPayloadDTO
+}
+
+struct GitHubCommitSummaryPayloadDTO: Decodable, Equatable, Sendable {
+    let committer: GitHubCommitSummaryPersonDTO?
+    let author: GitHubCommitSummaryPersonDTO?
+}
+
+struct GitHubCommitSummaryPersonDTO: Decodable, Equatable, Sendable {
+    let date: String?
 }
 
 // MARK: - Release（HOM-47）

@@ -26,6 +26,11 @@ struct StarcatMCPRuntimeTests {
 
         let initialize = await runtime.handle(Self.request(id: 1, method: "initialize", params: Self.initializeParams()))
         #expect(initialize.statusCode == 200)
+        let initializeJSON = try Self.jsonObject(from: initialize)
+        let initializeResult = try #require(initializeJSON["result"] as? [String: Any])
+        let serverInfo = try #require(initializeResult["serverInfo"] as? [String: Any])
+        let initializedServerVersion = try #require(serverInfo["version"] as? String)
+        #expect(initializedServerVersion == StarcatMCPServerMetadata.version)
 
         let initialized = await runtime.handle(Self.notification(method: "notifications/initialized"))
         #expect(initialized.statusCode == 202)
@@ -33,7 +38,7 @@ struct StarcatMCPRuntimeTests {
         let list = await runtime.handle(Self.request(id: 2, method: "tools/list"))
         let listJSON = try Self.jsonObject(from: list)
         let tools = try #require((listJSON["result"] as? [String: Any])?["tools"] as? [[String: Any]])
-        #expect(tools.count == 20)
+        #expect(tools.count == 24)
         #expect(tools.contains { $0["name"] as? String == "starcat.get_capabilities" })
         #expect(tools.contains { $0["name"] as? String == "starcat.get_overview_statistics" })
         #expect(tools.contains { $0["name"] as? String == "starcat.get_ai_usage_statistics" })
@@ -44,6 +49,10 @@ struct StarcatMCPRuntimeTests {
         #expect(tools.contains { $0["name"] as? String == "starcat.search_repos" })
         #expect(tools.contains { $0["name"] as? String == "starcat.semantic_search" })
         #expect(tools.contains { $0["name"] as? String == "starcat.global_search_repos" })
+        #expect(tools.contains { $0["name"] as? String == "starcat.star_repo" })
+        #expect(tools.contains { $0["name"] as? String == "starcat.unstar_repo" })
+        #expect(tools.contains { $0["name"] as? String == "starcat.list_repos_by_tag" })
+        #expect(tools.contains { $0["name"] as? String == "starcat.batch_organize_repos" })
         // knowledge.search 当前只完成内部共享 capability；不能在没有独立 MCP 契约评审时
         // 偷偷扩张已发布的公共 tool catalog。
         #expect(tools.contains { $0["name"] as? String == "starcat.search_knowledge" } == false)
@@ -127,10 +136,87 @@ struct StarcatMCPRuntimeTests {
         let capabilitiesJSON = try Self.jsonObject(from: capabilitiesCall)
         let capabilitiesResult = try #require(capabilitiesJSON["result"] as? [String: Any])
         let capabilities = try #require(capabilitiesResult["structuredContent"] as? [String: Any])
+        let capabilityServerVersion = try #require(capabilities["server_version"] as? String)
+        #expect(capabilityServerVersion == StarcatMCPServerMetadata.version)
+        #expect(capabilityServerVersion == initializedServerVersion)
         #expect(capabilities["private_notes_read"] as? Bool == true)
         #expect(capabilities["statistics_read"] as? Bool == true)
         #expect(capabilities["local_writes"] as? Bool == true)
+        #expect(capabilities["batch_writes"] as? Bool == true)
+        #expect(capabilities["github_star_writes"] as? Bool == true)
         #expect(capabilities["loopback_only"] as? Bool == true)
+
+        let starDryRunCall = await runtime.handle(Self.request(
+            id: 29,
+            method: "tools/call",
+            params: [
+                "name": "starcat.star_repo",
+                "arguments": ["owner": "github", "name": "hub", "dry_run": true]
+            ]
+        ))
+        let starDryRunJSON = try Self.jsonObject(from: starDryRunCall)
+        let starDryRunResult = try #require(starDryRunJSON["result"] as? [String: Any])
+        #expect(starDryRunResult["isError"] as? Bool != true)
+        let starDryRun = try #require(starDryRunResult["structuredContent"] as? [String: Any])
+        #expect(starDryRun["target_full_name"] as? String == "github/hub")
+        #expect(starDryRun["dry_run"] as? Bool == true)
+
+        let reposByTagCall = await runtime.handle(Self.request(
+            id: 30,
+            method: "tools/call",
+            params: [
+                "name": "starcat.list_repos_by_tag",
+                "arguments": ["tag": "act/test", "limit": 10]
+            ]
+        ))
+        let reposByTagJSON = try Self.jsonObject(from: reposByTagCall)
+        let reposByTagResult = try #require(reposByTagJSON["result"] as? [String: Any])
+        #expect(reposByTagResult["isError"] as? Bool != true)
+        let reposByTag = try #require(reposByTagResult["structuredContent"] as? [String: Any])
+        let matchedTag = try #require(reposByTag["tag"] as? [String: Any])
+        let taggedRepos = try #require(reposByTag["repos"] as? [[String: Any]])
+        #expect(matchedTag["name"] as? String == "act/test")
+        #expect(reposByTag["total"] as? Int == 1)
+        #expect(taggedRepos.first?["full_name"] as? String == "apple/swift")
+
+        let missingTagCall = await runtime.handle(Self.request(
+            id: 31,
+            method: "tools/call",
+            params: [
+                "name": "starcat.list_repos_by_tag",
+                "arguments": ["tag": "act/missing"]
+            ]
+        ))
+        let missingTagJSON = try Self.jsonObject(from: missingTagCall)
+        let missingTagResult = try #require(missingTagJSON["result"] as? [String: Any])
+        #expect(missingTagResult["isError"] as? Bool == true)
+        let missingTagError = try #require(missingTagResult["structuredContent"] as? [String: Any])
+        #expect(missingTagError["code"] as? String == "NOT_FOUND")
+        #expect(missingTagError["message"] as? String == "Tag not found: act/missing")
+
+        let batchDryRunCall = await runtime.handle(Self.request(
+            id: 32,
+            method: "tools/call",
+            params: [
+                "name": "starcat.batch_organize_repos",
+                "arguments": [
+                    "items": [
+                        ["repo_id": 1, "tags": ["act/test"], "note": "queued"],
+                        ["owner": "openai", "name": "codex", "note": ""]
+                    ],
+                    "create_missing": false,
+                    "dry_run": true
+                ]
+            ]
+        ))
+        let batchDryRunJSON = try Self.jsonObject(from: batchDryRunCall)
+        let batchDryRunResult = try #require(batchDryRunJSON["result"] as? [String: Any])
+        #expect(batchDryRunResult["isError"] as? Bool != true)
+        let batchDryRun = try #require(batchDryRunResult["structuredContent"] as? [String: Any])
+        #expect(batchDryRun["dry_run"] as? Bool == true)
+        #expect(batchDryRun["requested_count"] as? Int == 2)
+        #expect(batchDryRun["succeeded_count"] as? Int == 2)
+        #expect(batchDryRun["failed_count"] as? Int == 0)
 
         let contextCall = await runtime.handle(Self.request(
             id: 21,
@@ -255,7 +341,7 @@ struct StarcatMCPRuntimeTests {
         let list = await runtime.handle(Self.request(id: 3, method: "tools/list"))
         let listJSON = try Self.jsonObject(from: list)
         let tools = try #require((listJSON["result"] as? [String: Any])?["tools"] as? [[String: Any]])
-        #expect(tools.count == 20)
+        #expect(tools.count == 24)
     }
 
     @Test("临时 Runtime 只暴露 Agent allowlist 并拒绝越权调用")
@@ -496,6 +582,8 @@ struct StarcatMCPRuntimeTests {
         let settings = AppSettings(defaults: UserDefaults(suiteName: "test.starcat.mcp.runtime.\(UUID().uuidString)")!)
         settings.mcpExposePrivateNotes = exposePrivateNotes
         settings.mcpAllowLocalWrites = true
+        settings.mcpAllowBatchWrites = true
+        settings.mcpAllowGitHubStarWrites = true
 
         let gate = EntitlementGate(
             entitlementProvider: MCPRuntimeTestEntitlementProvider(isPro: true),
@@ -504,6 +592,9 @@ struct StarcatMCPRuntimeTests {
         let repoRepository = GRDBRepoRepository(database: db)
         let tagRepository = GRDBTagRepository(database: db)
         let repoTagRepository = GRDBRepoTagRepository(database: db)
+        let actionTag = Tag.fixture(id: "mcp-act-test", name: "act/test")
+        try await tagRepository.create(actionTag)
+        try await repoTagRepository.addTag(repoId: 1, tagId: actionTag.id)
         let noteRepository = GRDBRepoNoteRepository(database: db)
         try await noteRepository.updateLibraryState(repoId: 2, state: .inLibrary)
         try await db.writer.write { database in
@@ -589,6 +680,7 @@ struct StarcatMCPRuntimeTests {
                     repoTagRepository: repoTagRepository
                 )
             ),
+            starMutationService: MCPRuntimeStarMutationServiceStub(),
             settings: settings,
             entitlementGate: gate,
             auditLog: StarcatMCPAuditLog(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("starcat-mcp-runtime-\(UUID().uuidString).jsonl"))
@@ -728,4 +820,14 @@ private final class MCPRuntimeTestEntitlementProvider: ProEntitlementProviding {
             source: isPro ? .testEnvironment : .none
         )
     }
+}
+
+/// Runtime 测试只验证 MCP 协议分发；任何非 dry-run 调用都不应触达真实 GitHub。
+@MainActor
+private final class MCPRuntimeStarMutationServiceStub: MCPStarMutationServicing {
+    func star(owner: String, repo: String, displayedStarsCount: Int?) async throws -> Repo {
+        Repo.makeMinimal(owner: owner, name: repo)
+    }
+
+    func unstar(repo: Repo) async throws {}
 }

@@ -248,11 +248,14 @@ struct RepoDetailWindowContent: View {
             viewData: viewData,
             starHelpKey: "repo.unstar",
             showsRepoHealthEntry: true,
-            onStarTapped: {
+            onStarTapped: { cleanupScope in
                 // 推荐窗里的 star 点击：本地已 star → 触发 unstar。
                 // StarredRegistry @Observable 变更会自动驱动主窗 list + 主窗 hero
                 // 同步刷新（AppDependencies 共享）。
-                try await dependencies.starActionService.unstar(repo: repo)
+                try await dependencies.starActionService.unstar(
+                    repo: repo,
+                    cleanupScope: cleanupScope ?? .keepKnowledgeLibrary
+                )
             },
             heroExtension: { EmptyView() },
             body: { onScrollReport in
@@ -267,6 +270,12 @@ struct RepoDetailWindowContent: View {
         .environment(translationVM)
         .modifier(RepoShareHost())
         .appHostEnvironment(dependencies, homeViewModel: homeViewModel)
+        // AppKit 自建窗口不在 StarcatApp 的主 SwiftUI 树内，因此保留一个备用宿主，
+        // 让主窗口关闭后仍能翻译。Broker 会在主窗口和详情窗口之间选出唯一 owner，
+        // 不会让多个 `.translationTask` 同时持有同一份 Translation Configuration。
+        .background {
+            SystemTranslationSessionHost(broker: SystemTranslationSessionBroker.shared)
+        }
         // 触发首次 README 加载 + 翻译态准备。
         //
         // 为什么需要这个 task：主窗 (`HomeView`) 的初次 README 加载是在
@@ -288,7 +297,8 @@ struct RepoDetailWindowContent: View {
                 repo: repo,
                 sourceHtml: nil,
                 targetLanguage: dependencies.settings.effectiveReadmeTranslationLanguage,
-                mode: dependencies.settings.readmeTranslationMode
+                mode: dependencies.settings.readmeTranslationMode,
+                engine: dependencies.settings.readmeTranslationEngine
             )
         }
     }

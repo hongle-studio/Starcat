@@ -998,6 +998,12 @@ private struct AboutDependency: Identifiable {
 
     private static let embeddedResources: [AboutDependency] = [
         AboutDependency(
+            name: "Lucide Icons",
+            license: "ISC",
+            copyright: "Copyright (c) 2026 Lucide Icons and Contributors",
+            url: URL(string: "https://github.com/lucide-icons/lucide")
+        ),
+        AboutDependency(
             name: "Devicon",
             license: "MIT",
             copyright: "Copyright (c) 2015 konpa",
@@ -1044,6 +1050,12 @@ private struct AboutDependency: Identifiable {
             license: "MIT",
             copyright: "Copyright (c) 2023 Berri AI",
             url: URL(string: "https://github.com/BerriAI/litellm")
+        ),
+        AboutDependency(
+            name: "laya-mlx / Laya",
+            license: "Apache-2.0",
+            copyright: "Copyright 2026 laya-mlx contributors; Copyright Convai Innovations and Laya contributors",
+            url: URL(string: "https://github.com/mizorewww/laya-mlx")
         ),
         AboutDependency(
             name: "OpenSSF",
@@ -1120,6 +1132,12 @@ private struct AboutDependency: Identifiable {
         // license 字段标记为 "Brand Asset"。
         // 严格按 CLAUDE.md「开源致谢同步规则」第 2 条「嵌入式资源」登记。
 
+        AboutDependency(
+            name: "Claude Spark Logo",
+            license: "Brand Asset",
+            copyright: "Anthropic PBC — used for inference backend identification only",
+            url: URL(string: "https://www.anthropic.com/news")
+        ),
         AboutDependency(
             name: "DeepWiki Logo",
             license: "Brand Asset",

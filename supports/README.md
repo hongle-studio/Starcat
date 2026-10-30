@@ -133,7 +133,7 @@ go run ./cmd/server
 使用根目录 Skill：
 
 ```text
-.claude/skills/starcat-support-project-create
+skills/starcat-support-project-create
 ```
 
 创建流程会补齐开源治理文件和 README，并强制同步：

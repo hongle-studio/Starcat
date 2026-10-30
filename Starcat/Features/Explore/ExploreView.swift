@@ -33,6 +33,8 @@ struct ExploreView: View {
     @Binding var selectedWeeklyLanguage: String?
 
     let onRepoCountChange: (Int) -> Void
+    /// Linux.do 使用独立数量槽，避免视图切换期间的迟到回调覆盖普通 Discover 数量。
+    let onLinuxDoRepoCountChange: (Int) -> Void
 
     @Environment(AppDependencies.self) private var dependencies
 
@@ -49,12 +51,23 @@ struct ExploreView: View {
             case .awesome:
                 awesomeContent
             case .discover, .popular, .newReleases:
-                discoveryContent
+                if selectedMode == .discover && dependencies.linuxDoStore.selectedSource == .linuxDo {
+                    LinuxDoView(
+                        store: dependencies.linuxDoStore,
+                        selectedRepoID: $selectedDiscoveryRepoID,
+                        selectedRepo: $selectedDiscoveryRepo,
+                        onRepoCountChange: onLinuxDoRepoCountChange
+                    )
+                } else {
+                    discoveryContent
+                }
             }
         }
         .task {
             ensurePersistentChildViewModels()
         }
+        .onChange(of: selectedDiscoveryTopic) { _, _ in dependencies.linuxDoStore.selectedSource = .catalog }
+        .onChange(of: selectedDiscoveryPlatform) { _, _ in dependencies.linuxDoStore.selectedSource = .catalog }
         .onChange(of: selectedMode) { _, mode in
             switch mode {
             case .trending:
@@ -104,7 +117,8 @@ struct ExploreView: View {
         if let weeklyViewModel {
             WeeklyContentView(
                 viewModel: weeklyViewModel,
-                selectedLanguage: $selectedWeeklyLanguage
+                selectedLanguage: $selectedWeeklyLanguage,
+                onRepoCountChange: onRepoCountChange
             )
         } else {
             RepoSkeletonListView(rowCount: 10)
@@ -180,6 +194,9 @@ private struct ExploreDiscoveryListView: View {
     @State private var libraryStateMap: [Int64: LibraryState] = [:]
     @State private var wikiAvailabilityMap: [Int64: Bool] = [:]
     @State private var rowRevealRevision = 0
+    @State private var isQuickSearchExpanded = false
+    @State private var quickSearchDraft = ""
+    @State private var quickSearchQuery = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -187,6 +204,7 @@ private struct ExploreDiscoveryListView: View {
             Divider()
             content
         }
+        .preference(key: RepoLicenseOptionsPreferenceKey.self, value: viewModel.licenseOptions)
         .task(id: queryIdentity) {
             restoreSortPreferenceIfNeeded()
             // 恢复偏好可能改变 task identity；先让 SwiftUI 取消旧代际，旧 task 不能继续
@@ -208,7 +226,9 @@ private struct ExploreDiscoveryListView: View {
                 language: mode == .discover ? nil : selectedLanguage,
                 topic: mode == .discover ? selectedTopic : nil,
                 platform: mode == .discover ? selectedPlatform : nil,
-                sort: currentSort
+                sort: currentSort,
+                searchQuery: quickSearchQuery,
+                licenseFilter: settings.licenseFilter
             )
             guard !Task.isCancelled,
                   viewModel.publishedQueryIdentity == requestedIdentity
@@ -248,6 +268,9 @@ private struct ExploreDiscoveryListView: View {
         .onChange(of: settings.interestedLanguages) { _, languages in
             viewModel.interestedLanguages = languages
         }
+        .onChange(of: mode) { _, _ in
+            resetQuickSearch()
+        }
         .starcatRefreshCommand(
             pane: .list,
             identity: "explore-\(queryIdentity)-\(viewModel.isRefreshing)-\(viewModel.isLoading)",
@@ -259,7 +282,17 @@ private struct ExploreDiscoveryListView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 10) {
+        QuickSearchToolbarContent(
+            isExpanded: $isQuickSearchExpanded,
+            draft: $quickSearchDraft,
+            committedQuery: quickSearchQuery,
+            placeholder: "list.quickSearch.placeholder",
+            onSubmit: { query in
+                quickSearchQuery = QuickSearchTextMatcher.normalized(query)
+                quickSearchDraft = quickSearchQuery
+            },
+            onClear: { quickSearchQuery = "" }
+        ) {
             UnifiedSortMenu(
                 selection: sortBinding,
                 options: ExploreSortOption.options(for: mode),
@@ -271,9 +304,10 @@ private struct ExploreDiscoveryListView: View {
             )
 
             Spacer()
+                .layoutPriority(AdaptiveToolbarStatusText.spacerPriority)
 
             if let text = formattedFreshness {
-                Text(text)
+                AdaptiveToolbarStatusText(text: text)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -281,7 +315,7 @@ private struct ExploreDiscoveryListView: View {
             SyncIconButton(
                 isRefreshing: viewModel.isRefreshing,
                 disabled: viewModel.isRefreshing || viewModel.isLoading,
-                tooltip: String.l10n("explore.refresh.tooltip")
+                tooltip: AdaptiveToolbarStatusText.refreshTooltip(action: String.l10n("explore.refresh.tooltip"), status: formattedFreshness)
             ) {
                 refreshCurrentDiscoveryList()
             }
@@ -307,6 +341,8 @@ private struct ExploreDiscoveryListView: View {
                 topic: mode == .discover ? selectedTopic : nil,
                 platform: mode == .discover ? selectedPlatform : nil,
                 sort: currentSort,
+                searchQuery: quickSearchQuery,
+                licenseFilter: settings.licenseFilter,
                 showsRefreshIndicator: true
             )
             guard viewModel.publishedQueryIdentity == requestedIdentity else { return }
@@ -371,7 +407,7 @@ private struct ExploreDiscoveryListView: View {
                 )
             } else if viewModel.repos.isEmpty {
                 ExploreEmptyState(
-                    systemImage: mode.systemImage,
+                    businessIcon: mode.businessIcon,
                     titleKey: "explore.empty.title",
                     subtitleKey: "explore.empty.subtitle"
                 )
@@ -426,8 +462,7 @@ private struct ExploreDiscoveryListView: View {
                         ),
                         isSelected: store.isActive
                             ? store.contains(ghRepoId: repo.repoID)
-                            : (selectedRepoID == repo.repoID),
-                        showStarredCheckmark: true
+                            : (selectedRepoID == repo.repoID)
                     )
                     .id(repoRowIdentity(for: repo))
                 }
@@ -459,7 +494,9 @@ private struct ExploreDiscoveryListView: View {
                         language: mode == .discover ? nil : selectedLanguage,
                         topic: mode == .discover ? selectedTopic : nil,
                         platform: mode == .discover ? selectedPlatform : nil,
-                        sort: currentSort
+                        sort: currentSort,
+                        searchQuery: quickSearchQuery,
+                        licenseFilter: settings.licenseFilter
                     )
                 }
             }
@@ -483,7 +520,9 @@ private struct ExploreDiscoveryListView: View {
                 language: mode == .discover ? nil : selectedLanguage,
                 topic: mode == .discover ? selectedTopic : nil,
                 platform: mode == .discover ? selectedPlatform : nil,
-                sort: currentSort
+                sort: currentSort,
+                searchQuery: quickSearchQuery,
+                licenseFilter: settings.licenseFilter
             )
         }
         .scrollContentBackground(.hidden)
@@ -496,6 +535,8 @@ private struct ExploreDiscoveryListView: View {
                 topic: mode == .discover ? selectedTopic : nil,
                 platform: mode == .discover ? selectedPlatform : nil,
                 sort: currentSort,
+                searchQuery: quickSearchQuery,
+                licenseFilter: settings.licenseFilter,
                 showsRefreshIndicator: true
             )
             guard viewModel.publishedQueryIdentity == requestedIdentity else { return }
@@ -702,8 +743,16 @@ private struct ExploreDiscoveryListView: View {
             topic: mode == .discover ? selectedTopic : nil,
             platform: mode == .discover ? selectedPlatform : nil,
             sort: currentSort,
+            searchQuery: quickSearchQuery,
+            licenseFilter: settings.licenseFilter,
             interestedLanguages: Set(settings.interestedLanguages.map { $0.lowercased() })
         )
+    }
+
+    private func resetQuickSearch() {
+        isQuickSearchExpanded = false
+        quickSearchDraft = ""
+        quickSearchQuery = ""
     }
 
     private var hasPublishedCurrentQuery: Bool {
@@ -755,17 +804,20 @@ private struct IndexedDiscoveryRepo: Identifiable {
 
 private struct ExploreEmptyState: View {
     let systemImage: String
+    let businessIcon: BusinessIcon.Symbol?
     let titleKey: LocalizedStringKey
     let subtitleKey: LocalizedStringKey?
     let subtitleText: String?
 
     init(
-        systemImage: String,
+        systemImage: String = "",
+        businessIcon: BusinessIcon.Symbol? = nil,
         titleKey: LocalizedStringKey,
         subtitleKey: LocalizedStringKey? = nil,
         subtitleText: String? = nil
     ) {
         self.systemImage = systemImage
+        self.businessIcon = businessIcon
         self.titleKey = titleKey
         self.subtitleKey = subtitleKey
         self.subtitleText = subtitleText
@@ -773,9 +825,15 @@ private struct ExploreEmptyState: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
+            Group {
+                if let businessIcon {
+                    BusinessIcon(businessIcon, pointSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize)
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.largeTitle)
+                }
+            }
+            .foregroundStyle(.secondary)
 
             Text(titleKey)
                 .font(.headline)

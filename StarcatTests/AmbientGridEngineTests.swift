@@ -126,6 +126,37 @@ struct AmbientGridEngineTests {
         #expect(result.nextDeadline != nil)
     }
 
+    @Test("refreshCards 只补头像 URL，不重排槽位也不改 deadline")
+    func refreshCardsUpdatesArtworkWithoutReshuffling() {
+        let blank = AmbientCardModel(
+            id: "card:0",
+            visualKey: "owner:0",
+            title: "owner0",
+            artworkURLString: nil,
+            subtitle: nil,
+            metadata: [:]
+        )
+        var engine = makeEngine(cards: [blank], rows: 1, columns: 1, now: 100)
+        let slotID = engine.snapshots[0].id
+        let deadline = engine.nextDeadline
+
+        engine.refreshCards([
+            AmbientCardModel(
+                id: "card:0",
+                visualKey: "owner:0",
+                title: "owner0",
+                artworkURLString: "file:///tmp/owner0.png",
+                subtitle: nil,
+                metadata: [:]
+            )
+        ])
+
+        #expect(engine.snapshots[0].id == slotID)
+        #expect(engine.snapshots[0].card?.id == "card:0")
+        #expect(engine.snapshots[0].card?.artworkURLString == "file:///tmp/owner0.png")
+        #expect(engine.nextDeadline == deadline)
+    }
+
     @Test("异常配置不创建负容量且修正轮换节奏")
     func invalidConfigIsSafe() {
         let noRows = AmbientGridConfig(

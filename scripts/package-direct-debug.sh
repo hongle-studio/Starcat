@@ -5,6 +5,11 @@
 # 这个入口复用 `run-debug-direct.sh --build-only`，确保测试包与日常 Direct Debug
 # 使用相同的非沙箱、测试 License API、独立 bundle id 和签名校验。它不会公证、
 # 生成 appcast、创建 tag 或上传任何内容，也不能替代正式 `package-direct.sh`。
+#
+# build 号沿用 Direct 渠道的 yyyyMMddHHmm 时间戳口径（与 package-direct.sh 一致）：
+# 线上 appcast 的 sparkle:version 就是发版时间戳，Sparkle 拿它和运行中 App 的
+# CFBundleVersion 做数值比较，本地包若用 git commit count 会被判定「比线上旧」，
+# 反而提示降级到更早的正式版。需要固定同一个号时用 STARCAT_DIRECT_BUILD_NUMBER。
 
 set -euo pipefail
 
@@ -33,11 +38,19 @@ fail() { printf '[direct-debug] ERROR: %s\n' "$1" >&2; exit 1; }
 command -v hdiutil >/dev/null 2>&1 || fail "hdiutil 不在 PATH"
 command -v shasum >/dev/null 2>&1 || fail "shasum 不在 PATH"
 
+# 与 package-direct.sh 同口径：默认取当前时间戳，可用 STARCAT_DIRECT_BUILD_NUMBER 固定。
+# 这里先生成再下发，一是让本次产物可复现，二是能在构建后校验产物确实用了这个号。
+BUILD_NUMBER="${STARCAT_DIRECT_BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
+[[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || \
+  fail "build number 必须是纯数字，当前: ${BUILD_NUMBER:-<empty>}"
+
 cd "$PROJECT_ROOT"
 
-log "构建并校验 StarcatDirect Debug（不会启动 App）"
+log "构建并校验 StarcatDirect Debug（不会启动 App，build ${BUILD_NUMBER}）"
 # marketing version 必须显式覆盖最新正式 tag；否则 Debug 产物仍会显示 1.6.0。
+# build 号由 run-debug-direct.sh 下发到 xcodebuild，此处只负责生成与校验。
 STARCAT_MARKETING_VERSION_OVERRIDE="$VERSION" \
+STARCAT_DIRECT_BUILD_NUMBER="$BUILD_NUMBER" \
   bash "$SCRIPT_DIR/run-debug-direct.sh" --build-only
 
 [ -d "$SOURCE_APP" ] || fail "未找到 Direct Debug App: $SOURCE_APP"
@@ -48,6 +61,12 @@ APP_VERSION=$(/usr/libexec/PlistBuddy \
   "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)
 [ "$APP_VERSION" = "$VERSION" ] || \
   fail "CFBundleShortVersionString 应为 $VERSION，实际为 ${APP_VERSION:-<missing>}"
+
+APP_BUILD=$(/usr/libexec/PlistBuddy \
+  -c "Print :CFBundleVersion" \
+  "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)
+[ "$APP_BUILD" = "$BUILD_NUMBER" ] || \
+  fail "CFBundleVersion 应为 $BUILD_NUMBER，实际为 ${APP_BUILD:-<missing>}"
 
 BUNDLE_ID=$(/usr/libexec/PlistBuddy \
   -c "Print :CFBundleIdentifier" \
@@ -138,6 +157,7 @@ log "测试包生成成功"
 echo "    DMG: $DMG_PATH"
 echo "    SHA: $SHA_PATH"
 echo "    version: $VERSION"
+echo "    build: $BUILD_NUMBER"
 echo "    bundle id: $DIRECT_DEBUG_BUNDLE_ID"
 echo "    license api: test"
 echo "    notarization: NOT RUN"

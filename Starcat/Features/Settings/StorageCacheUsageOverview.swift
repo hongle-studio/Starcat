@@ -139,11 +139,12 @@ struct StorageCacheUsageOverviewCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             Text("settings.storage.cacheOverview.title")
-                .font(.system(size: 13, weight: .semibold))
+                // 行内小标题：`.body.weight(.semibold)`（设置页规范 §2），跟随系统动态字号。
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
             Spacer(minLength: 12)
             Text(totalSummaryText)
-                .font(.system(size: 12))
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .multilineTextAlignment(.trailing)
@@ -195,12 +196,12 @@ struct StorageCacheUsageOverviewCard: View {
                 .fill(segment.group.color(for: colorScheme))
                 .frame(width: 8, height: 8)
             Text(segment.group.titleKey)
-                .font(.system(size: 12))
+                .font(.caption)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             Spacer(minLength: 4)
             Text(segment.bytes.formattedByteSize)
-                .font(.system(size: 12))
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -210,7 +211,7 @@ struct StorageCacheUsageOverviewCard: View {
 
     private var footer: some View {
         Text("settings.storage.cacheOverview.footer")
-            .font(.system(size: 11))
+            .font(.caption2)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }

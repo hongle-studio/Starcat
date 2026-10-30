@@ -1,0 +1,4 @@
+interface:
+  display_name: "Starcat 发版准备"
+  short_description: "固定双渠道发版、版本文档同步与验收门禁"
+  default_prompt: "使用 $starcat-release-readiness 准备并审计 Starcat 目标版本，完成双渠道发布与全工作区版本文档收口。"

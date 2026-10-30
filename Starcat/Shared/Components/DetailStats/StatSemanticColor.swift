@@ -24,12 +24,14 @@ import SwiftUI
 ///
 /// 用法:
 /// ```swift
-/// Image(systemName: "tuningfork")
+/// BusinessIcon(.forkCount, pointSize: 14)
 ///     .foregroundStyle(StatSemanticColor.fork.resolved(colorScheme: colorScheme))
 /// ```
 enum StatSemanticColor {
     case star
     case fork
+    /// 派生身份用绿色，与蓝色的被 Fork 次数分离；不能共用计数色。
+    case forked
     case watchers
     case issues
     case branch
@@ -48,6 +50,7 @@ enum StatSemanticColor {
         case .star, .actionStar: return 0xD97706
         case .actionLibrary: return 0xE11D48
         case .fork: return 0x2563EB
+        case .forked: return 0x15803D
         case .watchers: return 0x7C3AED
         // 比系统红略灰一点，列表胶囊偏红但不刺眼。
         case .issues: return 0xC45C5C
@@ -67,6 +70,7 @@ enum StatSemanticColor {
         case .star, .actionStar: return 0xFBBF24
         case .actionLibrary: return 0xFB7185
         case .fork: return 0x60A5FA
+        case .forked: return 0x4ADE80
         case .watchers: return 0xA78BFA
         case .issues: return 0xE8A0A0
         case .branch: return 0xA78BFA

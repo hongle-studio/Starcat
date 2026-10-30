@@ -55,6 +55,8 @@ Version 0.1.0 (Build 201.f09a499)
 | `GitCommitHash` | `f09a499` | 脚本（自定义 key，每次 build 必写） | App Review 不审自定义 key |
 
 > 拆 commit count 与 hash 是为了一次性满足 App Store 规范（详见 `docs/功能实现总览.md` 2026-06-07 14:50 条）。
+>
+> Direct 渠道例外（2026-09-15）：`run-debug-direct.sh` 与 `package-direct.sh` 的 `CFBundleVersion` 用 `yyyyMMddHHmm` 时间戳，不用 commit count。Sparkle 拿线上 appcast 的 `sparkle:version`（发版时间戳）和运行中 App 的 `CFBundleVersion` 做数值比较，本地包用 commit count（四位）恒小于发版时间戳（十二位），会被判定「比线上旧」而把调试包引导去装更早的正式版。两个入口都用 `STARCAT_DIRECT_BUILD_NUMBER` 固定号。App Store 渠道不受影响，仍用 commit count。
 
 ### 1.4 配套脚本何时跑
 

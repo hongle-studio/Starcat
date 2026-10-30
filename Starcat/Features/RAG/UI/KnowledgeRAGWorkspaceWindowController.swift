@@ -574,7 +574,9 @@ private final class KnowledgeRAGBrowserViewModel {
         workspaceError = RAGWorkspaceError(error: error)
     }
 
-    var embeddingModel: String { dependencies.settings.aiEmbeddingTask.resolvedModelName }
+    var embeddingModel: String {
+        dependencies.settings.resolvedAITask(dependencies.settings.aiEmbeddingTask, type: .embedding).resolvedModelName
+    }
     var configuredEmbeddingModelName: String? { dependencies.settings.configuredEmbeddingModelName }
     var embeddingConfigurationIssue: AIEmbeddingError? { dependencies.settings.embeddingConfigurationIssue }
     var selectedCandidate: RAGRepoCandidate? { candidates.first(where: { $0.repo.id == selectedRepoID }) }
@@ -3106,7 +3108,7 @@ private struct KnowledgeRAGChunkEditor: View {
 
     init(repoContext: RepoContextDocument, onSave: @escaping (String) async -> String?) {
         source = nil
-        sourceSystemImageName = "chevron.left.forwardslash.chevron.right"
+        sourceSystemImageName = BusinessIcon.Symbol.codeContext.systemImage
         sourceTintColor = .purple
         editorTitleKey = "rag.browser.repoContext.title"
         locksMetadataFields = true

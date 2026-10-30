@@ -56,11 +56,27 @@ struct UserFacingError: Equatable, Sendable {
         if let anySearch = error as? AnySearchError {
             return mapExternalService(error: anySearch, operation: operation, service: service ?? "anysearch")
         }
+        if let systemTranslation = error as? SystemTranslationError {
+            return mapSystemTranslation(systemTranslation, operation: operation, service: service)
+        }
+        if let googleTranslation = error as? GoogleTranslationError {
+            return mapGoogleTranslation(googleTranslation, operation: operation, service: service)
+        }
         if let ai = error as? AIClientError {
             return mapAI(ai, operation: operation, service: service)
         }
         if let insight = error as? RepoAIInsightError {
             return mapRepoAIInsight(insight, operation: operation, service: service)
+        }
+        if let localAI = error as? LocalAIError {
+            // 本地模型超上下文 / 重复输出等已有专用文案，不能再套「访问 AI 失败」。
+            return UserFacingError(
+                title: String.l10n("error.user.aiProvider.title"),
+                message: localAI.localizedDescription,
+                recovery: String.l10n("error.user.aiProvider.recovery"),
+                diagnosticSummary: DiagnosticEvent.redact(String(describing: localAI)),
+                shouldRecordDiagnostic: false
+            )
         }
         if let translation = error as? ReadmeTranslationError {
             return mapReadmeTranslation(translation, operation: operation, service: service)
@@ -268,6 +284,78 @@ struct UserFacingError: Equatable, Sendable {
                 operation: operation,
                 service: service,
                 diagnostic: error.diagnosticDetail ?? error.localizedDescription
+            )
+        }
+    }
+
+    /// 系统翻译错误不能套用 AI 服务错误模板；Apple Translation 不访问 AI Provider。
+    private static func mapSystemTranslation(
+        _ error: SystemTranslationError,
+        operation: String,
+        service: String?
+    ) -> UserFacingError {
+        // 语言包未下载 / 语言对不支持 / 源语言无法识别是用户可自行理解的状态，
+        // 超时多为一次性抖动；这些不写诊断，避免把正常用户环境当成线上故障。
+        let shouldRecordDiagnostic: Bool
+        switch error {
+        case .languagePackMissing, .languageUnsupported, .sourceLanguageUndetected, .timedOut, .cancelled:
+            shouldRecordDiagnostic = false
+        case .frameworkUnavailable, .sessionUnavailable, .incompleteResult, .emptyBatch:
+            shouldRecordDiagnostic = true
+        }
+        return UserFacingError(
+            title: String.l10n("readme.translate.engine.system"),
+            message: error.errorDescription ?? String.l10n("readme.translate.error.sessionUnavailable"),
+            recovery: String.l10n("error.user.unknown.recovery"),
+            diagnosticSummary: DiagnosticEvent.redact(error.localizedDescription),
+            shouldRecordDiagnostic: shouldRecordDiagnostic
+        )
+    }
+
+    /// Google 翻译错误使用独立映射，避免无 Key 公开接口或 Cloud API 失败时继续显示“访问 AI”。
+    private static func mapGoogleTranslation(
+        _ error: GoogleTranslationError,
+        operation: String,
+        service: String?
+    ) -> UserFacingError {
+        switch error {
+        case .unauthorized:
+            return make(
+                kind: .unauthorized,
+                operation: operation,
+                service: service,
+                diagnostic: error.localizedDescription,
+                statusCode: 401
+            )
+        case .rateLimited:
+            return make(
+                kind: .rateLimited,
+                operation: operation,
+                service: service,
+                diagnostic: error.localizedDescription,
+                statusCode: 429
+            )
+        case .server(let statusCode):
+            return make(
+                kind: .serverUnavailable,
+                operation: operation,
+                service: service,
+                diagnostic: error.localizedDescription,
+                statusCode: statusCode
+            )
+        case .invalidResponse, .malformedResponse:
+            return make(
+                kind: .decoding,
+                operation: operation,
+                service: service,
+                diagnostic: error.localizedDescription
+            )
+        case .invalidURL, .emptyResponse, .requestTooLarge:
+            return make(
+                kind: .serverUnavailable,
+                operation: operation,
+                service: service,
+                diagnostic: error.localizedDescription
             )
         }
     }

@@ -45,15 +45,14 @@ enum ExploreMode: String, CaseIterable, Identifiable, Hashable, Sendable {
         }
     }
 
-    var systemImage: String {
+    var businessIcon: BusinessIcon.Symbol {
         switch self {
-        case .discover: return "safari"
-        case .trending: return "chart.line.uptrend.xyaxis"
-        case .popular: return "flame"
-        case .newReleases: return "shippingbox"
-        case .weekly: return "newspaper"
-        // eyeglasses：Awesome 是「精选清单」阅读入口，和发现的 safari 区分开。
-        case .awesome: return "eyeglasses"
+        case .discover: return .discovery
+        case .trending: return .trending
+        case .popular: return .popular
+        case .newReleases: return .releases
+        case .weekly: return .weekly
+        case .awesome: return .curatedCollection
         }
     }
 
@@ -108,6 +107,8 @@ struct ExploreNavigationPresentation: Equatable {
 
     static func make(
         mode: ExploreMode,
+        discoverySource: DiscoverySource = .catalog,
+        linuxDoLanguage: String? = nil,
         trendingLanguage: TrendingLanguage,
         discoveryLanguage: String?,
         discoveryTopic: String?,
@@ -119,6 +120,15 @@ struct ExploreNavigationPresentation: Equatable {
     ) -> ExploreNavigationPresentation {
         switch mode {
         case .discover:
+            // Linux.do 是 Discover 下的独立来源，不继承普通目录的 topic / platform
+            // 面包屑和“已筛选”语义。
+            if discoverySource == .linuxDo {
+                let language = TrendingLanguage(linuxDoLanguage ?? "")
+                return ExploreNavigationPresentation(
+                    thirdLevelTitle: language.rawValue.isEmpty ? "Linux.do" : "Linux.do › \(language.localizedDisplayName)",
+                    isFiltered: !language.rawValue.isEmpty
+                )
+            }
             let topicTitle = discoveryTopic.map { code in
                 localizedTopicTitle(
                     code: code,

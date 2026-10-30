@@ -12,6 +12,14 @@
 
 import Foundation
 
+/// MCP Server 对外版本的单一来源。
+///
+/// `initialize.serverInfo.version` 与 `starcat.get_capabilities.server_version`
+/// 都必须复用此值，避免客户端在同一会话里观察到互相矛盾的 Server 版本。
+enum StarcatMCPServerMetadata {
+    static let version = "0.5.0"
+}
+
 /// MCP 对外暴露的 repo 摘要。
 struct MCPRepoDTO: Codable, Sendable {
     let id: Int64
@@ -78,6 +86,17 @@ struct MCPRepoDTO: Codable, Sendable {
 /// MCP 搜索结果。
 struct MCPRepoSearchResult: Codable, Sendable {
     let query: String?
+    let total: Int
+    let limit: Int
+    let repos: [MCPRepoDTO]
+}
+
+/// 按单个用户标签查询仓库的稳定返回结构。
+///
+/// `total` 表示该标签下全部仍为 Star 的仓库数，`repos` 才受 `limit` 限制，便于
+/// Agent 判断 action queue 是否还有未取回项目。
+struct MCPReposByTagResult: Codable, Sendable {
+    let tag: MCPTagDTO
     let total: Int
     let limit: Int
     let repos: [MCPRepoDTO]
@@ -332,6 +351,7 @@ struct MCPCapabilitiesDTO: Codable, Sendable {
     let statistics_read: Bool
     let global_repository_search: Bool
     let local_writes: Bool
+    let github_star_writes: Bool
     let batch_writes: Bool
     let destructive_writes: Bool
     let ai_summary_generation: Bool

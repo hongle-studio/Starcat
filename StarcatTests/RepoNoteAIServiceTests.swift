@@ -81,6 +81,18 @@ struct RepoNoteAIServiceTests {
         #expect(result == "final draft")
     }
 
+    @Test("截断响应不能作为完整笔记返回", arguments: [true, false])
+    func rejectsTruncatedDraft(streamEnabled: Bool) async {
+        let client = RepoNoteAIClientStub(events: [
+            .delta("unfinished draft"),
+            .completed(AIChatResponse(content: "unfinished draft", model: "test", finishReason: "length"))
+        ])
+        await #expect(throws: AIClientError.responseTruncated) {
+            try await RepoAIInsightService.generateText(
+                client: client, request: Self.request, streamEnabled: streamEnabled, onDelta: nil)
+        }
+    }
+
     @Test("空响应不能被当成可应用草稿")
     func emptyResponseFails() async {
         let client = RepoNoteAIClientStub(events: [])

@@ -417,16 +417,11 @@ private final class DeepSeekHarnessDriver: ExternalAgentProtocolDriver, @uncheck
                 return ExternalAgentProtocolOutput()
             }
             switch deltaType {
-            case "text-delta":
-                guard let text = chunk?[external: "text"]?.stringValue else {
-                    return ExternalAgentProtocolOutput()
-                }
-                return ExternalAgentProtocolOutput(events: [.assistantDelta(text)])
-            case "reasoning-delta":
-                guard let text = chunk?[external: "text"]?.stringValue else {
-                    return ExternalAgentProtocolOutput()
-                }
-                return ExternalAgentProtocolOutput(events: [.reasoningDelta(text)])
+            case "text-delta", "reasoning-delta":
+                // DeepSeek 的 `assistant/message` 会携带按 block index 装配完成的权威内容。
+                // 若把每个 token 同时推给 Observable，SwiftUI 会持续重解析 Markdown、测量
+                // 整条时间线并修正滚动位置；这里只等待结算事件，步骤 running 状态仍会反馈进度。
+                return ExternalAgentProtocolOutput()
             case "usage":
                 guard var usage = Self.usage(from: chunk?[external: "usage"] ?? chunk) else {
                     return ExternalAgentProtocolOutput()
@@ -458,29 +453,23 @@ private final class DeepSeekHarnessDriver: ExternalAgentProtocolDriver, @uncheck
             }
         case "assistant/message":
             let message = data[external: "message"] ?? data
-            let text = contentText(in: message, matching: "text")
-            let reasoning = contentText(in: message, matching: "reasoning")
             let usage = Self.usage(from: data[external: "usage"] ?? message[external: "usage"])
-            var events: [ExternalAgentProtocolEvent] = [.assistantMessage(text, usage: usage)]
-            if let reasoning = Self.nonBlank(reasoning) {
-                let messageID = Self.nonBlank(message[external: "id"]?.stringValue)
-                    ?? stepCorrelationID(prefix: "assistant")
-                events.append(.trace(ExternalAgentTraceEvent(
-                    id: "reasoning:\(messageID)",
-                    parentID: currentStepTraceID,
-                    kind: .reasoningSummary,
-                    status: data[external: "interrupted"]?.externalBool == true ? .cancelled : .completed,
-                    title: String.l10n("agent.workspace.trace.kind.thinking"),
-                    summary: reasoning,
-                    details: [.init(
-                        label: String.l10n("agent.workspace.timeline.reasoning"),
-                        value: reasoning,
-                        format: .markdown
-                    )],
-                    completedAt: eventDate(value)
-                )))
-            }
-            return ExternalAgentProtocolOutput(events: events)
+            let turn = data[external: "turn"]?.integerValue ?? currentTurn ?? 0
+            let step = data[external: "step"]?.integerValue ?? currentStep ?? 0
+            let messageID = Self.nonBlank(message[external: "id"]?.stringValue)
+                ?? "assistant:\(turn):\(step):\(value?[external: "seq"]?.integerValue ?? 0)"
+            let parts = assistantVisibleParts(in: message)
+            guard !parts.isEmpty else { return ExternalAgentProtocolOutput() }
+            return ExternalAgentProtocolOutput(events: [.assistantStepMessage(
+                ExternalAgentAssistantStepMessage(
+                    providerMessageID: messageID,
+                    turn: turn,
+                    step: step,
+                    parentTraceID: stepTraceID(turn: turn, step: step),
+                    parts: parts
+                ),
+                usage: usage
+            )])
         case "user/message", "steering/message":
             let message = data[external: "message"] ?? data
             let text = contentText(in: message)
@@ -875,6 +864,23 @@ private final class DeepSeekHarnessDriver: ExternalAgentProtocolDriver, @uncheck
     private func eventDate(_ value: AgentJSONValue?) -> Date {
         guard let milliseconds = value?[external: "time"]?.externalNumber else { return Date() }
         return Date(timeIntervalSince1970: milliseconds / 1_000)
+    }
+
+    /// Harness 已按 content block index 固化最终顺序；直接按数组顺序映射，不能再把所有
+    /// reasoning 和 text 分别拼接，否则“思考 → 正文”的步骤边界会在展示层丢失。
+    private func assistantVisibleParts(in message: AgentJSONValue) -> [AgentMessagePart] {
+        let blocks = message[external: "content"]?.externalArray ?? []
+        return blocks.compactMap { block in
+            guard let text = Self.nonBlank(block[external: "text"]?.stringValue) else { return nil }
+            switch block[external: "type"]?.stringValue {
+            case "reasoning": return .reasoning(text)
+            case "text": return .text(text)
+            default:
+                // tool-call 由随后的 `tool/call` 事件携带权威参数并补入同一消息；这里忽略
+                // 其 provider stream 副本，避免一个工具在 Run 历史中出现两次。
+                return nil
+            }
+        }
     }
 
     private func contentText(in value: AgentJSONValue, matching type: String? = nil) -> String {

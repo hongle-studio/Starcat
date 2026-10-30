@@ -234,6 +234,7 @@ final class RepoAIInsightService {
     private let keychain: any KeychainManaging
     private let externalContextProvider: ExternalSearchContextProvider
     private let entitlementGate: EntitlementGate?
+    private let tagSuggestionRouter: DecisionTagSuggestionRouter?
     private var repositoryInsightsContextProvider:
         (any RepositoryInsightsAIContextProviding)?
 
@@ -300,6 +301,7 @@ final class RepoAIInsightService {
         repositoryInsightsContextProvider:
             (any RepositoryInsightsAIContextProviding)? = nil,
         entitlementGate: EntitlementGate? = nil,
+        tagSuggestionRouter: DecisionTagSuggestionRouter? = nil,
         onSummaryGenerated: (@MainActor (Repo) -> Void)? = nil
     ) {
         self.summaryRepository = summaryRepository
@@ -310,6 +312,7 @@ final class RepoAIInsightService {
         self.repoAIContextProvider = repoAIContextProvider
         self.repositoryInsightsContextProvider = repositoryInsightsContextProvider
         self.entitlementGate = entitlementGate
+        self.tagSuggestionRouter = tagSuggestionRouter
         self.onSummaryGenerated = onSummaryGenerated
     }
 
@@ -341,7 +344,7 @@ final class RepoAIInsightService {
     /// 老用户首次启动时 `aiChatTask` 默认值会用与摘要同 provider+model（详见
     /// `AppSettings.init` 的 fallback 逻辑），所以 model 选择行为对老用户无感。
     var resolvedChatModelName: String {
-        settings.aiChatTask.resolvedModelName.nilIfBlank ?? settings.aiChatModel
+        settings.resolvedAITask(settings.aiChatTask).resolvedModelName.nilIfBlank ?? settings.aiChatModel
     }
 
     func cachedInsight(for repo: Repo) async throws -> RepoAIInsight? {
@@ -408,6 +411,7 @@ final class RepoAIInsightService {
         existingTagHints: AITagHints = .empty,
         includeSummary: Bool = true,
         includeTags: Bool = true,
+        tagGenerationPolicy: AITagGenerationPolicy = .manualReview,
         allowExternalContext: Bool = true,
         codeContextEnabledOverride: Bool? = nil,
         externalContextEnabledOverride: Bool? = nil,
@@ -419,7 +423,18 @@ final class RepoAIInsightService {
     ) async throws -> RepoAIInsightGeneration {
         try enforceGenerationEntitlement(includeSummary: includeSummary, includeTags: includeTags)
         // 必须在 makeSource（ZIP / XML）之前完成配置校验：没配好服务商时不应浪费下载。
-        try ensureGenerationClientsReady(includeSummary: includeSummary, includeTags: includeTags)
+        // Jev 已接管标签时只预检摘要；LLM 标签客户端等到 Jev 判断确实需要新标签时再创建。
+        try ensureGenerationClientsReady(
+            includeSummary: includeSummary,
+            includeTags: includeTags,
+            tagGenerationPolicy: tagGenerationPolicy
+        )
+        // 网络取上下文与两个生成分支都会挂起；在首个 await 前固定客户端、模型、参数和缓存键。
+        // 不能在生成结束时重新读设置，否则切模型会把旧结果署名/缓存到新模型名下。
+        let summaryTask = settings.resolvedAITask(settings.aiSummaryTask)
+        let summaryConfiguration = includeSummary
+            ? try makeGenerationClient(task: summaryTask, taskName: String.l10n("ai.taskName.summary")) : nil
+        let generationCacheKey = cacheModelKey()
         let source = try await makeSource(
             for: repo,
             codeContextRequest: codeContextRequest,
@@ -500,16 +515,28 @@ final class RepoAIInsightService {
 
         var summaryText: String
         let resolvedTagResult: Result<[AITagSuggestion], Error>
-        if includeSummary, includeTags {
-            async let tagResult = tagSuggestionsResult(source: source, hints: existingTagHints)
-            summaryText = try await generateSummary(source: summarySource, onDelta: onSummaryDelta)
+        if let summaryConfiguration, includeTags {
+            async let tagResult = tagSuggestionsResult(
+                repo: repo,
+                source: source,
+                hints: existingTagHints,
+                policy: tagGenerationPolicy
+            )
+            summaryText = try await generateSummary(
+                source: summarySource, onDelta: onSummaryDelta, configuration: summaryConfiguration)
             resolvedTagResult = await tagResult
-        } else if includeSummary {
-            summaryText = try await generateSummary(source: summarySource, onDelta: onSummaryDelta)
+        } else if let summaryConfiguration {
+            summaryText = try await generateSummary(
+                source: summarySource, onDelta: onSummaryDelta, configuration: summaryConfiguration)
             resolvedTagResult = .success([])
         } else if includeTags {
             summaryText = ""
-            resolvedTagResult = await tagSuggestionsResult(source: source, hints: existingTagHints)
+            resolvedTagResult = await tagSuggestionsResult(
+                repo: repo,
+                source: source,
+                hints: existingTagHints,
+                policy: tagGenerationPolicy
+            )
         } else {
             // 调用方两者都关：返回空 insight，避免无意义网络调用。
             summaryText = ""
@@ -533,7 +560,7 @@ final class RepoAIInsightService {
             return nil
         }()
 
-        let summaryModel = settings.aiSummaryTask.resolvedModelName.nilIfBlank ?? settings.aiChatModel
+        let summaryModel = summaryConfiguration?.model ?? summaryTask.resolvedModelName
         var insight = Self.makeInsight(
             summaryText: summaryText,
             tags: suggestions,
@@ -559,15 +586,8 @@ final class RepoAIInsightService {
         insight.externalContextMarkdown = resolvedExternalContext?.markdown
         insight.externalContextSources = resolvedExternalContext?.sourceItems
 
-        // Y9.1（2026-06-14）：把生成时的"上下文配置快照"写进 insight。
-        //
-        // 这是 stale banner 判定的唯一信任源：UI 层用 `snap vs 当前 settings` 对比，
-        // 只在用户翻过开关时报 stale；老 insight 缺该字段（Codable 反序列化为 nil）
-        // 自动豁免，规避 Y9 初版"老缓存每次都误报"的 bug（dong4j 2026-06-14 反馈）。
-        //
-        // externalContextAllowed 存 effective 结果（双开关 AND + 私仓门控的最终值），
-        // 与 chatStream 的 ExternalSearchContextProvider.allowsExternalContext(...) 同款判定，
-        // 避免后续 UI 层重复计算 3 个开关的组合。
+        // 保留生成配置快照的既有缓存结构；界面不再用它比较当前配置或提示重新生成。
+        // externalContextAllowed 仍记录双开关与私仓门控计算后的 effective 结果。
         insight.generationContextSettings = GenerationContextSettings(
             codeContextEnabled: codeContextEnabledOverride ?? settings.aiRepoContextEnabled,
             externalContextAllowed: isExternalContextAllowed(
@@ -583,7 +603,7 @@ final class RepoAIInsightService {
             let jsonData = try JSONEncoder().encode(insight)
             let record = AISummaryRecord(
                 repoId: repo.id,
-                model: cacheModelKey(),
+                model: generationCacheKey,
                 sourceHash: source.hash,
                 summaryJson: String(decoding: jsonData, as: UTF8.self),
                 generatedAt: generatedAt
@@ -609,20 +629,55 @@ final class RepoAIInsightService {
         )
     }
 
-    /// 一次请求为一小批仓库生成标签建议。
+    /// 标签生成的统一入口：Jev 可用时先复用现有词表，不足且策略允许时再调用 LLM。
+    func generateTagSuggestions(
+        for repos: [Repo],
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose = .reuseFirst,
+        policy: AITagGenerationPolicy = .manualReview
+    ) async throws -> [Int64: [AITagSuggestion]] {
+        if purpose == .newOnly {
+            return try await generateLLMTagSuggestions(
+                for: repos,
+                tagHintsByRepoID: tagHintsByRepoID,
+                purpose: .newOnly
+            )
+        }
+        guard let tagSuggestionRouter else {
+            return try await generateLLMTagSuggestions(
+                for: repos,
+                tagHintsByRepoID: tagHintsByRepoID,
+                purpose: .reuseFirst
+            )
+        }
+        return try await tagSuggestionRouter.generateTagSuggestions(
+            for: repos,
+            tagHintsByRepoID: tagHintsByRepoID,
+            policy: policy
+        ) { [self] fallbackRepos, fallbackHints, fallbackPurpose in
+            try await generateLLMTagSuggestions(
+                for: fallbackRepos,
+                tagHintsByRepoID: fallbackHints,
+                purpose: fallbackPurpose
+            )
+        }
+    }
+
+    /// 一次 LLM 请求为一小批仓库生成标签建议。
     ///
     /// 与 GitHub Lists 批量分组相同，批量只承载轻量元数据与截断 README，不准备代码、
     /// 洞察或外部搜索。用户自定义的 Tags Prompt 仍会逐仓渲染；全库标签词表只在请求
     /// 顶层注入一次，避免 8 个仓库重复携带同一份 12K 字符词表撑爆上下文。
-    func generateTagSuggestions(
+    private func generateLLMTagSuggestions(
         for repos: [Repo],
-        tagHintsByRepoID: [Int64: AITagHints]
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose
     ) async throws -> [Int64: [AITagSuggestion]] {
         try enforceGenerationEntitlement(includeSummary: false, includeTags: true)
         try ensureGenerationClientsReady(includeSummary: false, includeTags: true)
         guard !repos.isEmpty else { return [:] }
 
-        let task = settings.aiTagsTask
+        let task = settings.resolvedAITask(settings.aiTagsTask)
         let (client, model) = try makeClient(
             task: task,
             fallbackModel: settings.aiChatModel,
@@ -630,12 +685,16 @@ final class RepoAIInsightService {
         )
         let outputLanguage = Self.outputLanguageDescriptor()
         let tagCounts = settings.clampedAITagSuggestionCounts
+        // Jev 兜底一次最多扩充一个新标签；把 Prompt 占位符也收紧到 1...1，
+        // 避免用户设置的 minimum > 1 与“最多一个新标签”产生互相矛盾的指令。
+        let promptMinimum = purpose == .newOnly ? 1 : tagCounts.minimum
+        let promptMaximum = purpose == .newOnly ? 1 : tagCounts.maximum
         let baseSystemPrompt = task.prompt.renderedSystemPrompt(placeholders: [
             "outputLanguage": outputLanguage,
-            "minTags": String(tagCounts.minimum),
-            "maxTags": String(tagCounts.maximum)
+            "minTags": String(promptMinimum),
+            "maxTags": String(promptMaximum)
         ])
-        let systemPrompt = baseSystemPrompt + """
+        var systemPrompt = baseSystemPrompt + """
 
 
         # Batch Output Override (STRICT)
@@ -645,6 +704,22 @@ final class RepoAIInsightService {
         Return exactly one results entry for every provided repo_id. Do not omit, duplicate, or invent repo_id values.
         Apply all tag constraints above independently to each repository.
         """
+        if purpose == .newOnly {
+            // 这是对用户可编辑基础 Prompt 的内部运行时覆盖：Jev 已经完成旧词表判断，
+            // LLM 只能命名缺失概念，不能重新把低分旧标签塞回结果。
+            systemPrompt += """
+
+
+            # Jev New-Tag Fallback Override (STRICT)
+            Jev has already evaluated the repository against every reusable tag supplied in this request.
+            For every repository, return ZERO OR ONE genuinely new reusable tag name.
+            The name MUST NOT equal or canonically duplicate any name in that repository's existing tags or in <shared_library_tags>.
+            Do not return an existing vocabulary tag even when the base prompt says to prefer reuse.
+            Across the entire results array, use at most FIVE distinct new tag names. Reuse the same name for repositories that share a stable concept.
+            When more than one repository is provided, omit repository-specific or one-off concepts and prefer names supported by at least two repositories.
+            This section overrides every conflicting reuse, minimum-count, and decision-order instruction above.
+            """
+        }
 
         var sharedLibraryTags: [String] = []
         var seenLibraryKeys: Set<String> = []
@@ -668,9 +743,11 @@ final class RepoAIInsightService {
                 "readme": String(source.readme.prefix(4_000)),
                 "codeContext": "",
                 "repoTags": hints.repoTags.joined(separator: ", "),
-                "libraryTags": "Use exact names from <shared_library_tags> below.",
-                "minTags": String(tagCounts.minimum),
-                "maxTags": String(tagCounts.maximum)
+                "libraryTags": purpose == .newOnly
+                    ? "All names in <shared_library_tags> below are forbidden output names."
+                    : "Use exact names from <shared_library_tags> below.",
+                "minTags": String(promptMinimum),
+                "maxTags": String(promptMaximum)
             ])
             repositoryRequests.append([
                 "repo_id": repo.id,
@@ -694,9 +771,14 @@ final class RepoAIInsightService {
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             model: model,
-            parameters: settings.effectiveParameters(for: task),
+            parameters: task.parameters,
             responseFormat: .jsonObject,
-            usageContext: AIUsageContext(feature: .repoTags, phase: "batch-recommendation")
+            usageContext: AIUsageContext(
+                feature: .repoTags,
+                phase: purpose == .newOnly && repos.count > 1
+                    ? "batch-vocabulary-discovery"
+                    : (purpose == .newOnly ? "batch-new-tag-fallback" : "batch-recommendation")
+            )
         ))
         try Task.checkCancellation()
 
@@ -706,8 +788,22 @@ final class RepoAIInsightService {
         )
         return Dictionary(uniqueKeysWithValues: repos.map { repo in
             let hints = tagHintsByRepoID[repo.id] ?? .empty
+            let decodedSuggestions = decoded[repo.id] ?? []
+            let allowedSuggestions: [AITagSuggestion]
+            if purpose == .newOnly {
+                let forbiddenKeys = Set(
+                    (hints.repoTags + hints.libraryTags).map(AITagSuggestionPolicy.canonicalKey)
+                )
+                // Prompt 不是完整性边界；Provider 若仍返回旧标签，必须在进入审核前丢弃。
+                allowedSuggestions = decodedSuggestions.filter { suggestion in
+                    let key = AITagSuggestionPolicy.canonicalKey(suggestion.name)
+                    return !key.isEmpty && !forbiddenKeys.contains(key)
+                }
+            } else {
+                allowedSuggestions = decodedSuggestions
+            }
             let suggestions = AITagSuggestionPolicy.normalizedSuggestions(
-                decoded[repo.id] ?? [],
+                allowedSuggestions,
                 vocabulary: hints.repoTags + hints.libraryTags,
                 maximumSuggestionCount: tagCounts.maximum
             )
@@ -772,7 +868,7 @@ final class RepoAIInsightService {
             ])
         }
 
-        let task = settings.aiTagsTask
+        let task = settings.resolvedAITask(settings.aiTagsTask)
         let (client, model) = try makeClient(
             task: task,
             fallbackModel: settings.aiChatModel,
@@ -809,7 +905,7 @@ final class RepoAIInsightService {
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             model: model,
-            parameters: settings.effectiveParameters(for: task),
+            parameters: task.parameters,
             responseFormat: .jsonObject,
             usageContext: AIUsageContext(feature: .repoGrouping, phase: "batch_recommendation")
         ))
@@ -889,16 +985,16 @@ final class RepoAIInsightService {
         onReasoningCompleted: (@MainActor () -> Void)? = nil,
         onDelta: (@MainActor (String) -> Void)? = nil
     ) async throws -> String {
-        try entitlementGate?.requirePro(.aiChat)
+        try entitlementGate?.requirePro(.aiChat, usesLocalOnly: settings.isChatTaskResolvedToLocalAI)
+        // README / 外部上下文准备期间可能切换设置；本轮模型和参数在挂起前固定。
+        let task = settings.resolvedAITask(settings.aiChatTask)
+        let (client, model) = try makeClient(task: task, fallbackModel: settings.aiChatModel, taskName: String.l10n("ai.taskName.chat"))
         let source = try await makeSource(for: repo)
 
         // Y9：复用同一份 source 做缓存比对（避免 makeSource 被调两次造成重复网络 IO）。
         // 缓存命中 = 摘要 + External Search markdown 都从 `ai_summaries.summary_json` 直接拿到。
         // try? 故意吞错：缓存读失败（比如 SQLite 临时锁）不应阻塞对话主流程。
         let cached = try? await loadCachedInsight(source: source, repo: repo)
-
-        let task = settings.aiChatTask
-        let (client, model) = try makeClient(task: task, fallbackModel: settings.aiChatModel, taskName: String.l10n("ai.taskName.chat"))
 
         let systemPrompt = buildChatSystemPrompt(
             repo: repo,
@@ -914,7 +1010,7 @@ final class RepoAIInsightService {
             userPrompt: userMessage,
             history: history,
             model: model,
-            parameters: settings.effectiveParameters(for: task),
+            parameters: task.parameters,
             responseFormat: .text,
             usageContext: AIUsageContext(feature: .repoChat, phase: "conversation")
         )
@@ -949,10 +1045,10 @@ final class RepoAIInsightService {
     private func enforceGenerationEntitlement(includeSummary: Bool, includeTags: Bool) throws {
         guard let entitlementGate else { return }
         if includeSummary {
-            try entitlementGate.requirePro(.aiSummary)
+            try entitlementGate.requirePro(.aiSummary, usesLocalOnly: settings.isSummaryTaskResolvedToLocalAI)
         }
         if includeTags {
-            try entitlementGate.requirePro(.aiTags)
+            try entitlementGate.requirePro(.aiTags, usesLocalOnly: settings.isTagsTaskResolvedToLocalAI)
         }
     }
 
@@ -967,7 +1063,7 @@ final class RepoAIInsightService {
                 taskName: String.l10n("ai.taskName.summary")
             )
             _ = try makeClient(
-                task: settings.aiSummaryTask,
+                task: settings.resolvedAITask(settings.aiSummaryTask),
                 fallbackModel: settings.aiChatModel,
                 taskName: String.l10n("ai.taskName.summary")
             )
@@ -978,11 +1074,28 @@ final class RepoAIInsightService {
                 taskName: String.l10n("ai.taskName.tagRecommendation")
             )
             _ = try makeClient(
-                task: settings.aiTagsTask,
+                task: settings.resolvedAITask(settings.aiTagsTask),
                 fallbackModel: settings.aiChatModel,
                 taskName: String.l10n("ai.taskName.tagRecommendation")
             )
         }
+    }
+
+    /// Jev-first 标签生成的路由感知预检。
+    ///
+    /// Jev 可用时，现有标签可能已经足够，因此不能在请求开始前强制要求 LLM 配置；
+    /// 真正进入“新增标签”兜底时，LLM fallback 会再次走普通预检并给出原有配置错误。
+    func ensureGenerationClientsReady(
+        includeSummary: Bool,
+        includeTags: Bool,
+        tagGenerationPolicy: AITagGenerationPolicy
+    ) throws {
+        _ = tagGenerationPolicy
+        let requiresLLMTagClient = includeTags && tagSuggestionRouter?.isRoutingToDecisionEngine != true
+        try ensureGenerationClientsReady(
+            includeSummary: includeSummary,
+            includeTags: requiresLLMTagClient
+        )
     }
 
     /// 个人笔记生成的轻量预检。
@@ -992,7 +1105,7 @@ final class RepoAIInsightService {
     func ensureNoteGenerationReady() throws {
         try enforceGenerationEntitlement(includeSummary: true, includeTags: false)
         _ = try makeClient(
-            task: settings.aiSummaryTask,
+            task: settings.resolvedAITask(settings.aiSummaryTask),
             fallbackModel: settings.aiChatModel,
             taskName: String.l10n("ai.taskName.summary")
         )
@@ -1101,12 +1214,57 @@ final class RepoAIInsightService {
         )
     }
 
+    /// 同一次生成的不可变配置；保存客户端还避免准备上下文期间切换 Provider 后读到新凭据。
+    private struct GenerationClient {
+        let task: AIModelTaskConfiguration
+        let client: any AIClientProtocol
+        let model: String
+    }
+
+    private func makeGenerationClient(task: AIModelTaskConfiguration, taskName: String) throws -> GenerationClient {
+        let (client, model) = try makeClient(task: task, fallbackModel: settings.aiChatModel, taskName: taskName)
+        return GenerationClient(task: task, client: client, model: model)
+    }
+
     private func tagSuggestionsResult(
+        repo: Repo,
         source: Source,
-        hints: AITagHints
+        hints: AITagHints,
+        policy: AITagGenerationPolicy
     ) async -> Result<[AITagSuggestion], Error> {
         do {
-            return .success(try await generateTags(source: source, hints: hints))
+            let fallback: @MainActor (
+                [Repo],
+                [Int64: AITagHints],
+                AITagSuggestionPurpose
+            ) async throws -> [Int64: [AITagSuggestion]] = { [self] fallbackRepos, fallbackHints, purpose in
+                guard fallbackRepos.contains(where: { $0.id == repo.id }) else { return [:] }
+                let task = settings.resolvedAITask(settings.aiTagsTask)
+                let configuration = try makeGenerationClient(
+                    task: task,
+                    taskName: String.l10n("ai.taskName.tagRecommendation")
+                )
+                let suggestions = try await generateTags(
+                    source: source,
+                    hints: fallbackHints[repo.id] ?? hints,
+                    configuration: configuration,
+                    purpose: purpose
+                )
+                return [repo.id: suggestions]
+            }
+
+            let suggestionsByRepoID: [Int64: [AITagSuggestion]]
+            if let tagSuggestionRouter {
+                suggestionsByRepoID = try await tagSuggestionRouter.generateTagSuggestions(
+                    for: [repo],
+                    tagHintsByRepoID: [repo.id: hints],
+                    policy: policy,
+                    llmFallback: fallback
+                )
+            } else {
+                suggestionsByRepoID = try await fallback([repo], [repo.id: hints], .reuseFirst)
+            }
+            return .success(suggestionsByRepoID[repo.id] ?? [])
         } catch {
             AppLog.ai.error("AI tag generation failed: \(error.localizedDescription, privacy: .public)")
             return .failure(error)
@@ -1115,11 +1273,12 @@ final class RepoAIInsightService {
 
     private func generateSummary(
         source: Source,
-        onDelta: (@MainActor (String) -> Void)?
+        onDelta: (@MainActor (String) -> Void)?,
+        configuration: GenerationClient
     ) async throws -> String {
-        let task = settings.aiSummaryTask
-        let (client, model) = try makeClient(task: task, fallbackModel: settings.aiChatModel, taskName: String.l10n("ai.taskName.summary"))
-        let params = settings.effectiveParameters(for: task)
+        let task = configuration.task
+        let (client, model) = (configuration.client, configuration.model)
+        let params = task.parameters
         // Summary 任务占位符（v4，2026-06-14）：
         // - system: `{outputLanguage}`
         // - user:   `{outputLanguage}` / `{metadata}` / `{readme}` / `{codeContext}` /
@@ -1159,13 +1318,13 @@ final class RepoAIInsightService {
         existingNote: String,
         onDelta: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        let task = settings.aiSummaryTask
+        let task = settings.resolvedAITask(settings.aiSummaryTask)
         let (client, model) = try makeClient(
             task: task,
             fallbackModel: settings.aiChatModel,
             taskName: String.l10n("ai.taskName.summary")
         )
-        let params = settings.effectiveParameters(for: task)
+        let params = task.parameters
         let request = Self.makeRepoNoteRequest(
             readmeMarkdown: readmeMarkdown,
             existingNote: existingNote,
@@ -1183,9 +1342,9 @@ final class RepoAIInsightService {
 
     /// GitHub 通知评论：走 Chat 任务，强制关 thinking，不写仓库摘要缓存。
     func ensureGitHubCommentReady() throws {
-        try entitlementGate?.requirePro(.aiChat)
+        try entitlementGate?.requirePro(.aiChat, usesLocalOnly: settings.isChatTaskResolvedToLocalAI)
         _ = try makeClient(
-            task: settings.aiChatTask,
+            task: settings.resolvedAITask(settings.aiChatTask),
             fallbackModel: settings.aiChatModel,
             taskName: String.l10n("ai.taskName.chat")
         )
@@ -1196,13 +1355,13 @@ final class RepoAIInsightService {
         onDelta: @escaping @MainActor (String) -> Void
     ) async throws -> String {
         try ensureGitHubCommentReady()
-        let task = settings.aiChatTask
+        let task = settings.resolvedAITask(settings.aiChatTask)
         let (client, model) = try makeClient(
             task: task,
             fallbackModel: settings.aiChatModel,
             taskName: String.l10n("ai.taskName.chat")
         )
-        let params = settings.effectiveParameters(for: task)
+        let params = task.parameters
         let request = GitHubNotificationCommentAI.makeRequest(
             pack: pack,
             model: model,
@@ -1263,6 +1422,7 @@ final class RepoAIInsightService {
                     continue
                 case .completed(let response):
                     try Task.checkCancellation()
+                    guard response.finishReason != "length" else { throw AIClientError.responseTruncated }
                     guard let final = response.content.nilIfBlank ?? accumulated.nilIfBlank else {
                         throw AIClientError.emptyResponse
                     }
@@ -1275,6 +1435,7 @@ final class RepoAIInsightService {
         } else {
             let response = try await client.chat(request: request)
             try Task.checkCancellation()
+            guard response.finishReason != "length" else { throw AIClientError.responseTruncated }
             guard let final = response.content.nilIfBlank else { throw AIClientError.emptyResponse }
             return final
         }
@@ -1295,17 +1456,36 @@ final class RepoAIInsightService {
     /// **删占位符 = 不注入对应数据**：用户在 Settings 改默认 prompt 把某个占位符删掉，
     /// service 这里仍然 build 同一份 dict，但替换不到 → 自然不渲染对应内容；
     /// 反过来用户多写了占位符也无害（dict 没有就保留字面量，让 LLM 直接看到便于排错）。
-    private func generateTags(source: Source, hints: AITagHints) async throws -> [AITagSuggestion] {
-        let task = settings.aiTagsTask
-        let (client, model) = try makeClient(task: task, fallbackModel: settings.aiChatModel, taskName: String.l10n("ai.taskName.tagRecommendation"))
+    private func generateTags(
+        source: Source,
+        hints: AITagHints,
+        configuration: GenerationClient,
+        purpose: AITagSuggestionPurpose
+    ) async throws -> [AITagSuggestion] {
+        let task = configuration.task
+        let (client, model) = (configuration.client, configuration.model)
 
         let outputLanguage = Self.outputLanguageDescriptor()
         let tagCounts = settings.clampedAITagSuggestionCounts
-        let systemPrompt = task.prompt.renderedSystemPrompt(placeholders: [
+        let promptMinimum = purpose == .newOnly ? 1 : tagCounts.minimum
+        let promptMaximum = purpose == .newOnly ? 1 : tagCounts.maximum
+        var systemPrompt = task.prompt.renderedSystemPrompt(placeholders: [
             "outputLanguage": outputLanguage,
-            "minTags": String(tagCounts.minimum),
-            "maxTags": String(tagCounts.maximum)
+            "minTags": String(promptMinimum),
+            "maxTags": String(promptMaximum)
         ])
+        if purpose == .newOnly {
+            systemPrompt += """
+
+
+            # Jev New-Tag Fallback Override (STRICT)
+            Jev has already evaluated the repository against every reusable tag supplied in this request.
+            Return exactly ONE genuinely new reusable tag name.
+            The name MUST NOT equal or canonically duplicate any name in the repository tags or library tags.
+            Do not return an existing vocabulary tag even when the base prompt says to prefer reuse.
+            This section overrides every conflicting reuse, minimum-count, and decision-order instruction above.
+            """
+        }
         // hints 已由 makeTagHints 工厂方法做过 trim + 去重 + 排序 + 截断（详见 AITagHints 注释），
         // 这里 join 即可；任一为空时占位符渲染为空字符串，prompt 模板里对应的 label
         // 保持原样（用户编辑 prompt 时所见即所得）。
@@ -1315,26 +1495,41 @@ final class RepoAIInsightService {
             "codeContext": source.codeContext,
             "repoTags": hints.repoTags.joined(separator: ", "),
             "libraryTags": hints.libraryTags.joined(separator: ", "),
-            "minTags": String(tagCounts.minimum),
-            "maxTags": String(tagCounts.maximum)
+            "minTags": String(promptMinimum),
+            "maxTags": String(promptMaximum)
         ])
 
         let response = try await client.chat(request: AIChatRequest(
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             model: model,
-            parameters: settings.effectiveParameters(for: task),
+            parameters: task.parameters,
             responseFormat: .jsonObject,
-            usageContext: AIUsageContext(feature: .repoTags, phase: "recommendation")
+            usageContext: AIUsageContext(
+                feature: .repoTags,
+                phase: purpose == .newOnly ? "new-tag-fallback" : "recommendation"
+            )
         ))
         try Task.checkCancellation()
         let decoded = try Self.decodeTagSuggestions(json: response.content)
+        let allowedSuggestions: [AITagSuggestion]
+        if purpose == .newOnly {
+            let forbiddenKeys = Set(
+                (hints.repoTags + hints.libraryTags).map(AITagSuggestionPolicy.canonicalKey)
+            )
+            allowedSuggestions = decoded.filter { suggestion in
+                let key = AITagSuggestionPolicy.canonicalKey(suggestion.name)
+                return !key.isEmpty && !forbiddenKeys.contains(key)
+            }
+        } else {
+            allowedSuggestions = decoded
+        }
         // Prompt 是概率约束，不能直接作为写库边界。repo 标签排在词表前面，确保历史
         // 同义形式冲突时优先沿用当前仓库已经绑定的标准拼写。
         return AITagSuggestionPolicy.normalizedSuggestions(
-            decoded,
+            allowedSuggestions,
             vocabulary: hints.repoTags + hints.libraryTags,
-            maximumSuggestionCount: tagCounts.maximum
+            maximumSuggestionCount: purpose == .newOnly ? 1 : tagCounts.maximum
         )
     }
 
@@ -1364,14 +1559,14 @@ final class RepoAIInsightService {
         }
         let model = task.resolvedModelName.nilIfBlank ?? fallbackModel
 
-        return (try OpenAIClient(configuration: AIClientConfiguration(
+        return (try AIClientFactory.make(configuration: AIClientConfiguration(
             providerID: profile.id,
             provider: profile.provider,
             apiKey: apiKey,
             baseURL: profile.baseURL,
             chatModel: model,
-            embeddingModel: settings.aiEmbeddingTask.resolvedModelName,
-            timeoutInterval: settings.effectiveParameters(for: task).timeoutSeconds
+            embeddingModel: settings.resolvedAITask(settings.aiEmbeddingTask, type: .embedding).resolvedModelName,
+            timeoutInterval: task.parameters.timeoutSeconds
         )), model)
     }
 
@@ -1393,8 +1588,10 @@ final class RepoAIInsightService {
     /// reason 都不同，不能共用 `ai_summaries` 记录。保持 internal 是为了让单测能直接锁住
     /// 这个缓存边界，业务调用仍只通过 cached/generate API 读写。
     func cacheModelKey() -> String {
-        let summaryModel = settings.aiSummaryTask.resolvedModelName.nilIfBlank ?? settings.aiChatModel
-        let tagsModel = settings.aiTagsTask.resolvedModelName.nilIfBlank ?? settings.aiChatModel
+        let summaryTask = settings.resolvedAITask(settings.aiSummaryTask)
+        let tagsTask = settings.resolvedAITask(settings.aiTagsTask)
+        let summaryModel = summaryTask.resolvedModelName.nilIfBlank ?? settings.aiChatModel
+        let tagsModel = tagsTask.resolvedModelName.nilIfBlank ?? settings.aiChatModel
         let outputLanguage = Self.outputLanguageDescriptor()
         let external: String = {
             guard settings.externalContextEnabled else { return "off" }
@@ -1402,7 +1599,7 @@ final class RepoAIInsightService {
             let aggregate = settings.aggregateExternalContextSearchEnabled && settings.isProUser ? "aggregate" : "single"
             return "\(aggregate)-\(settings.externalContextProviderSelection.rawValue)-\(settings.externalSearchDefaultProvider.rawValue)-\(privacy)"
         }()
-        return "lang:\(outputLanguage)|summary:\(settings.aiSummaryTask.providerID)/\(summaryModel)|tags:\(settings.aiTagsTask.providerID)/\(tagsModel)|external:\(external)"
+        return "lang:\(outputLanguage)|summary:\(summaryTask.providerID)/\(summaryModel)|tags:\(tagsTask.providerID)/\(tagsModel)|external:\(external)"
     }
 
     /// 为标签生成构造双层 hints：repo 自身已绑定标签（强信号） + 用户标签库复用词表。
@@ -1715,14 +1912,19 @@ final class RepoAIInsightService {
     nonisolated static func decodeTagSuggestions(json raw: String) throws -> [AITagSuggestion] {
         let json = extractJSONObject(from: raw)
         guard let data = json.data(using: .utf8) else { throw RepoAIInsightError.invalidJSON }
-        do {
-            if let envelope = try? JSONDecoder().decode(AITagSuggestionEnvelope.self, from: data) {
-                return envelope.suggestedTags
-            }
-            return try JSONDecoder().decode([AITagSuggestion].self, from: data)
-        } catch {
+        if let envelope = try? JSONDecoder().decode(AITagSuggestionEnvelope.self, from: data) {
+            return markAsLLMGenerated(envelope.suggestedTags)
+        }
+        if let list = try? JSONDecoder().decode([AITagSuggestion].self, from: data) {
+            return markAsLLMGenerated(list)
+        }
+        // Anthropic / 中转常给 snake_case、缺 reason、或把标签写成字符串数组。
+        guard let parsed = try? JSONSerialization.jsonObject(with: data),
+              let tags = tagSuggestions(fromJSON: parsed)
+        else {
             throw RepoAIInsightError.invalidJSON
         }
+        return markAsLLMGenerated(tags)
     }
 
     nonisolated static func decodeBatchTagSuggestions(
@@ -1738,12 +1940,23 @@ final class RepoAIInsightService {
             for result in envelope.results {
                 // 漏项不能伪装成“没有标签”，重复项也不能静默覆盖前一个结果。
                 guard decoded[result.repoID] == nil else { throw RepoAIInsightError.invalidJSON }
-                decoded[result.repoID] = result.suggestedTags
+                decoded[result.repoID] = markAsLLMGenerated(result.suggestedTags)
             }
             guard Set(decoded.keys) == expectedRepoIDs else { throw RepoAIInsightError.invalidJSON }
             return decoded
         } catch {
             throw RepoAIInsightError.invalidJSON
+        }
+    }
+
+    /// 来源在本地调用边界统一盖章，避免模型输出伪造 `engine` 后在审核界面冒充 Jev。
+    private nonisolated static func markAsLLMGenerated(
+        _ suggestions: [AITagSuggestion]
+    ) -> [AITagSuggestion] {
+        suggestions.map { suggestion in
+            var stamped = suggestion
+            stamped.engine = .llm
+            return stamped
         }
     }
 
@@ -1822,14 +2035,71 @@ final class RepoAIInsightService {
     }
 
     private nonisolated static func extractJSONObject(from raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let start = trimmed.firstIndex(of: "{"),
-              let end = trimmed.lastIndex(of: "}"),
-              start <= end
-        else {
-            return trimmed
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("```") {
+            var lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            if lines.first?.hasPrefix("```") == true {
+                lines.removeFirst()
+            }
+            if lines.last?.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```") == true {
+                lines.removeLast()
+            }
+            trimmed = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return String(trimmed[start...end])
+        if let start = trimmed.firstIndex(of: "{"),
+           let end = trimmed.lastIndex(of: "}"),
+           start <= end {
+            return String(trimmed[start...end])
+        }
+        if let start = trimmed.firstIndex(of: "["),
+           let end = trimmed.lastIndex(of: "]"),
+           start <= end {
+            return String(trimmed[start...end])
+        }
+        return trimmed
+    }
+
+    /// 宽松解析标签列表：envelope / 数组 / 字符串标签 / snake_case。
+    private nonisolated static func tagSuggestions(fromJSON value: Any) -> [AITagSuggestion]? {
+        if let dictionary = value as? [String: Any] {
+            if let rawTags = dictionary["suggestedTags"]
+                ?? dictionary["suggested_tags"]
+                ?? dictionary["tags"] {
+                return tagSuggestions(fromJSON: rawTags)
+            }
+            if dictionary["name"] != nil || dictionary["tag"] != nil {
+                return parseTagItem(dictionary).map { [$0] }
+            }
+            return nil
+        }
+        if let array = value as? [Any] {
+            let items = array.compactMap(parseTagItem)
+            return items.isEmpty && !array.isEmpty ? nil : items
+        }
+        return nil
+    }
+
+    private nonisolated static func parseTagItem(_ value: Any) -> AITagSuggestion? {
+        if let name = value as? String {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return AITagSuggestion(name: trimmed, confidence: 0.8, reason: "")
+        }
+        guard let dictionary = value as? [String: Any] else { return nil }
+        let name = ((dictionary["name"] as? String) ?? (dictionary["tag"] as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        let reason = (dictionary["reason"] as? String) ?? ""
+        let confidence = parseTagConfidence(dictionary["confidence"])
+        return AITagSuggestion(name: name, confidence: confidence, reason: reason)
+    }
+
+    private nonisolated static func parseTagConfidence(_ value: Any?) -> Double {
+        if let number = value as? Double { return number }
+        if let number = value as? Int { return Double(number) }
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let text = value as? String, let number = Double(text) { return number }
+        return 0.8
     }
 
     // 2026-06-12：原 `stripHTML(_:)` 已被 `ReadmePreprocessor.process(html:)` 取代。

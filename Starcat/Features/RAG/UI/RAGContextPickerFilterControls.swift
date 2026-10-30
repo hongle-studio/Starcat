@@ -157,12 +157,11 @@ struct RAGContextPickerFilterControls: View {
                 icon: "archivebox",
                 isOn: filterBinding(\.hideArchived)
             ),
-            .toggle(
-                id: "hideForks",
-                label: "settings.general.hideForks",
-                icon: "tuningfork",
-                isOn: filterBinding(\.hideForks)
-            ),
+            .content(id: "hideForks", view: AnyView(
+                Toggle(isOn: filterBinding(\.hideForks)) {
+                    Label("settings.general.hideForks", businessIcon: .forkedRepository, pointSize: 13)
+                }
+            )),
         ])
         return items
     }

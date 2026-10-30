@@ -96,7 +96,7 @@ struct InsightsListView: View {
     @ViewBuilder
     private func row(_ item: InsightsSelection, count: Int?) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: item.systemImage)
+            BusinessIcon(source: item.iconSource, pointSize: (item.iconSource.isAsset ? 16 : 13) * interfaceScale.multiplier)
                 .foregroundStyle(InsightsColor.resolve(item.tintName))
                 .frame(width: 18)
 

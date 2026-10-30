@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import Observation
 import Testing
 @testable import Starcat
 
@@ -49,6 +50,7 @@ struct BatchAIQueueServiceTests {
         #expect(provider.generationCount == 1)
         #expect(!restoredService.isRunning)
         #expect(restoredService.pendingTagReviewCount == 1)
+        #expect(AIOrganizationBannerState.tags(restoredService) == .review(count: 1))
         #expect(restoredService.jobs.first?.suggestedTags == Self.sampleSuggestions)
         #expect(restoredService.discardCurrentSession())
         for _ in 0..<50 {
@@ -110,6 +112,7 @@ struct BatchAIQueueServiceTests {
         #expect(service.jobs.first?.status == .failed)
         #expect(service.jobs.first?.failure == .cancelled)
         #expect(service.hasUnresolvedManualWork)
+        #expect(AIOrganizationBannerState.tags(service) == .failed(count: 1))
         #expect(service.canDiscardCurrentSession)
         #expect(!service.finishManualSessionIfResolved())
 
@@ -191,6 +194,13 @@ struct BatchAIQueueServiceTests {
         #expect(service.pendingTagReviewCount == 1)
         #expect(service.selectedRepoIDsForTagApplication == [repo.id])
         #expect(service.selectedTagReviewRepositoryCount == 1)
+        #expect(provider.batchTagGenerationCount == 1)
+        #expect(provider.lastBatchInvocationMode == .manual)
+        #expect(provider.lastTagGenerationPolicy == AITagGenerationPolicy(
+            allowNewTags: false,
+            minimumReusableConfidence: 0
+        ))
+        #expect(provider.generationCount == 0)
         #expect(try await repoTagRepository.fetchTags(forRepo: repo.id).isEmpty)
     }
 
@@ -214,6 +224,29 @@ struct BatchAIQueueServiceTests {
         #expect(BatchAIQueuePresentationStore.primaryState(for: job) == .failed)
         #expect(service.failedCount == 1)
         #expect(service.completedCount == 0)
+    }
+
+    @Test("TypeSafe 已耗尽传输重试后不再触发队列级乘法重试")
+    func typeSafeFailureDoesNotRetryAtQueueLayer() async throws {
+        let provider = ImmediateBatchAIInsightProvider(
+            suggestions: [],
+            batchTagError: .server(statusCode: 500)
+        )
+        let service = try makeService(insightProvider: provider)
+        var repo = Repo.makeMinimal(owner: "acme", name: "typesafe-failure")
+        repo.id = 514
+        var options = BatchAIQueueOptions()
+        options.actions = [.tags]
+        options.maxRetries = 3
+
+        #expect(service.start(repos: [repo], options: options))
+        await waitUntilStopped(service)
+
+        let job = try #require(service.jobs.first)
+        #expect(job.status == .failed)
+        #expect(job.failure == .typeSafe(.server(statusCode: 500)))
+        #expect(job.attempts == 1)
+        #expect(provider.batchTagGenerationCount == 1)
     }
 
     @Test("只生成摘要时允许标签建议为空")
@@ -321,47 +354,149 @@ struct BatchAIQueueServiceTests {
         #expect(service.selectedRepoIDsForTagApplication == [repo.id])
     }
 
-    @Test("自动创建开启时并发仓库复用同一个新标签")
-    func autoCreateMissingTagsCreatesOnceAndAppliesToEveryRepository() async throws {
-        let suggestion = AITagSuggestion(name: "New Tag", confidence: 0.95, reason: "高置信度建议")
-        let provider = ImmediateBatchAIInsightProvider(suggestions: [suggestion])
-        let database = try InMemoryDatabaseManager()
+    @Test("Jev 未覆盖仓库只做一次整批概念发现并在确认后重新归类")
+    func pooledTagExpansionRequiresConfirmationBeforeReclassification() async throws {
+        let provider = PooledTagExpansionProvider()
+        let database = try InMemoryDatabaseManager(userId: 1)
         let tagRepository = GRDBTagRepository(database: database)
         let repoTagRepository = GRDBRepoTagRepository(database: database)
+        let draftRepository = GRDBAIOrganizationDraftRepository(database: database)
         let service = makeService(
             insightProvider: provider,
             database: database,
             tagRepository: tagRepository,
-            repoTagRepository: repoTagRepository
+            repoTagRepository: repoTagRepository,
+            draftRepository: draftRepository
         )
-        var first = Repo.makeMinimal(owner: "acme", name: "auto-create-first")
+        var first = Repo.makeMinimal(owner: "acme", name: "pooled-first")
         first.id = 509
-        var second = Repo.makeMinimal(owner: "acme", name: "auto-create-second")
+        var second = Repo.makeMinimal(owner: "acme", name: "pooled-second")
         second.id = 510
-        try await database.insertRepoFixture(id: first.id, owner: "acme", name: "auto-create-first")
-        try await database.insertRepoFixture(id: second.id, owner: "acme", name: "auto-create-second")
+        try await database.insertRepoFixture(id: first.id, owner: "acme", name: "pooled-first")
+        try await database.insertRepoFixture(id: second.id, owner: "acme", name: "pooled-second")
         var options = BatchAIQueueOptions()
         options.actions = [.tags]
-        options.autoApplyTags = true
         options.autoCreateMissingTags = true
-        options.confidenceThreshold = 0.90
 
         #expect(service.start(repos: [first, second], options: options))
         await waitUntilStopped(service)
 
-        #expect(try await tagRepository.fetchAll().map(\.name) == ["New Tag"])
-        #expect(try await repoTagRepository.fetchTags(forRepo: first.id).map(\.name) == ["New Tag"])
-        #expect(try await repoTagRepository.fetchTags(forRepo: second.id).map(\.name) == ["New Tag"])
-        #expect(service.jobs.allSatisfy { $0.appliedTagNames == ["New Tag"] })
-        #expect(service.jobs.allSatisfy { $0.suggestedTagAvailability[suggestion.id] == .created })
-        #expect(service.pendingTagReviewCount == 0)
+        #expect(provider.initialReusePolicies.count == 2)
+        #expect(provider.initialReusePolicies.allSatisfy { !$0.allowNewTags })
+        #expect(provider.discoveryBatchSizes == [2])
+        #expect(try await tagRepository.fetchAll().isEmpty)
+        let pendingSession = try #require(service.pendingTagExpansionSession)
+        #expect(pendingSession.kind == .expansion)
+        #expect(pendingSession.suggestionEngine == .llm)
+        #expect(pendingSession.candidates.count == 5)
+        #expect(service.jobs.allSatisfy { $0.status == .ignored })
+        #expect(service.jobs.allSatisfy { $0.ignoreReason == .vocabularyMiss })
+
+        // 待确认增量词表必须随草稿恢复；恢复本身不能重复消费一次 LLM 请求。
+        let restoredService = makeService(
+            insightProvider: provider,
+            database: database,
+            tagRepository: tagRepository,
+            repoTagRepository: repoTagRepository,
+            draftRepository: draftRepository
+        )
+        await restoredService.restoreDraftIfNeeded()
+        #expect(provider.discoveryBatchSizes == [2])
+        #expect(restoredService.pendingTagExpansionSession == pendingSession)
+        #expect(restoredService.jobs.allSatisfy { $0.ignoreReason == .vocabularyMiss })
+
+        let restoredSession = try #require(restoredService.pendingTagExpansionSession)
+        let error = await restoredService.confirmPendingTagExpansion(
+            selectedCandidates: restoredSession.candidates
+        )
+
+        #expect(error == nil)
+        #expect(try await tagRepository.fetchAll().count == 5)
+        #expect(provider.reclassificationBatchSizes == [2])
+        #expect(provider.reclassificationPolicies == [AITagGenerationPolicy(
+            allowNewTags: false,
+            minimumReusableConfidence: 0
+        )])
+        #expect(restoredService.pendingTagExpansionSession == nil)
+        #expect(restoredService.jobs.allSatisfy { $0.tagReviewState == .pending })
+        #expect(restoredService.jobs.allSatisfy { $0.ignoreReason == nil })
+        #expect(restoredService.jobs.allSatisfy { $0.suggestedTags.first?.engine == .jev })
+        #expect(try await repoTagRepository.fetchTags(forRepo: first.id).isEmpty)
+        #expect(try await repoTagRepository.fetchTags(forRepo: second.id).isEmpty)
+    }
+
+    @Test("后台自动整理遇到词表未覆盖时不会扩充标签")
+    func automaticRunNeverExpandsTagVocabulary() async throws {
+        let provider = PooledTagExpansionProvider()
+        let database = try InMemoryDatabaseManager()
+        let tagRepository = GRDBTagRepository(database: database)
+        try await tagRepository.create(.fixture(id: "existing", name: "Existing"))
+        let service = makeService(
+            insightProvider: provider,
+            database: database,
+            tagRepository: tagRepository,
+            repoTagRepository: GRDBRepoTagRepository(database: database)
+        )
+        var options = BatchAIQueueOptions()
+        options.actions = [.tags]
+        options.autoApplyTags = true
+        options.autoCreateMissingTags = true
+
+        #expect(service.start(
+            repos: Self.makeTestRepos(ids: [511, 512]),
+            options: options,
+            invocationMode: .automatic
+        ))
+        await waitUntilStopped(service)
+
+        #expect(provider.initialReusePolicies.count == 2)
+        #expect(provider.discoveryBatchSizes.isEmpty)
+        #expect(service.pendingTagExpansionSession == nil)
+        #expect(service.jobs.allSatisfy { $0.status == .ignored })
+        #expect(try await tagRepository.fetchAll().map(\.name) == ["Existing"])
+    }
+
+    @Test("用户可以拒绝增量词表且不会创建标签")
+    func pendingTagExpansionCanBeSkipped() async throws {
+        let provider = PooledTagExpansionProvider()
+        let database = try InMemoryDatabaseManager()
+        let tagRepository = GRDBTagRepository(database: database)
+        let service = makeService(
+            insightProvider: provider,
+            database: database,
+            tagRepository: tagRepository,
+            repoTagRepository: GRDBRepoTagRepository(database: database)
+        )
+        var options = BatchAIQueueOptions()
+        options.actions = [.tags]
+        options.autoCreateMissingTags = true
+
+        #expect(service.start(repos: Self.makeTestRepos(ids: [513]), options: options))
+        await waitUntilStopped(service)
+        #expect(service.pendingTagExpansionSession != nil)
+
+        await service.skipPendingTagExpansion()
+
+        #expect(service.pendingTagExpansionSession == nil)
+        #expect(!service.hasUnresolvedManualWork)
+        #expect(service.jobs.first?.status == .ignored)
+        #expect(try await tagRepository.fetchAll().isEmpty)
     }
 
     @Test("静默自动整理没有审核入口时仍忽略全部低于阈值的标签")
     func silentAutoApplyKeepsBelowThresholdResultIgnored() async throws {
         let suggestions = [AITagSuggestion(name: "Swift", confidence: 0.70, reason: "主要开发语言")]
         let provider = ImmediateBatchAIInsightProvider(suggestions: suggestions)
-        let service = try makeService(insightProvider: provider)
+        let database = try InMemoryDatabaseManager()
+        let tagRepository = GRDBTagRepository(database: database)
+        let service = makeService(
+            insightProvider: provider,
+            database: database,
+            tagRepository: tagRepository,
+            repoTagRepository: GRDBRepoTagRepository(database: database)
+        )
+        // 自动任务只有在已有可复用标签时才调用分类引擎；否则会按冷启动策略直接跳过标签阶段。
+        try await tagRepository.create(.fixture(id: "swift", name: "Swift"))
         var repo = Repo.makeMinimal(owner: "acme", name: "silent-below-threshold")
         repo.id = 507
         var options = BatchAIQueueOptions()
@@ -369,14 +504,43 @@ struct BatchAIQueueServiceTests {
         options.autoApplyTags = true
         options.confidenceThreshold = 0.85
 
-        #expect(service.start(repos: [repo], options: options, silent: true))
+        #expect(service.start(repos: [repo], options: options, invocationMode: .automatic))
         await waitUntilStopped(service)
 
         let job = try #require(service.jobs.first)
         #expect(job.status == .ignored)
         #expect(job.tagReviewState == .notRequired)
+        #expect(job.ignoreReason == .belowConfidenceThreshold)
         #expect(job.belowThresholdTags.map(\.name) == ["Swift"])
+        #expect(provider.lastBatchInvocationMode == .automatic)
+        #expect(provider.lastTagGenerationPolicy == AITagGenerationPolicy(
+            allowNewTags: false,
+            minimumReusableConfidence: 0.85
+        ))
         #expect(service.pendingTagReviewCount == 0)
+    }
+
+    @Test("摘要与标签混合任务首轮也强制使用闭集策略")
+    func mixedInsightForwardsTagGenerationPolicy() async throws {
+        let provider = ImmediateBatchAIInsightProvider(suggestions: Self.sampleSuggestions)
+        let service = try makeService(insightProvider: provider)
+        var repo = Repo.makeMinimal(owner: "acme", name: "mixed-policy")
+        repo.id = 515
+        var options = BatchAIQueueOptions()
+        options.actions = [.summary, .tags]
+        options.autoApplyTags = true
+        options.autoCreateMissingTags = true
+        options.confidenceThreshold = 0.92
+
+        #expect(service.start(repos: [repo], options: options, invocationMode: .automatic))
+        await waitUntilStopped(service)
+
+        #expect(provider.generationCount == 1)
+        #expect(provider.batchTagGenerationCount == 0)
+        #expect(provider.lastInsightTagGenerationPolicy == AITagGenerationPolicy(
+            allowNewTags: false,
+            minimumReusableConfidence: 0.92
+        ))
     }
 
     @Test("批量应用只处理仓库复选框选中的建议")
@@ -458,13 +622,66 @@ struct BatchAIQueueServiceTests {
 
         var tagsChangedCount = 0
         service.onTagsChanged = { tagsChangedCount += 1 }
-        await service.applySelectedTagReviewRepositories()
+        await confirmation("分析已结束、仓库选择被移除时仍展示真实的应用批次") { observed in
+            // Observation 回调在 willSet 执行：此处仍处在整批应用锁内，不能退回完成/开始态。
+            withObservationTracking {
+                _ = service.selectedRepoIDsForTagApplication
+            } onChange: {
+                MainActor.assumeIsolated {
+                    #expect(service.isFinished)
+                    #expect(AIOrganizationBannerState.tags(service) == .applying(processed: 0, total: 2))
+                    observed()
+                }
+            }
+            await service.applySelectedTagReviewRepositories()
+        }
 
         // 旧实现每仓成功都回调一次；会话级合并后整批只应刷新 Sidebar 一次。
         #expect(tagsChangedCount == 1)
         #expect(!service.isApplyingSuggestedTags)
         #expect(service.jobs.allSatisfy { $0.tagReviewState == .applied })
         #expect(service.selectedTagReviewRepositoryCount == 0)
+        #expect(AIOrganizationBannerState.tags(service) == .idle)
+    }
+
+    @Test("批量应用跨越分块边界仍完整落库并只刷新一次")
+    func bulkApplyAcrossChunkBoundary() async throws {
+        let provider = ImmediateBatchAIInsightProvider(suggestions: Self.sampleSuggestions)
+        let database = try InMemoryDatabaseManager()
+        let tagRepository = GRDBTagRepository(database: database)
+        let repoTagRepository = GRDBRepoTagRepository(database: database)
+        let service = makeService(
+            insightProvider: provider,
+            database: database,
+            tagRepository: tagRepository,
+            repoTagRepository: repoTagRepository
+        )
+        let repos = makeRepos(count: 101, startingAt: 2_000)
+        for repo in repos {
+            try await database.insertRepoFixture(
+                id: repo.id,
+                owner: repo.owner,
+                name: repo.name
+            )
+        }
+        var options = BatchAIQueueOptions()
+        options.actions = [.tags]
+
+        #expect(service.start(repos: repos, options: options))
+        await waitUntilStopped(service)
+        service.selectAllTagReviewRepositories()
+
+        var tagsChangedCount = 0
+        service.onTagsChanged = { tagsChangedCount += 1 }
+        await service.applySelectedTagReviewRepositories()
+
+        let associationCount = try await database.writer.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM repo_tags") ?? -1
+        }
+        #expect(associationCount == 202)
+        #expect(service.jobs.allSatisfy { $0.tagReviewState == .applied })
+        #expect(service.selectedTagReviewRepositoryCount == 0)
+        #expect(tagsChangedCount == 1)
     }
 
     @Test("摘要上下文开关作为本次任务参数传给 Provider")
@@ -496,9 +713,10 @@ struct BatchAIQueueServiceTests {
         #expect(service.start(repos: repos, options: options))
         await waitUntilStopped(service)
 
-        #expect(provider.batchSizes.isEmpty)
-        #expect(provider.individualCallCount == 20)
-        #expect(provider.maximumActiveIndividualCalls == 5)
+        #expect(provider.batchSizes.count == 20)
+        #expect(provider.batchSizes.allSatisfy { $0 == 1 })
+        #expect(provider.individualCallCount == 0)
+        #expect(provider.maximumActiveBatchCalls == 5)
         #expect(service.jobs.allSatisfy { $0.status == .completed })
         #expect(service.processingJobIDs.isEmpty)
     }
@@ -523,7 +741,7 @@ struct BatchAIQueueServiceTests {
         #expect(service.jobs.first(where: { $0.repoId == blockedRepoID })?.status == .processing)
         #expect(service.jobs.first(where: { $0.repoId == 1_100 })?.status == .completed)
         #expect(service.jobs.first(where: { $0.repoId == 1_102 })?.status == .completed)
-        #expect(provider.individualCallCount == 3)
+        #expect(provider.batchCallCount == 3)
 
         provider.releaseBlockedCall()
         await waitUntilStopped(service)
@@ -711,9 +929,82 @@ struct BatchAIQueueServiceTests {
         await waitUntilStopped(service)
     }
 
+    @Test("本地标签体系直接进入待确认且不调用 Provider")
+    func localTaxonomyStartsReviewWithoutCallingProvider() async throws {
+        let database = try InMemoryDatabaseManager(userId: 1)
+        let tagRepository = GRDBTagRepository(database: database)
+        let provider = ImmediateBatchAIInsightProvider(suggestions: Self.sampleSuggestions)
+        let service = makeService(
+            insightProvider: provider,
+            database: database,
+            tagRepository: tagRepository,
+            repoTagRepository: GRDBRepoTagRepository(database: database)
+        )
+        let now = ISO8601DateFormatter.shared.string(from: .now)
+        try await tagRepository.create(Tag(
+            id: UUID().uuidString,
+            name: "Swift",
+            color: nil,
+            icon: nil,
+            sortOrder: 0,
+            isPreset: false,
+            parentId: nil,
+            createdAt: now,
+            updatedAt: now
+        ))
+        let repo = Self.makeTestRepos(ids: [901])[0]
+        let uncoveredRepo = Self.makeTestRepos(ids: [904])[0]
+        let localSuggestion = AITagSuggestion(
+            name: "Swift",
+            confidence: 0.93,
+            reason: "local evidence",
+            engine: .local
+        )
+
+        #expect(await service.startLocalTagReview(
+            repos: [repo, uncoveredRepo],
+            suggestionsByRepoID: [repo.id: [localSuggestion]],
+            options: BatchAIQueueOptions()
+        ))
+
+        #expect(provider.generationCount == 0)
+        #expect(!service.isRunning)
+        #expect(service.pendingTagReviewCount == 1)
+        let matchedJob = try #require(service.jobs.first { $0.repoId == repo.id })
+        #expect(matchedJob.status == .completed)
+        #expect(matchedJob.tagReviewState == .pending)
+        #expect(matchedJob.ignoreReason == nil)
+        #expect(matchedJob.suggestedTags.first?.engine == .local)
+        #expect(matchedJob.suggestedTagAvailability[localSuggestion.id] == .existing)
+        let uncoveredJob = try #require(service.jobs.first { $0.repoId == uncoveredRepo.id })
+        #expect(uncoveredJob.status == .ignored)
+        #expect(uncoveredJob.tagReviewState == .ignored)
+        #expect(uncoveredJob.ignoreReason == .taxonomyUncovered)
+    }
+
+    @Test("自动整理在空标签库跳过标签生成")
+    func automaticRunSkipsTagGenerationWhenLibraryIsEmpty() async throws {
+        let provider = ImmediateBatchAIInsightProvider(suggestions: Self.sampleSuggestions)
+        let service = try makeService(insightProvider: provider)
+        var options = BatchAIQueueOptions()
+        options.actions = [.tags]
+
+        #expect(service.start(
+            repos: Self.makeTestRepos(ids: [902, 903]),
+            options: options,
+            invocationMode: .automatic
+        ))
+        await waitUntilStopped(service)
+
+        #expect(provider.generationCount == 0)
+        #expect(service.jobs.allSatisfy { $0.status == .ignored })
+        #expect(service.jobs.allSatisfy { $0.ignoreReason == .emptyTagLibrary })
+        #expect(service.failedCount == 0)
+    }
+
     private static let sampleSuggestions = [
-        AITagSuggestion(name: "Swift", confidence: 0.96, reason: "主要开发语言"),
-        AITagSuggestion(name: "CLI", confidence: 0.82, reason: "提供命令行工具")
+        AITagSuggestion(name: "Swift", confidence: 0.96, reason: "主要开发语言", engine: .jev),
+        AITagSuggestion(name: "CLI", confidence: 0.82, reason: "提供命令行工具", engine: .llm)
     ]
 
     private func makeRepos(count: Int, startingAt firstID: Int64) -> [Repo] {
@@ -795,12 +1086,14 @@ struct BatchAIQueueServiceTests {
         service.ignoreSuggestedTags(repoId: 1)
         service.ignoreSuggestedTags(repoId: 2)
         #expect(service.jobs.allSatisfy { $0.tagReviewState == .ignored })
+        #expect(service.jobs.allSatisfy { $0.ignoreReason == .userSkipped })
 
         service.selectAllReposForBulkAction(filter: .ignored)
         #expect(service.bulkActionRepoIDs == [1, 2])
         await service.applyBulkAction(filter: .ignored)
         #expect(service.bulkActionRepoIDs.isEmpty)
         #expect(service.jobs.allSatisfy { $0.tagReviewState == .pending })
+        #expect(service.jobs.allSatisfy { $0.ignoreReason == nil })
         #expect(service.pendingTagReviewCount == 2)
 
         // 待确认/全部 Tab 不提供批量动作勾选，不会跨语义串集合。
@@ -1025,7 +1318,8 @@ private final class BlockingBatchAIInsightProvider: BatchAIInsightProviding {
 
     func generateBatchTagSuggestions(
         for repos: [Repo],
-        tagHintsByRepoID: [Int64: AITagHints]
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose
     ) async throws -> [Int64: [AITagSuggestion]] {
         generationCount += 1
         let waiters = generationStartWaiters
@@ -1074,21 +1368,57 @@ private final class BlockingBatchAIInsightProvider: BatchAIInsightProviding {
 @MainActor
 private final class ImmediateBatchAIInsightProvider: BatchAIInsightProviding {
     let suggestions: [AITagSuggestion]
+    let batchTagError: TypeSafeClientError?
     private(set) var lastCodeContextEnabledOverride: Bool?
     private(set) var lastExternalContextEnabledOverride: Bool?
     private(set) var generationCount = 0
+    private(set) var batchTagGenerationCount = 0
+    private(set) var lastBatchInvocationMode: BatchAIInvocationMode?
+    private(set) var lastTagGenerationPolicy: AITagGenerationPolicy?
+    private(set) var lastInsightTagGenerationPolicy: AITagGenerationPolicy?
 
-    init(suggestions: [AITagSuggestion]) {
+    init(suggestions: [AITagSuggestion], batchTagError: TypeSafeClientError? = nil) {
         self.suggestions = suggestions
+        self.batchTagError = batchTagError
     }
 
     func ensureGenerationClientsReady(includeSummary: Bool, includeTags: Bool) throws {}
 
     func generateBatchTagSuggestions(
         for repos: [Repo],
-        tagHintsByRepoID: [Int64: AITagHints]
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose
     ) async throws -> [Int64: [AITagSuggestion]] {
-        Dictionary(uniqueKeysWithValues: repos.map { ($0.id, suggestions) })
+        batchTagGenerationCount += 1
+        if let batchTagError { throw batchTagError }
+        return Dictionary(uniqueKeysWithValues: repos.map { ($0.id, suggestions) })
+    }
+
+    func generateBatchTagSuggestions(
+        for repos: [Repo],
+        tagHintsByRepoID: [Int64: AITagHints],
+        invocationMode: BatchAIInvocationMode
+    ) async throws -> [Int64: [AITagSuggestion]] {
+        lastBatchInvocationMode = invocationMode
+        return try await generateBatchTagSuggestions(
+            for: repos,
+            tagHintsByRepoID: tagHintsByRepoID,
+            purpose: .reuseFirst
+        )
+    }
+
+    func generateBatchTagSuggestions(
+        for repos: [Repo],
+        tagHintsByRepoID: [Int64: AITagHints],
+        invocationMode: BatchAIInvocationMode,
+        tagGenerationPolicy: AITagGenerationPolicy
+    ) async throws -> [Int64: [AITagSuggestion]] {
+        lastTagGenerationPolicy = tagGenerationPolicy
+        return try await generateBatchTagSuggestions(
+            for: repos,
+            tagHintsByRepoID: tagHintsByRepoID,
+            invocationMode: invocationMode
+        )
     }
 
     func generateBatchInsight(
@@ -1115,6 +1445,116 @@ private final class ImmediateBatchAIInsightProvider: BatchAIInsightProviding {
                 suggestedTags: includeTags ? suggestions : [],
                 model: "test-model",
                 generatedAt: ISO8601DateFormatter.shared.string(from: Date()),
+                contextMetadata: nil,
+                externalContextMarkdown: nil,
+                generationContextSettings: nil
+            ),
+            tagErrorMessage: nil,
+            contextDegradationReason: nil,
+            externalContextDegradationReason: nil
+        )
+    }
+
+    func generateBatchInsight(
+        for repo: Repo,
+        existingTagHints: AITagHints,
+        includeSummary: Bool,
+        includeTags: Bool,
+        codeContextEnabledOverride: Bool?,
+        externalContextEnabledOverride: Bool?,
+        tagGenerationPolicy: AITagGenerationPolicy
+    ) async throws -> RepoAIInsightGeneration {
+        lastInsightTagGenerationPolicy = tagGenerationPolicy
+        return try await generateBatchInsight(
+            for: repo,
+            existingTagHints: existingTagHints,
+            includeSummary: includeSummary,
+            includeTags: includeTags,
+            codeContextEnabledOverride: codeContextEnabledOverride,
+            externalContextEnabledOverride: externalContextEnabledOverride
+        )
+    }
+}
+
+/// 模拟 Jev 闭集未命中、一次整批 LLM 概念发现、再回到 Jev 闭集重分类的 Provider。
+/// 测试记录每个阶段的批量尺寸和策略，防止实现悄悄退化为逐仓 LLM 扩词。
+@MainActor
+private final class PooledTagExpansionProvider: BatchAIInsightProviding {
+    private(set) var initialReusePolicies: [AITagGenerationPolicy] = []
+    private(set) var discoveryBatchSizes: [Int] = []
+    private(set) var reclassificationBatchSizes: [Int] = []
+    private(set) var reclassificationPolicies: [AITagGenerationPolicy] = []
+
+    func ensureGenerationClientsReady(includeSummary: Bool, includeTags: Bool) throws {}
+
+    func generateBatchTagSuggestions(
+        for repos: [Repo],
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose
+    ) async throws -> [Int64: [AITagSuggestion]] {
+        guard purpose == .newOnly else {
+            Issue.record("闭集首轮和重分类必须走带策略的调用边界")
+            return [:]
+        }
+        discoveryBatchSizes.append(repos.count)
+        let candidates = (1...6).map { index in
+            AITagSuggestion(
+                name: "Shared \(index)",
+                confidence: 0.90 - Double(index) * 0.01,
+                reason: "整批概念发现",
+                engine: .llm
+            )
+        }
+        return Dictionary(uniqueKeysWithValues: repos.map { ($0.id, candidates) })
+    }
+
+    func generateBatchTagSuggestions(
+        for repos: [Repo],
+        tagHintsByRepoID: [Int64: AITagHints],
+        invocationMode: BatchAIInvocationMode,
+        tagGenerationPolicy: AITagGenerationPolicy
+    ) async throws -> [Int64: [AITagSuggestion]] {
+        if repos.count == 1, discoveryBatchSizes.isEmpty {
+            initialReusePolicies.append(tagGenerationPolicy)
+            return [repos[0].id: []]
+        }
+
+        reclassificationBatchSizes.append(repos.count)
+        reclassificationPolicies.append(tagGenerationPolicy)
+        return Dictionary(uniqueKeysWithValues: repos.map { repo in
+            (
+                repo.id,
+                [AITagSuggestion(
+                    name: "Shared 1",
+                    confidence: 0.94,
+                    reason: "Jev P=0.94",
+                    engine: .jev
+                )]
+            )
+        })
+    }
+
+    func generateBatchInsight(
+        for repo: Repo,
+        existingTagHints: AITagHints,
+        includeSummary: Bool,
+        includeTags: Bool,
+        codeContextEnabledOverride: Bool?,
+        externalContextEnabledOverride: Bool?
+    ) async throws -> RepoAIInsightGeneration {
+        RepoAIInsightGeneration(
+            insight: RepoAIInsight(
+                oneLiner: "",
+                summary: "",
+                summaryMarkdown: nil,
+                platforms: [],
+                suitableFor: [],
+                strengths: [],
+                risks: [],
+                minimalExample: nil,
+                suggestedTags: [],
+                model: "test-model",
+                generatedAt: ISO8601DateFormatter.shared.string(from: .now),
                 contextMetadata: nil,
                 externalContextMarkdown: nil,
                 generationContextSettings: nil
@@ -1154,7 +1594,8 @@ private final class SelectiveBatchAIInsightProvider: BatchAIInsightProviding {
 
     func generateBatchTagSuggestions(
         for repos: [Repo],
-        tagHintsByRepoID: [Int64: AITagHints]
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose
     ) async throws -> [Int64: [AITagSuggestion]] {
         Issue.record("仓库级 Worker 不应调用批量标签接口")
         return [:]
@@ -1225,6 +1666,7 @@ private final class StaggeredBatchAIInsightProvider: BatchAIInsightProviding {
     private let blockedRepoID: Int64
     private var blockedContinuation: CheckedContinuation<Void, Never>?
     private var blockedStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var batchCallCount = 0
     private(set) var individualCallCount = 0
 
     init(blockedRepoID: Int64) {
@@ -1235,10 +1677,22 @@ private final class StaggeredBatchAIInsightProvider: BatchAIInsightProviding {
 
     func generateBatchTagSuggestions(
         for repos: [Repo],
-        tagHintsByRepoID: [Int64: AITagHints]
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose
     ) async throws -> [Int64: [AITagSuggestion]] {
-        Issue.record("仓库级 Worker 不应调用批量标签接口")
-        return [:]
+        batchCallCount += 1
+        let repo = try #require(repos.first)
+        if repo.id == blockedRepoID {
+            await withCheckedContinuation { continuation in
+                blockedContinuation = continuation
+                let waiters = blockedStartWaiters
+                blockedStartWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+        }
+        return [
+            repo.id: [AITagSuggestion(name: "Test", confidence: 0.9, reason: "test fixture")]
+        ]
     }
 
     func generateBatchInsight(
@@ -1318,14 +1772,20 @@ private final class ConcurrentBatchAIInsightProvider: BatchAIInsightProviding {
 
     func generateBatchTagSuggestions(
         for repos: [Repo],
-        tagHintsByRepoID: [Int64: AITagHints]
+        tagHintsByRepoID: [Int64: AITagHints],
+        purpose: AITagSuggestionPurpose
     ) async throws -> [Int64: [AITagSuggestion]] {
         batchSizes.append(repos.count)
         activeBatchCalls += 1
         maximumActiveBatchCalls = max(maximumActiveBatchCalls, activeBatchCalls)
         defer { activeBatchCalls -= 1 }
         try await Task.sleep(for: delay)
-        return Dictionary(uniqueKeysWithValues: repos.map { ($0.id, []) })
+        return Dictionary(uniqueKeysWithValues: repos.map { repo in
+            (
+                repo.id,
+                [AITagSuggestion(name: "Test", confidence: 0.9, reason: "test fixture")]
+            )
+        })
     }
 
     func generateBatchInsight(

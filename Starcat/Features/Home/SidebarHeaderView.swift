@@ -529,10 +529,7 @@ struct SidebarHeaderView: View {
 
     private func refreshGitHubStarLists(login: String) async {
         await dependencies.githubStarListSyncService.sync(login: login)
-        await viewModel.refreshSidebar()
-        if viewModel.selection.isGitHubStarListContext {
-            await viewModel.reloadItems(forceRefresh: true)
-        }
+        await viewModel.refreshGitHubStarListData(reloadCurrentList: true)
     }
 }
 

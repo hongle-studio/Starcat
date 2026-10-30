@@ -90,7 +90,7 @@ cd supports
 
 ### 新增独立仓库登记
 
-新增项目使用根目录 `.claude/skills/starcat-support-project-create`，并把以下更新视为
+新增项目使用根目录 `skills/starcat-support-project-create`，并把以下更新视为
 同一个创建事务：
 
 1. 在 `clone-all.sh` 的帮助文本和 `PROJECTS` 数组登记仓库；

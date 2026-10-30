@@ -59,7 +59,7 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
                 try db.execute(sql: "DELETE FROM github_star_lists")
             }
 
-            // list 快照完整时，membership 也应完整重建。先删后插能正确收敛远端移出关系。
+            // list 快照完整时，远端 membership 也应完整重建。覆盖表独立保留，不能在这里清空。
             try db.execute(sql: "DELETE FROM repo_github_star_lists")
             for membership in memberships {
                 try db.execute(
@@ -72,6 +72,27 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
                     arguments: [membership.listId, membership.repoFullName]
                 )
             }
+
+            // 远端刷新可能已经包含之前的本地期望。只删除已经收敛的差异；仍不一致的行
+            // 继续覆盖远端快照，保证授权尚未恢复时刷新不会让本地分组闪回。
+            try db.execute(sql: """
+                DELETE FROM repo_github_star_list_overrides
+                WHERE (
+                    repo_github_star_list_overrides.desired_present = 1
+                    AND EXISTS (
+                        SELECT 1 FROM repo_github_star_lists remote
+                        WHERE remote.repo_id = repo_github_star_list_overrides.repo_id
+                          AND remote.list_id = repo_github_star_list_overrides.list_id
+                    )
+                ) OR (
+                    repo_github_star_list_overrides.desired_present = 0
+                    AND NOT EXISTS (
+                        SELECT 1 FROM repo_github_star_lists remote
+                        WHERE remote.repo_id = repo_github_star_list_overrides.repo_id
+                          AND remote.list_id = repo_github_star_list_overrides.list_id
+                    )
+                )
+                """)
         }
     }
 
@@ -112,6 +133,56 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
                     arguments: [repoId, listId]
                 )
             }
+            // GitHub mutation 已确认完整目标集合，所有本地差异都已经收敛。
+            try db.execute(
+                sql: "DELETE FROM repo_github_star_list_overrides WHERE repo_id = ?",
+                arguments: [repoId]
+            )
+        }
+    }
+
+    func setLocalListIds(
+        forRepo repoId: Int64,
+        listIds: [String],
+        failureReason: String
+    ) async throws {
+        let desiredListIDs = Set(listIds)
+        let updatedAt = ISO8601DateFormatter.shared.string(from: Date())
+        try await database.writer.write { db in
+            let remoteListIDs = Set(try String.fetchAll(
+                db,
+                sql: "SELECT list_id FROM repo_github_star_lists WHERE repo_id = ?",
+                arguments: [repoId]
+            ))
+            try db.execute(
+                sql: "DELETE FROM repo_github_star_list_overrides WHERE repo_id = ?",
+                arguments: [repoId]
+            )
+
+            let additions = desiredListIDs.subtracting(remoteListIDs)
+            let removals = remoteListIDs.subtracting(desiredListIDs)
+            for listID in additions.sorted() {
+                let record = GitHubStarListLocalOverride(
+                    repoId: repoId,
+                    listId: listID,
+                    desiredPresent: true,
+                    syncState: .pendingAuthorization,
+                    failureReason: failureReason,
+                    updatedAt: updatedAt
+                )
+                try record.insert(db)
+            }
+            for listID in removals.sorted() {
+                let record = GitHubStarListLocalOverride(
+                    repoId: repoId,
+                    listId: listID,
+                    desiredPresent: false,
+                    syncState: .pendingAuthorization,
+                    failureReason: failureReason,
+                    updatedAt: updatedAt
+                )
+                try record.insert(db)
+            }
         }
     }
 
@@ -136,9 +207,62 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
         try await database.writer.read { db in
             try String.fetchAll(
                 db,
+                sql: "SELECT list_id FROM effective_repo_github_star_lists WHERE repo_id = ? ORDER BY list_id ASC",
+                arguments: [repoId]
+            )
+        }
+    }
+
+    func remoteListIds(forRepo repoId: Int64) async throws -> [String] {
+        try await database.writer.read { db in
+            try String.fetchAll(
+                db,
                 sql: "SELECT list_id FROM repo_github_star_lists WHERE repo_id = ? ORDER BY list_id ASC",
                 arguments: [repoId]
             )
+        }
+    }
+
+    func hasLocalListOverrides(forRepo repoId: Int64) async throws -> Bool {
+        try await database.writer.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT 1 FROM repo_github_star_list_overrides WHERE repo_id = ? LIMIT 1",
+                arguments: [repoId]
+            ) != nil
+        }
+    }
+
+    func fetchPendingLocalMembershipSyncs() async throws -> [GitHubStarListPendingMembershipSync] {
+        try await database.writer.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT r.*, effective.list_id AS effective_list_id
+                FROM repos r
+                JOIN (
+                    SELECT DISTINCT repo_id
+                    FROM repo_github_star_list_overrides
+                    WHERE sync_state = ?
+                ) pending ON pending.repo_id = r.id
+                LEFT JOIN effective_repo_github_star_lists effective ON effective.repo_id = r.id
+                WHERE r.is_starred = 1
+                ORDER BY r.id ASC, effective.list_id ASC
+                """, arguments: [GitHubStarListLocalOverrideSyncState.pendingAuthorization.rawValue])
+
+            var reposByID: [Int64: Repo] = [:]
+            var listIDsByRepo: [Int64: Set<String>] = [:]
+            for row in rows {
+                let repo = try Repo(row: row)
+                reposByID[repo.id] = repo
+                if let listID: String = row["effective_list_id"] {
+                    listIDsByRepo[repo.id, default: []].insert(listID)
+                }
+            }
+            return reposByID.values.sorted { $0.id < $1.id }.map { repo in
+                GitHubStarListPendingMembershipSync(
+                    repo: repo,
+                    desiredListIDs: listIDsByRepo[repo.id] ?? []
+                )
+            }
         }
     }
 
@@ -146,7 +270,7 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
         try await database.writer.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT rgl.list_id AS list_id, COUNT(*) AS cnt
-                FROM repo_github_star_lists rgl
+                FROM effective_repo_github_star_lists rgl
                 JOIN repos r ON r.id = rgl.repo_id
                 WHERE r.is_starred = 1
                 GROUP BY rgl.list_id
@@ -168,7 +292,7 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
                 FROM repos r
                 WHERE r.is_starred = 1
                   AND NOT EXISTS (
-                    SELECT 1 FROM repo_github_star_lists rgl
+                    SELECT 1 FROM effective_repo_github_star_lists rgl
                     WHERE rgl.repo_id = r.id
                   )
                 """) ?? 0
@@ -179,7 +303,7 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
         try await database.writer.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT l.*, rgl.repo_id AS repo_id_alias
-                FROM repo_github_star_lists rgl
+                FROM effective_repo_github_star_lists rgl
                 JOIN github_star_lists l ON l.id = rgl.list_id
                 JOIN repos r ON r.id = rgl.repo_id
                 WHERE r.is_starred = 1
@@ -228,7 +352,7 @@ struct GRDBGitHubStarListRepository: GitHubStarListRepositoryProtocol {
                 JOIN repos r ON r.id = ignored.repo_id
                 WHERE r.is_starred = 1
                   AND NOT EXISTS (
-                    SELECT 1 FROM repo_github_star_lists membership
+                    SELECT 1 FROM effective_repo_github_star_lists membership
                     WHERE membership.repo_id = ignored.repo_id
                   )
                 ORDER BY ignored.updated_at ASC, ignored.repo_id ASC

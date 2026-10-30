@@ -246,6 +246,9 @@ actor GitHubAPIClient {
     ///   - variables: 变量字典；只接受 JSONSerialization 兼容类型（String/Int/Bool/[String: Any]/[Any]）
     ///   - type: 顶层期望解码类型；返回的真实 JSON 是 `{ "data": T, "errors": [...] }`，
     ///     本方法自动剥 `data` 包装，failure 时把 `errors[].message` 拼成 `NetworkError.clientError`。
+    ///   - allowPartialData: mutation 必须为 false——`createUserList: null` + errors 要抛业务错。
+    ///     fork compare 这类查询为 true：GitHub 有时 data 里已有 aheadBy，同时又塞一条 warning，
+    ///     丢掉 data 会让详情页 Sync 被永久置灰。
     /// - Returns: 解码后的 `T`（已剥 `data` 包装）
     /// - Throws: 与 REST `perform` 同语义的 `NetworkError`；GraphQL 业务错误归入 `clientError(400)`
     ///
@@ -254,7 +257,8 @@ actor GitHubAPIClient {
     func graphql<T: Decodable>(
         query: String,
         variables: [String: Any] = [:],
-        as type: T.Type = T.self
+        as type: T.Type = T.self,
+        allowPartialData: Bool = false
     ) async throws -> T {
         // GraphQL 请求体格式：{ "query": "...", "variables": {...} }。
         // 用 JSONSerialization 而不是 Encodable，因为 variables 是异构字典（值类型混合）。
@@ -286,7 +290,10 @@ actor GitHubAPIClient {
            !errs.isEmpty {
             let combined = errs.map(\.message).joined(separator: "; ")
             AppLog.network.error("GraphQL errors: \(combined, privacy: .public)")
-            throw NetworkError.clientError(statusCode: 400, message: combined)
+            // fork compare 允许带着 warning 继续解 data；mutation 仍把 errors 当失败。
+            if !allowPartialData {
+                throw NetworkError.clientError(statusCode: 400, message: combined)
+            }
         }
 
         let envelope: GraphQLEnvelope<T>
