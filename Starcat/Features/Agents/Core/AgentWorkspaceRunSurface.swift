@@ -68,6 +68,9 @@ struct AgentWorkspaceRunSurface: View {
     @State private var codexProviderEndpointStates: [String: CodexProviderEndpointState] = [:]
     /// 运行中的 Runtime 必须保持冻结；设置变更延后到当前 run 结束再装配。
     @State private var hasPendingKnowledgeConfigurationRefresh = false
+    /// 服务商配置在 run 进行中变化时，内置 Loop 的模型快照同样延后重喂，
+    /// 否则选中模型解析不到 profile，模型菜单会退回全量平铺（含已删配置的模型）。
+    @State private var hasPendingModelCatalogRefresh = false
     @FocusState private var isContextPickerSearchFocused: Bool
     @Bindable var viewModel: AgentWorkspaceViewModel
 
@@ -108,11 +111,7 @@ struct AgentWorkspaceRunSurface: View {
             ))
             viewModel.configureRunRepository(dependencies.agentRunRepository)
             viewModel.configureRepositoryCatalog(repositoryCatalog)
-            viewModel.configureModelOptions(
-                dependencies.knowledgeRAGChatModels,
-                defaultProviderID: dependencies.settings.aiChatTask.providerID,
-                defaultModelName: dependencies.settings.aiChatTask.resolvedModelName
-            )
+            refreshBuiltinModelOptions()
             normalizeRuntimeSelections()
             configureAgentRuntime()
             await viewModel.initializeHistory()
@@ -160,16 +159,38 @@ struct AgentWorkspaceRunSurface: View {
         }
         .onChange(of: dependencies.settings.aiProviderProfiles) { _, _ in
             normalizeDeepSeekSelection()
+            refreshBuiltinModelOptions()
             configureAgentRuntime()
         }
         .onChange(of: knowledgeConfigurationSnapshot) { _, _ in
             refreshRuntimeForKnowledgeConfigurationChange()
         }
         .onChange(of: viewModel.isRunning) { wasRunning, isRunning in
-            guard wasRunning, !isRunning, hasPendingKnowledgeConfigurationRefresh else { return }
-            hasPendingKnowledgeConfigurationRefresh = false
-            configureAgentRuntime()
+            guard wasRunning, !isRunning else { return }
+            if hasPendingKnowledgeConfigurationRefresh {
+                hasPendingKnowledgeConfigurationRefresh = false
+                configureAgentRuntime()
+            }
+            if hasPendingModelCatalogRefresh {
+                hasPendingModelCatalogRefresh = false
+                refreshBuiltinModelOptions()
+            }
         }
+    }
+
+    /// 服务商配置变化后重喂内置 Loop 的模型快照；ViewModel 在 run 进行中拒绝替换
+    /// （保持一次 run 模型一致），此时挂起 pending，由 isRunning 收尾统一补刷。
+    /// 不刷新的后果：选中模型解析不到 provider profile，模型菜单退回全量平铺。
+    private func refreshBuiltinModelOptions() {
+        if viewModel.isRunning {
+            hasPendingModelCatalogRefresh = true
+            return
+        }
+        viewModel.configureModelOptions(
+            dependencies.knowledgeRAGChatModels,
+            defaultProviderID: dependencies.settings.aiChatTask.providerID,
+            defaultModelName: dependencies.settings.aiChatTask.resolvedModelName
+        )
     }
 
     /// 每次模型选择变化都重建尚未启动的 Runtime；已经运行的实例由 ViewModel 拒绝替换，
@@ -533,7 +554,7 @@ struct AgentWorkspaceRunSurface: View {
             }
 
             if activeRuntimeBackend == .builtinLoop, viewModel.selectedModelID == nil {
-                Label("agent.workspace.model.required", systemImage: BusinessIcon.Symbol.models.systemImage)
+                Label("agent.workspace.model.required", systemImage: "cpu")
                     .font(agentFont(.caption))
                     .foregroundStyle(.secondary)
             } else if activeRuntimeBackend == .deepSeekHarness, selectedDeepSeekSelection == nil {
@@ -1038,7 +1059,15 @@ struct AgentWorkspaceRunSurface: View {
                 .foregroundStyle(.secondary)
             ForEach(AgentRepositorySource.allCases, id: \.self) { source in
                 Toggle(isOn: repositorySourceBinding(source)) {
-                    Label(source.title, systemImage: source.systemImage)
+                    // 来源图标可能为 Lucide 资产或 SF 符号，统一经 BusinessIcon 渲染。
+                    Label {
+                        Text(source.title)
+                    } icon: {
+                        BusinessIcon(
+                            source: source.iconSource,
+                            pointSize: source.iconSource.isAsset ? 14 : 12
+                        )
+                    }
                 }
             }
         }
@@ -1072,7 +1101,7 @@ struct AgentWorkspaceRunSurface: View {
                 }
             }
         } label: {
-            Label(viewModel.selectedModelDisplayName, systemImage: BusinessIcon.Symbol.models.systemImage)
+            Label(viewModel.selectedModelDisplayName, systemImage: "cpu")
                 .font(agentFont(.caption, weight: .semibold))
                 .lineLimit(1)
         }
@@ -1129,7 +1158,7 @@ struct AgentWorkspaceRunSurface: View {
                 }
             }
         } label: {
-            Label(activeRuntimeBackend.displayName, systemImage: BusinessIcon.Symbol.terminal.systemImage)
+            Label(activeRuntimeBackend.displayName, systemImage: "terminal")
                 .font(agentFont(.caption, weight: .semibold))
                 .lineLimit(1)
         }
@@ -1237,7 +1266,7 @@ struct AgentWorkspaceRunSurface: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(viewModel.isRunning || deepSeekProviderOptions.isEmpty)
-        .help(String.l10n("agent.workspace.runtime.deepSeekProviderHelp"))
+        .help(String.l10n("agent.workspace.runtime.deepSeekProviderHelp.modelsSettings"))
     }
 
     private var deepSeekModelMenu: some View {
@@ -1255,7 +1284,7 @@ struct AgentWorkspaceRunSurface: View {
                 }
             }
         } label: {
-            Label(selectedDeepSeekSelection?.model.name ?? "—", systemImage: BusinessIcon.Symbol.models.systemImage)
+            Label(selectedDeepSeekSelection?.model.name ?? "—", systemImage: "cpu")
                 .font(agentFont(.caption, weight: .semibold))
                 .lineLimit(1)
         }
@@ -1336,7 +1365,7 @@ struct AgentWorkspaceRunSurface: View {
         } label: {
             Label(
                 selectedCodexModelSelection?.displayName ?? "Codex",
-                systemImage: codexModelCatalogError == nil ? BusinessIcon.Symbol.models.systemImage : "exclamationmark.triangle"
+                systemImage: codexModelCatalogError == nil ? "cpu" : "exclamationmark.triangle"
             )
             .font(agentFont(.caption, weight: .semibold))
             .lineLimit(1)

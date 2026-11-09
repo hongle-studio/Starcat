@@ -11,7 +11,8 @@
 
 import Foundation
 
-enum GitHubNotificationChip: String, Sendable {
+/// Codable 随 ActivityNotificationPayload 进入 Issue 总结磁盘快照。
+enum GitHubNotificationChip: String, Codable, Sendable {
     case mention
     case review
     case assign
@@ -29,13 +30,14 @@ enum GitHubNotificationChip: String, Sendable {
     case fork
 }
 
-enum GitHubNotificationPersonRole: String, Sendable {
+enum GitHubNotificationPersonRole: String, Codable, Sendable {
     case author
     case commenter
     case reviewRequester
 }
 
-struct GitHubNotificationPerson: Equatable, Identifiable, Sendable {
+/// 只编码存储属性；`id` / `avatarURLString` 是派生值，不进快照。
+struct GitHubNotificationPerson: Equatable, Codable, Identifiable, Sendable {
     let login: String
     let role: GitHubNotificationPersonRole
 
@@ -1076,24 +1078,25 @@ enum GitHubNotificationSegment: String, CaseIterable, Identifiable, Sendable {
         self == .issue || self == .open || self == .mention || self == .star || self == .inLibrary
     }
 
-    var systemImage: String {
+    /// 筛选图标来源：Issue 圆点 / PR 拉取 / 合并 / @ / Fork 等对齐 GitHub 语义图形。
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .all: return "tray"
-        case .unread: return "circle.inset.filled"
-        case .issue: return "smallcircle.filled.circle"
-        case .pullRequest: return "arrow.triangle.pull"
-        case .discussion: return "text.bubble"
-        case .release: return "tag.circle"
-        case .open: return "circle"
-        case .closed: return "checkmark.circle"
-        case .merged: return "arrow.triangle.merge"
-        case .mention: return "at"
-        case .review: return "eye"
-        case .star: return "star"
-        case .unstar: return "star.slash"
-        case .fork: return "arrow.triangle.branch"
-        case .inLibrary: return "heart.fill"
-        case .outsideLibrary: return "heart"
+        case .all: return .business(.ungrouped)
+        case .unread: return .business(.circle)
+        case .issue: return .business(.circleDot)
+        case .pullRequest: return .business(.pullRequest)
+        case .discussion: return .business(.linuxDo)
+        case .release: return .business(.tags)
+        case .open: return .business(.circle)
+        case .closed: return .business(.circleCheck)
+        case .merged: return .business(.gitMerge)
+        case .mention: return .business(.atSign)
+        case .review: return .business(.eye)
+        case .star: return .business(.stars)
+        case .unstar: return .business(.undoStar)
+        case .fork: return .business(.alternatives)
+        case .inLibrary: return .business(.library)
+        case .outsideLibrary: return .business(.heart)
         }
     }
 

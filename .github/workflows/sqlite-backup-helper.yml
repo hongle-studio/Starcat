@@ -1,0 +1,58 @@
+name: SQLite backup helper
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'supports/scripts/sqlite-backup-helper/**'
+      - '.github/workflows/sqlite-backup-helper.yml'
+  pull_request:
+    paths:
+      - 'supports/scripts/sqlite-backup-helper/**'
+      - '.github/workflows/sqlite-backup-helper.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    defaults:
+      run:
+        working-directory: supports/scripts/sqlite-backup-helper
+    steps:
+      - name: Checkout helper source
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Export only this module. Optional App skill gitlinks have no
+          # .gitmodules mapping and make a full checkout's auth cleanup fail.
+          source_repo="$(mktemp -d "${RUNNER_TEMP}/sqlite-backup-source.XXXXXX")"
+          git init --bare "$source_repo"
+          git -C "$source_repo" remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git -C "$source_repo" fetch --no-tags --filter=blob:none --depth=1 origin "$GITHUB_SHA"
+          test "$(git -C "$source_repo" rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git -C "$source_repo" archive --format=tar FETCH_HEAD supports/scripts/sqlite-backup-helper | tar -xf -
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: supports/scripts/sqlite-backup-helper/go.mod
+          cache-dependency-path: supports/scripts/sqlite-backup-helper/go.sum
+      - name: Verify modules and formatting
+        run: |
+          go mod verify
+          test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: Build Linux helpers
+        run: |
+          # Cross-compile only; never invoke the production backup script in CI.
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/sqlite-backup-helper-amd64" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o "$RUNNER_TEMP/sqlite-backup-helper-arm64" .

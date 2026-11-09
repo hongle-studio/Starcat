@@ -162,14 +162,7 @@ struct SearchCenterView: View {
         }
         .onKeyPress(.return) {
             guard !isIMEComposing else { return .ignored }
-            let normalizedDraft = viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let candidate = viewModel.selectedCandidate,
-               !viewModel.lastSubmittedQuery.isEmpty,
-               normalizedDraft == viewModel.lastSubmittedQuery {
-                onOpenCandidate(candidate)
-            } else {
-                Task { await viewModel.submit() }
-            }
+            submitOrActivateSelection()
             return .handled
         }
         .onKeyPress(.escape) {
@@ -254,7 +247,7 @@ struct SearchCenterView: View {
                 if submittedQuery.isEmpty {
                     viewModel.clear()
                 } else {
-                    Task { await viewModel.submit() }
+                    submitOrActivateSelection()
                 }
             }
         )
@@ -1000,54 +993,6 @@ struct SearchCenterView: View {
         }
     }
 
-    private struct ExternalSearchProviderIcon: View {
-        let provider: ExternalSearchProviderID
-        let size: CGFloat
-
-        var body: some View {
-            icon
-                .foregroundStyle(Self.tint(for: provider))
-                .frame(width: size, height: size)
-                .accessibilityHidden(true)
-        }
-
-        @ViewBuilder
-        private var icon: some View {
-            switch provider {
-            case .anySearch:
-                Image(systemName: "asterisk")
-                    .font(.system(size: size, weight: .bold))
-            case .tavily:
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: size, weight: .semibold))
-            case .exa:
-                Image(systemName: "magnifyingglass.circle.fill")
-                    .font(.system(size: size, weight: .semibold))
-            case .braveLLMContext:
-                Image(systemName: "shield.fill")
-                    .font(.system(size: size, weight: .semibold))
-            case .firecrawl:
-                Image(systemName: "flame.fill")
-                    .font(.system(size: size, weight: .semibold))
-            }
-        }
-
-        static func tint(for provider: ExternalSearchProviderID) -> Color {
-            switch provider {
-            case .anySearch:
-                return .orange
-            case .tavily:
-                return .pink
-            case .exa:
-                return .purple
-            case .braveLLMContext:
-                return .orange
-            case .firecrawl:
-                return .red
-            }
-        }
-    }
-
     // MARK: - 搜索底部 footer（GitHub pagination + web metadata）
 
     /// GitHub scope 的分页入口必须作为列表最后一行，而不是固定在面板底部。
@@ -1480,6 +1425,20 @@ struct SearchCenterView: View {
     }
 
     /// 候选项的"激活"动作（点击 / 回车 / VoiceOver 主操作）。
+    /// 输入框提交与容器 Return 共用同一判断，避免焦点位置改变远端结果的打开方式
+    /// 草稿发生变化时仍应提交新查询；输入法组合期间按键归 IME 所有
+    private func submitOrActivateSelection() {
+        guard !isIMEComposing else { return }
+        let normalizedDraft = viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let candidate = viewModel.selectedCandidate,
+           !viewModel.lastSubmittedQuery.isEmpty,
+           normalizedDraft == viewModel.lastSubmittedQuery {
+            activate(candidate)
+        } else {
+            Task { await viewModel.submit() }
+        }
+    }
+
     /// 远端仓库（仅 GitHub 搜出、未 star、未入本地库）走会话级详情 sheet；
     /// 其余（本地、reference、已 star）由宿主决定打开方式，统一走 onOpenCandidate。
     ///
@@ -2621,7 +2580,6 @@ private struct SearchRemoteRepoDetailView: View {
     /// 触发流程仍保留"先关 popover → DispatchQueue.main.async 后再赋值 item"
     /// 的时序，避免 popover 与 sheet 同帧 presentation 竞争。
     @State private var codeFlowSheetItem: CodeFlowSheetItem?
-    @State private var paywallContext: ProPaywallContext?
 
     /// 卡片宽度。480pt 足以容纳 owner / repo 双行 + 头像 + 顶栏徽章；再窄
     /// 顶栏会挤压 license / score 徽章；再宽就显得空旷不像「快速决策卡」。
@@ -2750,9 +2708,14 @@ private struct SearchRemoteRepoDetailView: View {
             if isCurrentSortBestMatch, let score = candidate.remoteExtras.score {
                 scoreBadge(score: score)
             }
-            if let license = repo.license, !license.isEmpty {
-                licenseBadge(license: license)
-            }
+            // License 胶囊（2026-11-01 统一改版）：与详情 Hero 区同一组件。
+            // 无 license 的仓库也显示灰色"待确认"胶囊（原来整颗隐藏），
+            // 类别解析与说明卡交互全部由组件内部处理。
+            LicenseKnowledgeCapsule(
+                rawLicense: repo.license,
+                owner: repo.owner,
+                repoName: repo.name
+            )
 
             SheetCloseButton(
                 action: { dismiss() },
@@ -2813,18 +2776,6 @@ private struct SearchRemoteRepoDetailView: View {
         .padding(.vertical, 3)
         .background(Color.orange.opacity(0.12), in: Capsule())
         .help("search.detail.score.tooltip")
-    }
-
-    private func licenseBadge(license: String) -> some View {
-        // license 是 GitHub 返回的 SPDX id 或 license name（例如 "MIT" / "Apache-2.0"），
-        // 是数据，不是 UI 文案，必须 verbatim。
-        Text(verbatim: license)
-            .font(interfaceScale.font(.captionSmall, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color.secondary.opacity(0.10), in: Capsule())
-            .help("search.detail.license.tooltip")
     }
 
     // MARK: - State badges (archived / fork / template / disabled)
@@ -3211,9 +3162,6 @@ private struct SearchRemoteRepoDetailView: View {
             overflowPopoverContent(repo: repo)
                 .appLocaleEnvironment()
         }
-        .sheet(item: $paywallContext) { context in
-            ProPaywallSheet.hosted(context: context, dependencies: dependencies)
-        }
         .sheet(item: $codeFlowSheetItem) { item in
             CodeFlowPanel(repo: item.repo)
                 .id(item.id)
@@ -3331,13 +3279,8 @@ private struct SearchRemoteRepoDetailView: View {
     }
 
     private func openCodeFlow(for repo: Repo) {
-        do {
-            try dependencies.entitlementGate.requirePro(.codeFlow)
-            AppLog.ui.info("Search CodeFlow sheet repo=\(repo.fullName, privacy: .public) id=\(repo.id, privacy: .public)")
-            codeFlowSheetItem = CodeFlowSheetItem(repo: repo)
-        } catch {
-            paywallContext = ProPaywallContext(feature: .codeFlow, message: error.localizedDescription)
-        }
+        AppLog.ui.info("Search CodeFlow sheet repo=\(repo.fullName, privacy: .public) id=\(repo.id, privacy: .public)")
+        codeFlowSheetItem = CodeFlowSheetItem(repo: repo)
     }
 }
 

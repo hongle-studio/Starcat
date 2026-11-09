@@ -41,6 +41,7 @@
 
 - 涉及分支/worktree 操作前，先读取根目录 [`BRANCH.md`](BRANCH.md)，再用 Git 命令核对真实 refs、提交关系和 worktree 归属。
 - 创建、切换或恢复长期分支后，必须向 dong4j 说明当前分支、用途、基线、worktree、状态和后续归宿。
+- 创建新 worktree 后，必须先从主仓库复制被 Git 忽略的本地配置（至少 `Configs/Secrets.xcconfig` 和 SPM `Package.resolved`）到相同路径，再构建或测试；不输出、不提交配置内容，详见 [Git-分支与Worktree规范](docs/5-规范/Git-分支与Worktree规范.md)。
 - 创建、合并、停放、废弃或删除长期分支/worktree 时，必须在同一任务中同步更新 `BRANCH.md`。
 - 删除前必须检查独有提交、Git 合并关系、语义覆盖和 worktree 脏状态；未审查分支禁止直接删除。
 - 未经 dong4j 明确授权，不得 push、删除远端分支、强制删除 worktree 或改写共享历史。
@@ -219,7 +220,7 @@ Starcat/
 │   │   ├── appstore/                # Mac App Store 官网
 │   │   └── _local-admin/            # 本地运营控制台
 │   ├── starcat-*-api/               # 各后端 API 独立仓库
-│   ├── starcat-pro/                 # 公开支持与发布说明独立仓库
+│   ├── starcat-pro/                 # 已归档：changelog 迁至 starcat-site，支持入口迁至主仓库 issues
 │   ├── starcat-cli/                 # CLI / MCP 独立仓库
 │   ├── starcat-skill/               # AI Agent Skill 独立仓库
 │   ├── starcat-localization/        # 本地化资源独立仓库
@@ -432,7 +433,7 @@ Section {
 
 > 单一信任源：[`docs/5-规范/国际化-规范.md`](docs/5-规范/国际化-规范.md) + [`docs/5-规范/i18n-军规.md`](docs/5-规范/i18n-军规.md)
 > 关键 7 条：`String.l10n` / `Text("key")` / `.appLocaleEnvironment()` / locale 注入 / `Localizable.xcstrings` 命名 `{section}.{subsection}.{component}` / 目录编辑必须保持 `"key" : value` 并禁止整文件格式化 / **Catalog 禁止 StrReplace/ApplyPatch 与 JSON 重排写回；只允许 Xcode 或经验证的按行插入（diff 只能新增）**。
-> **全语言交付（2026-10-21 起强制）**：新增或修改国际化文案后，必须同步完成当前全部支持语言（现为 18 种）的配置与校验；禁止只补中英文、复制英语冒充翻译，或把英语兜底当成国际化完成。语言集合以 `AppLocale`（排除 `system`）与 `supports/starcat-localization/locales.json` 为准；提交前核对本次全部 key 的语言覆盖、占位符、编译资源和长文案布局。AI 初稿与人工审核状态必须如实保留，未验收部分明确报告。
+> **全语言交付（2026-10-21 起强制）**：新增或修改国际化文案后，必须同步完成当前全部支持语言（现为 17 种）的配置与校验；禁止只补中英文、复制英语冒充翻译，或把英语兜底当成国际化完成。语言集合以 `AppLocale`（排除 `system`）与 `supports/starcat-localization/locales.json` 为准；提交前核对本次全部 key 的语言覆盖、占位符、编译资源和长文案布局。AI 初稿与人工审核状态必须如实保留，未验收部分明确报告。
 > 自检：提交前 `rg "String\(localized:"` 与 `rg "NSLocalizedString"` 应只命中注释。
 
 ### 问题处理

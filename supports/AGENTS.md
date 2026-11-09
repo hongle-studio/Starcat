@@ -16,7 +16,7 @@
 **特殊项目约束：**
 
 - `starcat-recsys-trainer` 是私有 Python 3.12 + uv 离线管道，以项目 `README.md` 和 `docs/使用说明.md` 为准；按建立需求暂不创建 CI workflow，本地变更必须执行 `make check`。
-- `starcat-collection-api` 是私有 Go 1.25 独立服务，**不可**导入 `starcat-api` Gateway；它与 Trainer 之间只允许 Admin Key 保护的 Pull 导出。
+- `starcat-collection-api` 是私有 Go 独立服务，使用下文统一的安全工具链基线，**不可**导入 `starcat-api` Gateway；它与 Trainer 之间只允许 Admin Key 保护的 Pull 导出。
 
 `supports/` 下的 `.github`、官网、文档、API、CLI、插件、Homebrew 和本地化目录均可能是独立 Git 仓库。**修改前**先在目标目录运行 `git status -sb` 并核对 remote；不要把多个独立仓库的改动混成主仓库提交。
 
@@ -31,7 +31,7 @@
 | 官网 | `starcat-site/` | Direct、Direct Test、App Store 官网源码；旧 `_local-admin` 只保留到新控制台验收 |
 | 管理控制台 | `starcat-admin-console/` | React + shadcn/ui 本地运营控制台；远程部署属于第二阶段 |
 | 用户文档 | `starcat-docs/` | Mintlify 官方使用文档 |
-| 公开支持 | `starcat-pro/` | Issue、公开发布说明与营销图片源 |
+| 公开支持（已迁移） | `starcat-site/` | 双渠道 Changelog 与营销图片（`assets/`）；公开 Issue 在主仓库 Starcat。`starcat-pro/` 已归档，仅留历史 |
 | 工具与集成 | `starcat-cli/`、`starcat-skill/`、`extensions/` | CLI/MCP、AI Agent Skill 与浏览器插件 |
 | 分发与协作 | `homebrew-starcat*/`、`starcat-localization/`、`.github/` | Homebrew、本地化和组织主页 |
 | 后端 API | `starcat-*-api/`、`starcat-api-kit/`、`starcat-api/` | 六个业务服务、共享 kit、聚合网关与独立 license / collection；Fly.io 规则只适用于可部署服务 |
@@ -48,6 +48,7 @@
 | `starcat-wiki-api` | GitHub Wiki / 文档可用性探测 + 缓存 | Starcat 的 README / Wiki 辅助入口 |
 | `starcat-recommend-api` | 相似仓库推荐 API | Starcat 仓库详情页的相关推荐 |
 | `starcat-discovery-api` | 探索发现、热门、新发布榜单 API | Starcat 的「探索」入口 |
+| `starcat-ai-events-api` | 每周 AI 大事双语编辑发布 | 每日热点中的独立周报栏目 |
 | `starcat-collection-api` | 静默接收匿名公开 Star 快照 | 设置中用户主动开启的推荐数据贡献旁路 |
 
 ---
@@ -60,7 +61,7 @@
 | `starcat-trending-api` | 5002 | SQLite(`trending.db`) | GitHub Trending 抓取、榜单 API | `starcat-trending-api` | `goquery` |
 | `starcat-weekly-api` | 5003 | SQLite(`weekly.db`) + git repo | 阮一峰周刊项目同步、API 补全 | `starcat-weekly-api` | `goldmark` |
 | `starcat-wiki-api` | 5004 | SQLite(`wiki.db`) | Wiki / 文档索引探测、SWR 缓存 | `starcat-wiki-api` | `golang.org/x/net/html` |
-| `starcat-recommend-api` | 5005 | 进程内缓存 | SimRepo 相似仓库推荐代理 | `starcat-recommend-api` | `github.com/joho/godotenv` |
+| `starcat-recommend-api` | 5005 | 持久化 ServingBundle Registry + SQLite metrics | 自研相似推荐；v1 临时适配、v2 主入口 | `starcat-api` 聚合 | `modernc.org/sqlite` |
 | `starcat-discovery-api` | 5006 | SQLite(`discovery.db`) | 探索发现、热门、新发布榜单 | `starcat-discovery-api` | `modernc.org/sqlite`、`robfig/cron` |
 | `starcat-collection-api` | 5011 | SQLite(`collection.db`) | 公开 Star 快照分块接收、激活与 Trainer 导出 | `starcat-app/starcat-collection-api`（私有） | `starcat-api-kit`、`modernc.org/sqlite` |
 | `starcat-api-kit` | — | — | 共享 auth / envelope / CORS / tokenpool | — | 被各 API 通过版本化 Go module 引用 |
@@ -72,7 +73,7 @@
 
 ## 通用技术栈
 
-- **Go 1.25.0** — 六个业务 API、独立 Collection API、`starcat-api-kit` 与 `starcat-api` 的 go.mod 统一
+- **Go 1.26.10** — 六个业务 API、独立 API、`starcat-api-kit`、`starcat-api` 与 SQLite 备份 helper 的最低构建版本；使用仍受官方支持且包含安全补丁的工具链
 - **net/http** — 标准库 HTTP 服务,无第三方框架
 - **godotenv** — `github.com/joho/godotenv`,从 `.env` 文件加载环境变量(2026-06-09 R-01 起统一,详见 §R-01 配置规范)
 - **modernc.org/sqlite** — 有状态 API 使用 SQLite(R-01 起 sharing 也改 SQLite,详见对应方案)
@@ -80,24 +81,29 @@
 - **Fly.io** — 当前为 6 个业务独立 App；目标为 `starcat-api` 聚合 App，license 和 collection 继续独立
 - **GitHub Actions** — CI(`go vet` + `gofmt` + 编译 + 单测) + CD(fly deploy) + Release(多平台二进制 + GitHub Release),三个 workflow 串联: `go.yml` 成功 → `fly-deploy.yml` + `release.yml` 并行跑
 
-### Go 版本一致性（2026-06-08 起）
+### Go 版本一致性（2026-11-02 安全基线）
 
-**6 个可聚合 API + Collection API 必须保持 Go directive 一致**（统一为 `go 1.25.0`）：
+**6 个可聚合 API + Collection API 必须保持 Go directive 一致**（统一为 `go 1.26.10`）。共享 kit、聚合单元、history / license API 与 SQLite 备份 helper 使用同一最低构建版本：
 
-| 项目 | go.mod | workflows/go.yml |
+| 项目 | go.mod | CI 的 Go 版本来源 |
 |------|--------|-----------------|
-| starcat-sharing-api | `go 1.25.0` | `go-version: [1.25]` |
-| starcat-trending-api | `go 1.25.0` | `go-version: [1.25]` |
-| starcat-weekly-api | `go 1.25.0` | `go-version: [1.25]` |
-| starcat-wiki-api | `go 1.25.0` | `go-version: [1.25]` |
-| starcat-recommend-api | `go 1.25.0` | `go-version: [1.25]` |
-| starcat-discovery-api | `go 1.25.0` | `go-version: [1.25]` |
-| starcat-collection-api | `go 1.25.0` | `go-version-file: go.mod` |
+| starcat-sharing-api | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-trending-api | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-weekly-api | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-wiki-api | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-recommend-api | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-discovery-api | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-collection-api | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-history-api / starcat-license-api / starcat-api-kit | `go 1.26.10` | `go-version-file: go.mod` |
+| starcat-api | `go 1.26.10` | `go-version-file: starcat-api/go.mod` |
+| scripts/sqlite-backup-helper | `go 1.26.10` | `go-version-file: supports/scripts/sqlite-backup-helper/go.mod` |
+
+CI 与 Release 从模块文件选择 Go，使用 `GOTOOLCHAIN=local`；Go API Docker builder 固定为 `golang:1.26.10-alpine`，同样禁用自动工具链切换。`govulncheck` 固定工具版本（当前 v1.9.0），读取实时漏洞数据库；区分符号可达、仅导入和仅依赖记录，不能将扫描通过视为绝对安全保证。
 
 **禁止行为：**
 
 - ❌ 只升级某一个可聚合 API 的 Go 版本（六个需同步）；Collection 也必须继续使用同一 Go directive
-- ❌ 升级 Go 后忘了同步 `workflows/go.yml` 的矩阵版本
+- ❌ 升级 Go 后遗漏 CI / Release 的模块版本来源或 Docker builder 版本
 - ❌ 升级 Go 后没跑 `go build ./... && go vet ./...` 验证
 
 ### Module path 与 import 规范
@@ -194,10 +200,10 @@ go build ./... && go vet ./...
 ```bash
 # 1. 升级本地 Go toolchain(https://go.dev/dl/)
 # 2. 同步修改所有 API 项目的 go.mod:
-#    go X.Y.0
-# 3. 同步修改所有 API 项目的 .github/workflows/go.yml:
-#    go-version: [X.Y]
-# 4. 每个项目跑:
+#    go X.Y.Z（受支持且包含安全修复的补丁版本）
+# 3. CI / Release 用 go-version-file 读取模块；同步 Docker builder 补丁版本，
+#    CI 与 Docker 均设置 GOTOOLCHAIN=local。
+# 4. 每个项目跑测试、竞态检查、govulncheck，并验证构建与静态检查：
 cd starcat-sharing-api && go mod tidy && go build ./... && go vet ./...
 cd ../starcat-trending-api && go mod tidy && go build ./... && go vet ./...
 cd ../starcat-weekly-api && go mod tidy && go build ./... && go vet ./...
@@ -309,7 +315,7 @@ R-01 起,各 API 服务**统一**使用 `github.com/joho/godotenv` 加载 `.env`
 | `API_KEYS` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | API 鉴权白名单（详见 §API 鉴权约定） |
 | `GITHUB_TOKENS` | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | GitHub PAT 池（多 token 轮换；sharing 用于公开仓库预览） |
 | `ADMIN_API_KEYS` | ❌ | ⚠️ 按需 | ⚠️ 按需 | ❌ | ❌ | ✅ | 管理接口鉴权白名单 |
-| `SIMREPO_API_KEY` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | recommend-api 访问 SimRepo 的服务端密钥 |
+| `MODEL_PUBLISH_KEYS` | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | 独立于查询 Key 的模型发布凭据；不得传给客户端 |
 
 > 详细配置说明 + `.env.example` 模板见各 API 的 `docs/R-01-*-改造方案.md`。
 >
@@ -419,7 +425,7 @@ ghp_xxx****abcd
    - trending: `PORT`、`STORE_FILE`、`API_KEYS`、`GITHUB_TOKENS`
    - weekly: `PORT`、`STORE_FILE`、`REPO_DIR`、`API_KEYS`、`GITHUB_TOKENS`（**注意**：R-01 起 `GITHUB_TOKEN` 单值改为 `GITHUB_TOKENS` 多值池）
    - wiki: `PORT`、`STORE_FILE`、`API_KEYS`
-   - recommend: `PORT`、`API_KEYS`、`SIMREPO_API_KEY`、`SIMREPO_ENDPOINT`、缓存 TTL
+   - recommend: `PORT`、`API_KEYS`、`MODEL_REGISTRY_DIR`、`METRICS_STORE_FILE`，可选 `MODEL_PUBLISH_KEYS` / `GITHUB_TOKENS`；无活动 Bundle 不回退第三方
    - discovery: `PORT`、`STORE_FILE`、`API_KEYS`、`ADMIN_API_KEYS`、`GITHUB_TOKENS`、同步 cron、缓存 TTL
 5. **CI 矩阵版本必须 ≥ go.mod 的 go directive**:否则 CI 会用 `GOTOOLCHAIN=local` 拒绝构建
 6. **测试覆盖率**:weekly 有 parser 单测,sharing/trending 暂未覆盖 — 后续可补；R-01 起每个 API 必带 envelope / auth / ratelimit / tokenpool 单测
@@ -506,4 +512,11 @@ ghp_xxx****abcd
 
 ---
 
-*最后更新: 2026-06-30(补齐 recommend / discovery 服务清单与新增 API 脚本同步规范)*
+*最后更新: 2026-11-02（统一受支持的 Go 安全基线、模块版本来源与 CI 漏洞检查）*
+
+## 每周 AI 大事正式链路
+
+内容仓 `starcat-ai-events` 与后端 `starcat-ai-events-api` 均独立维护，验收期间 Private。
+后端本地 5013，生产仅 `X-SC-Svc: ai-events` 装配进既有 `starcat-api`，
+`AI_EVENTS_*` 前缀、`/data/ai-events.db` 分库；不创建独立 Fly App。
+备份随聚合卷 SQLite 在线备份，不新增危险的独立 wipe/restore 入口。

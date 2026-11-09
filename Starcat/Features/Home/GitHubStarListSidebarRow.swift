@@ -30,6 +30,8 @@ struct GitHubStarListSidebarRow: View {
                 Text(verbatim: list.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    // 无圆点时补齐图标列的左侧留白，名称中的 Emoji 随之对齐「未分组」图标
+                    .padding(.leading, list.colorHex.isEmpty ? 4 : 0)
 
                 // 只标私有：公开是默认态，侧栏不必再挂 globe。布局对齐主导航
                 // 「我的项目」授权勾：名称后、计数前，始终占位；颜色同样用绿。
@@ -58,13 +60,17 @@ struct GitHubStarListSidebarRow: View {
                 .frame(width: SidebarView.trailingFixedWidth, alignment: .trailing)
             }
         } icon: {
-            Circle()
-                .fill(
-                    SidebarSemanticIconStyle(
-                        semanticColor: Color(hex: list.colorHex) ?? .accentColor
+            // 无图标时不绘制圆点，避免强调色兜底重新补出用户已经关闭的装饰
+            if !list.colorHex.isEmpty {
+                Circle()
+                    .fill(
+                        SidebarSemanticIconStyle(
+                            semanticColor: Color(hex: list.colorHex) ?? .accentColor
+                        )
                     )
-                )
-                .frame(width: 14, height: 14)
+                    .frame(width: 14, height: 14)
+                    .accessibilityHidden(true)
+            }
         }
         .contextMenu {
             Button(action: onEdit) {

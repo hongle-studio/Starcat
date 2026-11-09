@@ -14,16 +14,11 @@ import Testing
 @MainActor
 @Suite("Business icons")
 struct BusinessIconTests {
-    @Test("补充业务图标存在且为可着色模板", arguments: BusinessIcon.Symbol.allCases.filter(\.isAsset))
+    @Test("补充业务图标存在且为可着色模板", arguments: BusinessIcon.Symbol.allCases)
     func assetsAreBundledTemplates(_ symbol: BusinessIcon.Symbol) throws {
         let image = try #require(NSImage(named: symbol.rawValue))
         #expect(image.isTemplate)
         #expect(image.size == NSSize(width: 24, height: 24))
-    }
-
-    @Test("保留的系统业务图标在当前系统可用", arguments: BusinessIcon.Symbol.allCases.filter { !$0.isAsset })
-    func systemSymbolsExist(_ symbol: BusinessIcon.Symbol) {
-        #expect(NSImage(systemSymbolName: symbol.systemImage, accessibilityDescription: nil) != nil)
     }
 
     @Test("图标遵循显示尺寸而不是 24px 素材网格", arguments: BusinessIcon.Symbol.allCases.filter(\.isAsset), [11.0, 13.0, 14.0, 16.0, 18.0])
@@ -88,13 +83,13 @@ struct BusinessIconTests {
     @Test("主侧栏、Agent 来源和 RAG 设置共享业务语义")
     func navigationMappingsStayConsistent() {
         #expect(ExploreMode.awesome.businessIcon == .curatedCollection)
-        #expect(ExploreMode.discover.businessIcon.systemImage == AgentRepositorySource.discovery.systemImage)
-        #expect(ExploreMode.trending.businessIcon.systemImage == AgentRepositorySource.trending.systemImage)
-        #expect(ExploreMode.weekly.businessIcon.systemImage == AgentRepositorySource.weekly.systemImage)
-        #expect(SidebarItem.library.systemImage == AgentRepositorySource.knowledge.systemImage)
-        #expect(SidebarItem.allStars.systemImage == AgentRepositorySource.starred.systemImage)
+        #expect(AgentRepositorySource.discovery.iconSource == .business(ExploreMode.discover.businessIcon))
+        #expect(AgentRepositorySource.trending.iconSource == .business(ExploreMode.trending.businessIcon))
+        #expect(AgentRepositorySource.weekly.iconSource == .business(ExploreMode.weekly.businessIcon))
+        #expect(SidebarItem.library.iconSource == AgentRepositorySource.knowledge.iconSource)
+        #expect(SidebarItem.allStars.iconSource == AgentRepositorySource.starred.iconSource)
         #expect(RAGSettingsSection.inference.businessIcon == .inference)
-        #expect(RAGSettingsSection.prompts.businessIcon == .prompts)
+        #expect(RAGSettingsSection.allCases == [.inference, .retrieval])
         #expect(RAGSettingsSection.retrieval.businessIcon == .retrieval)
         #expect(AppBackgroundTask.Kind.indexing.icon == .aiIndex)
         #expect(AppBackgroundTask.Kind.grouping.icon == .groups)
@@ -103,15 +98,15 @@ struct BusinessIconTests {
 
     @Test("RAG 引用与分片的内容类型一致，摘要不再使用翻译图标")
     func citationMappingsStayConsistent() {
-        #expect(RAGChunkSource.readme.systemImageName == RAGCitationSource.readme.systemImageName)
-        #expect(RAGChunkSource.notes.systemImageName == RAGCitationSource.notes.systemImageName)
-        #expect(RAGChunkSource.summary.systemImageName == RAGCitationSource.summary.systemImageName)
-        #expect(RAGChunkSource.metadata.systemImageName == RAGCitationSource.metadata.systemImageName)
-        #expect(RAGChunkSource.summary.systemImageName == BusinessIcon.Symbol.summary.systemImage)
-        #expect(RAGChunkSource.summary.systemImageName != BusinessIcon.Symbol.translation.systemImage)
-        #expect(RAGCitationSource.repoContext.systemImageName == BusinessIcon.Symbol.codeContext.systemImage)
-        #expect(RAGPlanSectionHelpTopic.repoContext.systemImage == BusinessIcon.Symbol.codeContext.systemImage)
-        #expect(BuiltInAgents.untaggedTidy.systemImage == BusinessIcon.Symbol.tags.systemImage)
+        #expect(RAGChunkSource.readme.iconSource == RAGCitationSource.readme.iconSource)
+        #expect(RAGChunkSource.notes.iconSource == RAGCitationSource.notes.iconSource)
+        #expect(RAGChunkSource.summary.iconSource == RAGCitationSource.summary.iconSource)
+        #expect(RAGChunkSource.metadata.iconSource == RAGCitationSource.metadata.iconSource)
+        #expect(RAGCitationSource.summary.iconSource == .business(.summary))
+        #expect(RAGCitationSource.summary.iconSource != .business(.translation))
+        #expect(RAGCitationSource.repoContext.iconSource == .business(.codeContext))
+        #expect(RAGPlanSectionHelpTopic.repoContext.systemImage == "chevron.left.forwardslash.chevron.right")
+        #expect(BuiltInAgents.untaggedTidy.iconSource == .business(.tags))
     }
 
     /// 导航与内容区用同一语义，避免之后只修正详情、遗漏洞察的入口图标。
@@ -119,8 +114,8 @@ struct BusinessIconTests {
     func insightsMappingsStayConsistent() {
         #expect(InsightsSelection.licenses.iconSource == .business(.license))
         #expect(InsightsSelection.languages.iconSource == .business(.languages))
-        #expect(InsightsSelection.untagged.iconSource == .system(SidebarItem.untagged.systemImage))
-        #expect(InsightsTopic.health.systemImage == BusinessIcon.Symbol.repositoryHealth.systemImage)
+        #expect(InsightsSelection.untagged.iconSource == .business(.untagged))
+        #expect(InsightsTopic.health.iconSource == .business(.repositoryHealth))
         #expect(InsightsSelection.healthSummary.iconSource == .business(.repositoryHealth))
         #expect(InsightsSelection.healthPending.iconSource == .business(.repositoryHealth))
     }

@@ -533,6 +533,12 @@ final class HomeViewModel {
     /// 全部 stars 数（Sidebar "全部 Stars" 行计数）。D-04：`private(set)` 收敛。
     private(set) var totalCount: Int = 0
 
+    /// 当前账号在本机自然日内新增、且仍保留 Star 的仓库数；不跟随中栏筛选。
+    private(set) var todayStarCount: Int = 0
+
+    /// Star 操作、同步与切账号可能交错，只允许最后一次统计发布结果。
+    @ObservationIgnored private var starCountsGeneration: UInt64 = 0
+
     /// 当前登录用户可访问的个人 / 组织项目数量。
     private(set) var myProjectsCount: Int = 0
 
@@ -1783,6 +1789,8 @@ final class HomeViewModel {
         itemsRevision &+= 1
 
         totalCount = 0
+        todayStarCount = 0
+        starCountsGeneration &+= 1
         myProjectsCount = 0
         projectFilterOptions = .empty
         activeUserID = nil
@@ -1881,15 +1889,33 @@ final class HomeViewModel {
         reloadCoordinator.installActionTask(task, generation: actionGeneration)
     }
 
+    /// Star 入库、同步完成和自然日变化共用这条窄查询，不新增网络轮询。
+    ///
+    /// 日界线用 Calendar 而非固定 24 小时，兼容夏令时。异步读库可能在切账号或
+    /// 新一轮刷新后才返回，generation 和取消检查防止旧快照覆盖新账号/新日期。
+    func refreshStarCounts(now: Date = Date(), calendar: Calendar = .current) async {
+        starCountsGeneration &+= 1
+        let generation = starCountsGeneration
+        guard let interval = calendar.dateInterval(of: .day, for: now) else { return }
+        do {
+            let counts = try await repository.starredCounts(in: interval)
+            guard !Task.isCancelled, generation == starCountsGeneration else { return }
+            totalCount = counts.total
+            todayStarCount = counts.withinInterval
+        } catch {
+            AppLog.database.error("refreshStarCounts failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// 刷新 Sidebar 数据（counts + language stats）。
     /// 通常在 onAppear 或 sync 完成后调用。
     func refreshSidebar() async {
         defer { sidebarFacetDataRevision &+= 1 }
+        await refreshStarCounts()
         let previousRepoTagsMap = repoTagsMap
         let previousGitHubListCounts = githubStarListCounts
         let previousUngroupedCount = githubStarListUngroupedCount
         do {
-            async let total = repository.starredCount()
             async let myProjects = fetchMyProjectsCount()
             async let projectOptions = fetchProjectFilterOptions()
             async let untagged = repository.fetchListCount(scope: .untagged, filters: .empty)
@@ -1910,7 +1936,6 @@ final class HomeViewModel {
             // 与 sidebar 其他统计同步刷新，避免新增/删除 tag 后 wall 多选还按旧映射过滤。
             async let tagAssignmentsResult = repoTagRepository.fetchAllTagIDsByRepo()
 
-            self.totalCount = try await total
             self.myProjectsCount = try await myProjects
             self.projectFilterOptions = try await projectOptions
             self.untaggedCount = try await untagged
@@ -2026,12 +2051,16 @@ final class HomeViewModel {
         }
     }
 
-    /// 外部场景（Search / Explore / Activity）完成 Star/Unstar 后的统一刷新入口。
+    /// Manage 详情与外部场景（Search / Explore / Activity）完成 Star/Unstar 后的统一刷新入口。
     ///
     /// Explore 会把 `selection` 切到 `.trending`，这时直接调用 `reloadItems()` 只会刷新
     /// Trending 占位列表，切回 Starred 时仍可能命中旧的 Manage 缓存。这里先清掉所有
     /// Star 派生列表缓存；如果当前 selection 仍是 Manage 范畴，再立即重拉当前列表。
     func refreshAfterExternalStarChange() async {
+        // 用户操作使在途结果也失效：不能合并进旧查询，也不能让旧预取在清缓存后重新填回。
+        reloadCoordinator.cancelAll()
+        prefetchTask?.cancel()
+        prefetchTask = nil
         listCache.removeAll()
         clearDatabaseSnapshots()
         await refreshSidebar()

@@ -58,6 +58,8 @@ final class UndoStarViewModel {
         do {
             try await repository.clearAll()
             records = []
+            // 广播给设置页保留计数与侧栏角标；本视图自己的 onReceive 会再空载一次，无害。
+            NotificationCenter.default.post(name: .undoStarHistoryDidChange, object: nil)
         } catch {
             loadError = error.localizedDescription
         }
@@ -113,6 +115,9 @@ struct UndoStarContentView: View {
         self.onSelectRepo = onSelectRepo
     }
 
+    /// 取消星标列表读库也可能跨越账号切换，计数只提交给开始加载时的账号代际。
+    @State private var countScopeRevision: UInt64?
+
     var body: some View {
         VStack(spacing: 0) {
             filterBar
@@ -132,45 +137,54 @@ struct UndoStarContentView: View {
             Text("activity.undoStar.clearAll.confirmMessage")
         }
         .task {
+            let revision = dependencies.activityCategoryCountService.scopeRevision
+            countScopeRevision = revision
             await viewModel.load()
             await viewModel.refreshExpiringCount()
-            dependencies.activityCategoryCountService.applyUndoStarCount(viewModel.records.count)
+            if viewModel.loadError == nil {
+                dependencies.activityCategoryCountService.applyUndoStarCount(
+                    viewModel.records.count, scopeRevision: revision
+                )
+            }
             selectFirstRecordIfRequested()
         }
         .onChange(of: viewModel.records.count) { _, newCount in
-            dependencies.activityCategoryCountService.applyUndoStarCount(newCount)
+            if let countScopeRevision, viewModel.loadError == nil {
+                dependencies.activityCategoryCountService.applyUndoStarCount(
+                    newCount, scopeRevision: countScopeRevision
+                )
+            }
             selectFirstRecordIfRequested()
         }
         .onChange(of: autoSelectFirstRecordRequestID) { _, _ in
             selectFirstRecordIfRequested()
         }
         .onReceive(NotificationCenter.default.publisher(for: .undoStarHistoryDidChange)) { notification in
-            Task { await viewModel.refreshExpiringCount() }
             let starredID = notification.userInfo?["starredGhRepoId"] as? Int64
             let previousSelectedID = selectedRecord?.ghRepoId
 
-            withAnimation(.easeOut(duration: 0.3)) {
-                if let id = starredID {
-                    viewModel.removeRecords(ghRepoIds: [id])
+            if let starredID {
+                // 恢复 Star：只定向移除对应记录
+                withAnimation(.easeOut(duration: 0.3)) {
+                    viewModel.removeRecords(ghRepoIds: [starredID])
                 }
-            }
-
-            // 如果当前详情页展示的 repo 已被 star，关闭详情或切到第一条
-            if let previousSelectedID, starredID == previousSelectedID {
-                if viewModel.records.isEmpty {
-                    selectedRecord = nil
-                    onSelectRepo?(nil)
-                } else if let first = viewModel.records.first {
-                    selectedRecord = first
-                    Task {
-                        if let repo = try? await dependencies.undoStarHistoryRepository.fetchRepo(ghRepoId: first.ghRepoId) {
-                            onSelectRepo?(repo)
-                        } else {
-                            onSelectRepo?(first.asRepo())
-                        }
+                // 如果当前详情页展示的 repo 已被 star，关闭详情或切到第一条
+                if starredID == previousSelectedID {
+                    selectFirstRecordOrClearDetail()
+                }
+            } else {
+                // 无指定 ID 的全量变更：新取消 Star 入账、设置页「立即删除」、
+                // 后台过期清理都会走到这里。内存列表必须整表重载，
+                // 否则清理完成后该分类仍显示已被删除的记录。
+                Task {
+                    await viewModel.reload()
+                    if let previousSelectedID,
+                       !viewModel.records.contains(where: { $0.ghRepoId == previousSelectedID }) {
+                        selectFirstRecordOrClearDetail()
                     }
                 }
             }
+            Task { await viewModel.refreshExpiringCount() }
         }
         .starcatRefreshCommand(
             pane: .list,
@@ -184,9 +198,13 @@ struct UndoStarContentView: View {
 
     /// `⌘R` 与首次加载复用同一个本地历史查询，并同步侧栏计数。
     private func refreshCurrentUndoStarList() {
+        guard let countScopeRevision else { return }
         Task {
             await viewModel.reload()
-            dependencies.activityCategoryCountService.applyUndoStarCount(viewModel.records.count)
+            guard viewModel.loadError == nil else { return }
+            dependencies.activityCategoryCountService.applyUndoStarCount(
+                viewModel.records.count, scopeRevision: countScopeRevision
+            )
             selectFirstRecordIfRequested()
         }
     }
@@ -206,6 +224,23 @@ struct UndoStarContentView: View {
                 onSelectRepo?(repo)
             } else {
                 onSelectRepo?(record.asRepo())
+            }
+        }
+    }
+
+    /// 详情页当前记录已消失（被恢复 Star 或被清理）时：列表非空选第一条，否则关闭详情。
+    private func selectFirstRecordOrClearDetail() {
+        if viewModel.records.isEmpty {
+            selectedRecord = nil
+            onSelectRepo?(nil)
+        } else if let first = viewModel.records.first {
+            selectedRecord = first
+            Task {
+                if let repo = try? await dependencies.undoStarHistoryRepository.fetchRepo(ghRepoId: first.ghRepoId) {
+                    onSelectRepo?(repo)
+                } else {
+                    onSelectRepo?(first.asRepo())
+                }
             }
         }
     }
@@ -230,7 +265,7 @@ struct UndoStarContentView: View {
                 selection: $viewModel.sortOption,
                 options: UndoStarSortOption.allCases,
                 displayName: { $0.displayName },
-                systemImage: { $0.systemImage }
+                iconSource: { $0.iconSource }
             )
 
             Spacer()
@@ -369,15 +404,15 @@ extension UndoStarSortOption {
         }
     }
 
-    var systemImage: String {
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .unstarredAtDesc: return "clock.arrow.circlepath"
-        case .starsDesc:       return "star.fill"
-        case .starsAsc:        return "star"
-        case .updatedDesc:     return "arrow.up"
-        case .updatedAsc:      return "arrow.down"
-        case .nameAsc:         return "textformat.abc"
-        case .nameDesc:        return "textformat.abc"
+        case .unstarredAtDesc: return .business(.recentUpdate)
+        case .starsDesc:       return .business(.stars)
+        case .starsAsc:        return .business(.stars)
+        case .updatedDesc:     return .business(.recentUpdate)
+        case .updatedAsc:      return .business(.recentUpdate)
+        case .nameAsc:         return .business(.sortAZ)
+        case .nameDesc:        return .business(.sortZA)
         }
     }
 }

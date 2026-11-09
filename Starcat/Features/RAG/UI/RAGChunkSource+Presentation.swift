@@ -11,17 +11,17 @@
 import SwiftUI
 
 extension RAGChunkSource {
-    /// 来源复用详情页的内容图标；不混用圆形/无圆形版本，也不把摘要误画成翻译。
-    var systemImageName: String {
+    /// 来源复用详情页的内容图标（Lucide 业务资产）；不混用圆形/无圆形版本，也不把摘要误画成翻译。
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .readme: return BusinessIcon.Symbol.readme.systemImage
-        case .notes: return BusinessIcon.Symbol.notes.systemImage
-        case .summary: return BusinessIcon.Symbol.summary.systemImage
-        case .metadata: return BusinessIcon.Symbol.metadata.systemImage
+        case .readme: return .business(.readme)
+        case .notes: return .business(.notes)
+        case .summary: return .business(.summary)
+        case .metadata: return .business(.metadata)
         }
     }
 
-    /// 来源类型 → 图标色；与 systemImageName 同枚举分支，避免两处漂移。
+    /// 来源类型 → 图标色；与 iconSource 同枚举分支，避免两处漂移。
     var tintColor: Color {
         switch self {
         case .readme: return .blue
@@ -43,16 +43,16 @@ extension RAGChunkSource {
 }
 
 extension RAGCitationSource {
-    /// 两个 XML 是仓库级临时证据，使用独立图标；其它来源保持与分片一致。
-    var systemImageName: String {
+    /// 引用来源图标；两个 XML 是仓库级临时证据，使用独立图标，其它来源保持与分片一致。
+    var iconSource: BusinessIcon.Source {
         switch self {
-        case .readme: return BusinessIcon.Symbol.readme.systemImage
-        case .notes: return BusinessIcon.Symbol.notes.systemImage
-        case .summary: return BusinessIcon.Symbol.summary.systemImage
-        case .metadata: return BusinessIcon.Symbol.metadata.systemImage
-        case .knowledgeBaseMetadata: return BusinessIcon.Symbol.knowledgeMetadata.systemImage
-        case .repositoryInsights: return BusinessIcon.Symbol.repositoryInsights.systemImage
-        case .repoContext: return BusinessIcon.Symbol.codeContext.systemImage
+        case .readme: return .business(.readme)
+        case .notes: return .business(.notes)
+        case .summary: return .business(.summary)
+        case .metadata: return .business(.metadata)
+        case .knowledgeBaseMetadata: return .business(.knowledgeMetadata)
+        case .repositoryInsights: return .business(.repositoryInsights)
+        case .repoContext: return .business(.codeContext)
         }
     }
 

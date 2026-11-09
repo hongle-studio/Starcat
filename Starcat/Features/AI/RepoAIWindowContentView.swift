@@ -347,7 +347,9 @@ struct RepoAIWindowContentView: View {
     }
 
     /// 自定义面板标题栏。系统标题栏被隐藏后，主动关闭入口必须留在内容树中；
-    /// `isMovableByWindowBackground` 仍让标题空白区域承担拖动窗口的职责。
+    /// 标题空白区域的窗口拖动由 `RepoAIWindowController` 在 AppKit 层叠加的
+    /// `RepoAIWindowDragStripView` 承担（SwiftUI 全幅内容会吞掉 mouseDown，
+    /// `isMovableByWindowBackground` 单独不生效，2026-11-04 修订）。
     /// 左上角用当前仓库 logo（对齐 RAG 工作台身份标识），不再用 sparkles 泛化图标。
     private var panelHeader: some View {
         HStack(spacing: 10) {
@@ -574,9 +576,13 @@ struct RepoAIWindowContentView: View {
     private func summaryHeader(vm: RepoAIInsightViewModel) -> some View {
         @Bindable var vm = vm
         return HStack(alignment: .center, spacing: 10) {
-            Label("ai.assistant.summary.title", systemImage: BusinessIcon.Symbol.summary.systemImage)
-                .font(interfaceScale.font(.panelTitle, weight: .semibold))
-                .labelStyle(.titleAndIcon)
+            Label {
+                Text("ai.assistant.summary.title")
+            } icon: {
+                BusinessIcon(.summary, pointSize: 20, weight: .semibold)
+            }
+            .font(interfaceScale.font(.panelTitle, weight: .semibold))
+            .labelStyle(.titleAndIcon)
                 .foregroundStyle(.primary)
 
             Spacer()
@@ -1313,8 +1319,7 @@ struct RepoAIWindowContentView: View {
     /// 全部按钮严格遵守 `.buttonStyle(.plain) + .focusEffectDisabled()` 规则。
     private func chatSessionToolbar(chat: RepoAIChatViewModel) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: BusinessIcon.Symbol.ragWorkspace.systemImage)
-                .font(interfaceScale.font(.captionSmall, weight: .semibold))
+            BusinessIcon(.ragWorkspace, pointSize: 13, weight: .semibold)
                 .foregroundStyle(.secondary)
             Text(verbatim: displayTitle(for: chat))
                 .font(interfaceScale.font(.caption, weight: .medium))
@@ -1905,10 +1910,11 @@ struct RepoAIWindowContentView: View {
 
     private var chatEmptyState: some View {
         EmptyStateView(
-            systemImage: BusinessIcon.Symbol.ragWorkspace.systemImage,
+            systemImage: "",
             title: "ai.assistant.chat.empty.title",
             subtitle: "ai.assistant.chat.empty.description",
-            subtitleHorizontalPadding: 40
+            subtitleHorizontalPadding: 40,
+            businessIcon: .ragWorkspace
         )
         .frame(maxWidth: .infinity)
     }

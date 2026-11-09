@@ -43,6 +43,9 @@ private enum ExploreSidebarSelection: Hashable {
     case awesomeSource(String?)
     case linuxDo
     case linuxDoLanguage(String?)
+    case dailyRadarCategory(String?)
+    /// 文章工作区独立于仓库分类筛选，保留用户原仓库选择。
+    case dailyRadarPreview
 }
 
 /// 探索侧栏图标色：未选中用语义色；明亮主题选中时跟系统蓝底反成白色。
@@ -53,6 +56,7 @@ typealias ExploreSidebarIconStyle = SidebarSemanticIconStyle
 
 struct SidebarView: View {
 
+    @Environment(AppSettings.self) private var settings
     @Environment(HomeViewModel.self) private var viewModel
     @Environment(AuthSession.self) private var authSession
     @Environment(\.starcatInterfaceScale) private var interfaceScale
@@ -68,6 +72,7 @@ struct SidebarView: View {
     /// 不在 sidebar 里主动触发任何加载。
     @Environment(AppDependencies.self) private var dependencies
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.locale) private var locale
 
     /// 当前打开/收起 Languages 组的状态。
     @State private var languagesExpanded: Bool = true
@@ -84,9 +89,10 @@ struct SidebarView: View {
     @State private var exploreTopicsExpanded: Bool = true
     /// Explore 发现模块平台分类展开/收起状态。
     @State private var explorePlatformsExpanded: Bool = true
+    /// 每日热点子分类展开/收起状态；「全部主题」行常驻，仅子分类折叠（2026-11-04 对齐其他分组）。
+    @State private var dailyRadarCategoriesExpanded: Bool = true
     /// Activity 分类列表展开/收起状态。Activity 是独立 root，不能复用 Trending 的展开态。
     @State private var activityCategoriesExpanded: Bool = true
-
     @Binding var selectedPage: SidebarRootPage
     @Binding var selectedExploreMode: ExploreMode
     @Binding var selectedTrendingLanguage: TrendingLanguage
@@ -121,6 +127,13 @@ struct SidebarView: View {
     ///
     /// 只传最终颜色而不传 `ActivityItem`，避免 Sidebar 需要理解 Activity 的详情模型。
     var currentActivityTintColor: Color?
+
+    /// 每日热点独立内容区的展示状态由主窗口持有。
+    @Binding var dailyRadarPreviewPresentation: Bool
+
+    /// 与右侧覆盖层共享的每日热点目录/分类状态；左栏不创建第二套请求。
+    @Bindable var dailyRadarModel: DailyRadarWorkspaceViewModel
+    var onOpenFollowGraph: (FollowGraphRelation) -> Void = { _ in }
 
     /// HOM-73：控制登录 sheet 的显示。
     @State private var showLoginSheet: Bool = false
@@ -229,6 +242,15 @@ struct SidebarView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await dependencies.linuxDoStore.refreshProvenance() } }
         }
+        .task(id: "\(dependencies.databaseScopeRevision):\(settings.exploreCatalogPreferences.hiddenWeeklySources.sorted())") {
+            // 首帧 bulk meta 可能尚未落盘；nil 时保留旧值，等 Weekly 列表加载后由
+            // applyTotal 补写，不要把未知误展示成 0。
+            let hidden = settings.exploreCatalogPreferences.hiddenWeeklySources
+            if let total = await dependencies.weeklyBulkRepository.cachedTotal(excludingSources: hidden),
+               !Task.isCancelled {
+                dependencies.weeklySelectionService.applyTotal(total)
+            }
+        }
         .sheet(isPresented: $showLoginSheet) {
             GithubAuthView()
                 .appLocaleEnvironment()
@@ -263,9 +285,14 @@ struct SidebarView: View {
             }
             .appLocaleEnvironment()
         }
-        .sheet(isPresented: $awesomeStore.isSourceManagerPresented) {
-            AwesomeSourceManagerSheet(store: awesomeStore)
-                .appLocaleEnvironment()
+        .onChange(of: awesomeStore.isSourceManagerPresented) { _, isPresented in
+            if isPresented {
+                AwesomeSourceManagerWindowController.present(dependencies: dependencies) {
+                    awesomeStore.dismissSourceManager()
+                }
+            } else {
+                AwesomeSourceManagerWindowController.dismissIfPresented()
+            }
         }
         .onChange(of: hasAnyBackgroundTask) { _, hasTask in
             if !hasTask {
@@ -635,7 +662,7 @@ struct SidebarView: View {
                     showBackgroundTaskPopover = false
                     openAISettings()
                 } label: {
-                    Label("sidebar.autoTidy.popover.openAISettings", systemImage: "gearshape")
+                    Label("sidebar.autoTidy.popover.openAISettings.modelsSettings", systemImage: "gearshape")
                 }
             }
             .controlSize(.small)
@@ -692,7 +719,7 @@ struct SidebarView: View {
                     showBackgroundTaskPopover = false
                     openAISettings()
                 } label: {
-                    Label("sidebar.autoTidy.popover.openAISettings", systemImage: "gearshape")
+                    Label("sidebar.autoTidy.popover.openAISettings.modelsSettings", systemImage: "gearshape")
                 }
             }
             .controlSize(.small)
@@ -830,6 +857,7 @@ struct SidebarView: View {
     private var sidebarFixedHeader: some View {
         VStack(spacing: 0) {
             SidebarHeaderView(
+                onOpenFollowGraph: onOpenFollowGraph,
                 trendingRepo: currentTrendingRepo,
                 activityTintColor: currentActivityTintColor
             )
@@ -848,6 +876,9 @@ struct SidebarView: View {
 
     private var exploreSidebarSelectionBinding: Binding<ExploreSidebarSelection?> {
         Binding {
+            if dailyRadarPreviewPresentation {
+                return dailyRadarModel.category.map(ExploreSidebarSelection.dailyRadarCategory) ?? .dailyRadarPreview
+            }
             if let exploreListSelection,
                isExploreSelectionCurrent(exploreListSelection) {
                 return exploreListSelection
@@ -892,6 +923,10 @@ struct SidebarView: View {
 
     private func isExploreSelectionCurrent(_ selection: ExploreSidebarSelection) -> Bool {
         switch selection {
+        case .dailyRadarPreview:
+            return dailyRadarPreviewPresentation
+        case .dailyRadarCategory(let id):
+            return dailyRadarPreviewPresentation && dailyRadarModel.category == id
         case .mode(let mode):
             return selectedExploreMode == mode && (mode != .discover || dependencies.linuxDoStore.selectedSource == .catalog)
         case .topic(let code):
@@ -920,6 +955,13 @@ struct SidebarView: View {
     }
 
     private func applyExploreSelection(_ selection: ExploreSidebarSelection) {
+        if selection == .dailyRadarPreview {
+            dailyRadarPreviewPresentation = true
+            dailyRadarModel.selectCategory(nil)
+            return
+        }
+        // 同一已选模式也要能离开预览；不依赖 selectedExploreMode 的 onChange。
+        dailyRadarPreviewPresentation = false
         // 来源不是 topic；返回普通发现时恢复已有主题/平台筛选，不污染 Linux.do 目录。
         switch selection {
         case .linuxDo, .linuxDoLanguage(_):
@@ -928,6 +970,11 @@ struct SidebarView: View {
             dependencies.linuxDoStore.selectedSource = .catalog
         }
         switch selection {
+        case .dailyRadarPreview:
+            return
+        case .dailyRadarCategory(let id):
+            dailyRadarPreviewPresentation = true
+            dailyRadarModel.selectCategory(id)
         case .mode(let mode):
             selectedExploreMode = mode
             if mode == .awesome {
@@ -984,9 +1031,16 @@ struct SidebarView: View {
         case .trending:
             List(selection: exploreSidebarSelectionBinding) {
                 exploreModeSidebarContent
-                exploreSidebarContent
+                if !dailyRadarPreviewPresentation {
+                    exploreSidebarContent
+                } else {
+                    dailyRadarSidebarContent
+                }
             }
             .listStyle(.sidebar)
+            .task(id: dailyRadarScope) {
+                await prepareDailyRadarSidebar()
+            }
             // 分类行自身挂有折叠/展开 transition；切 Explore mode 时不能复用
             // List(selection:) 的系统选中动画，否则旧筛选 section 退场与新 section
             // 入场会连续触发整窗 layout。手动点 header 的 disclosureSpring 是另一笔
@@ -1008,6 +1062,90 @@ struct SidebarView: View {
         }
     }
 
+    /// 与阅读工作区使用相同身份，预加载目录后打开文章不会再次清空计数或选中分类
+    private var dailyRadarScope: String {
+        "\(dependencies.databaseScopeRevision)|\(dependencies.dailyRadarConfigurationRevision)|\(locale.identifier)"
+    }
+
+    private func prepareDailyRadarSidebar() async {
+        dailyRadarModel.configure(repository: dependencies.dailyRadarRepository, scope: dailyRadarScope, locale: locale)
+        await dailyRadarModel.reloadSidebarCatalogs()
+    }
+
+    @ViewBuilder
+    private var dailyRadarSidebarContent: some View {
+        Section {
+            dailyRadarCategoryRow(nil)
+            if dailyRadarCategoriesExpanded {
+                ForEach(visibleDailyRadarCategories) { category in
+                    dailyRadarCategoryRow(category)
+                        .transition(Self.disclosureRowTransition)
+                }
+            }
+        } header: {
+            dailyRadarCategorySectionHeader
+        }
+    }
+
+    /// 与主题/平台/语言分组同一套折叠头：整行可点、右侧计数 + chevron（遵循折叠展开规范）。
+    private var dailyRadarCategorySectionHeader: some View {
+        Button {
+            withAnimation(disclosureAnimation) {
+                dailyRadarCategoriesExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text("explore.sidebar.categories")
+                    .font(interfaceScale.font(.body))
+
+                Spacer(minLength: 8)
+
+                Text(dailyRadarModel.availableCategories.count.formatted())
+                    .font(interfaceScale.font(.captionSmall))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                disclosureChevron(isExpanded: dailyRadarCategoriesExpanded)
+                    .frame(width: 20, height: 20)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(disclosureHelp(isExpanded: dailyRadarCategoriesExpanded))
+    }
+
+    /// 二级目录与设置页共用同一隐藏集合；后端新增分类默认进入列表。
+    private var visibleDailyRadarCategories: [DailyRadarCatalog.Category] {
+        settings.exploreCatalogPreferences.visibleDailyRadarCategories(dailyRadarModel.availableCategories)
+    }
+
+    private func dailyRadarCategoryRow(_ category: DailyRadarCatalog.Category?) -> some View {
+        let id = category?.id
+        // 「全部主题」与每日热点入口共用总数，避免侧栏两个入口的统计口径不一致。
+        // catalog 未加载或旧后端无计数字段时为 nil，徽标自动隐藏。
+        let count: Int?
+        if let id {
+            count = dailyRadarModel.categoryCounts[id]
+        } else {
+            count = dailyRadarModel.totalCount
+        }
+        return exploreSelectableRow(selection: .dailyRadarCategory(id), count: count) {
+            DailyRadarCategoryIcon(categoryID: id, size: 14, isSidebar: true)
+                .font(interfaceScale.font(.iconSmall, weight: .semibold))
+        } title: {
+            if let category {
+                Text(verbatim: category.localizedTitle)
+                    .lineLimit(1)
+            } else {
+                Text("dailyRadar.allTopics")
+                    .lineLimit(1)
+            }
+        }
+    }
+
     /// 洞察主题继续使用系统 Sidebar selection，不手绘选中背景。
     @ViewBuilder
     private var insightsSidebarContent: some View {
@@ -1018,11 +1156,14 @@ struct SidebarView: View {
                         .lineLimit(1)
                 } icon: {
                     // 与星标 / 探索 / 活动侧栏一致：未选中保留语义色，明亮选中反白。
-                    Image(systemName: topic.systemImage)
-                        .font(interfaceScale.font(.iconSmall, weight: .semibold))
-                        .foregroundStyle(
-                            SidebarSemanticIconStyle(semanticColor: topic.semanticIconColor)
-                        )
+                    BusinessIcon(
+                        source: topic.iconSource,
+                        pointSize: 16 * interfaceScale.multiplier,
+                        weight: .semibold
+                    )
+                    .foregroundStyle(
+                        SidebarSemanticIconStyle(semanticColor: topic.semanticIconColor)
+                    )
                         .frame(width: 16, height: 16)
                 }
                 .tag(topic)
@@ -1111,9 +1252,16 @@ struct SidebarView: View {
     @ViewBuilder
     private var exploreModeSidebarContent: some View {
         Section("nav.trending") {
-            ForEach(ExploreMode.allCases) { mode in
-                exploreModeRow(mode)
-                if mode == .weekly {
+            if settings.exploreCatalogPreferences.isGroupEnabled("dailyRadar") {
+                exploreSelectableRow(selection: .dailyRadarPreview, count: dailyRadarModel.totalCount) {
+                    // 每日热点与 Weekly 拆分图形：雷达 vs 报纸（2026-11-04 图标体系样板决议）。
+                    exploreSidebarBusinessIcon(.dailyRadar, color: .indigo)
+                } title: {
+                    Text("dailyRadar.title")
+                }
+            }
+            ForEach(settings.exploreCatalogPreferences.visibleGroupIDs, id: \.self) { id in
+                if id == "linuxDo" {
                     exploreSelectableRow(
                         selection: .linuxDo,
                         count: dependencies.linuxDoStore.provenance?.payload.origins?.count ?? 0
@@ -1121,6 +1269,8 @@ struct SidebarView: View {
                         // 社区来源使用单气泡，复用分类字号与字重，避免独立缩放造成笔画不一致。
                         exploreSidebarBusinessIcon(.linuxDo, color: .indigo)
                     } title: { Text(verbatim: "Linux.do") }
+                } else if let mode = ExploreMode(rawValue: id) {
+                    exploreModeRow(mode)
                 }
             }
         }
@@ -1239,7 +1389,9 @@ struct SidebarView: View {
             exploreTopicRow(nil)
 
             if exploreTopicsExpanded {
-                ForEach(dependencies.exploreCatalogStore.displayTopics) { topic in
+                ForEach(dependencies.exploreCatalogStore.displayTopics.filter {
+                    !settings.exploreCatalogPreferences.hiddenDiscoverTopics.contains($0.code)
+                }) { topic in
                     exploreTopicRow(topic)
                         .transition(Self.disclosureRowTransition)
                 }
@@ -1252,7 +1404,9 @@ struct SidebarView: View {
             explorePlatformRow(nil)
 
             if explorePlatformsExpanded {
-                ForEach(dependencies.exploreCatalogStore.displayPlatforms) { platform in
+                ForEach(dependencies.exploreCatalogStore.displayPlatforms.filter {
+                    !settings.exploreCatalogPreferences.hiddenDiscoverPlatforms.contains($0.code)
+                }) { platform in
                     explorePlatformRow(platform)
                         .transition(Self.disclosureRowTransition)
                 }
@@ -1485,12 +1639,15 @@ struct SidebarView: View {
         Label {
             activityCategoryLabel(category)
         } icon: {
-            // Activity 分类使用系统语义图标，不复用 LanguageIconView，避免渲染出语言 logo。
+            // Activity 分类统一走 Lucide 业务资产，不复用 LanguageIconView，避免渲染出语言 logo。
             // 明亮选中态反白：与探索「发现 / 趋势 / …」同一套 SidebarSemanticIconStyle。
-            Image(systemName: category.systemImage)
-                .font(interfaceScale.font(.iconSmall, weight: .semibold))
-                .foregroundStyle(SidebarSemanticIconStyle(semanticColor: category.iconColor))
-                .frame(width: 16, height: 16)
+            BusinessIcon(
+                source: category.iconSource,
+                pointSize: 16 * interfaceScale.multiplier,
+                weight: .semibold
+            )
+            .foregroundStyle(SidebarSemanticIconStyle(semanticColor: category.iconColor))
+            .frame(width: 16, height: 16)
         }
         .tag(category)
     }
@@ -1551,10 +1708,9 @@ struct SidebarView: View {
             }
         } label: {
             VStack(spacing: 6) {
-                Image(systemName: page.systemImage)
-                    // 圆形 SF Symbol 的有效墨迹面积比 folder / bell.badge 小，三入口局部放大避免视觉塌陷。
-                    .font(interfaceScale.font(size: 30, weight: .medium))
-                    .symbolEffect(.bounce, value: rootNavigationBounceTokens[page, default: 0])
+                // 根入口换 Lucide 资产后不再有 symbolEffect 弹跳反馈；如需保留可改用
+                // scaleEffect 动画补齐（样板阶段先移除，验收时一并定夺）。
+                BusinessIcon(source: page.iconSource, pointSize: 30 * interfaceScale.multiplier, weight: .medium)
                     .frame(height: 30)
                 Text(page.titleKey)
                     // 四入口文案比 body 小一号：图标仍占主视觉，标签只做识别不抢权重。
@@ -1576,6 +1732,7 @@ struct SidebarView: View {
     }
 
     private func selectRootPage(_ page: SidebarRootPage) {
+        dailyRadarPreviewPresentation = false
         guard selectedPage != page else { return }
         if let onSelectRootPage {
             onSelectRootPage(page)
@@ -1963,7 +2120,7 @@ struct SidebarView: View {
             selection: .topic(code),
             count: dependencies.exploreCatalogStore.topicCount(for: code)
         ) {
-            exploreSidebarSystemIcon(
+            exploreDiscoverySidebarIcon(
                 exploreTopicSystemImage(for: code),
                 color: exploreTopicIconColor(for: code)
             )
@@ -2017,8 +2174,31 @@ struct SidebarView: View {
     }
 
     private func exploreTopicIconColor(for code: String?) -> Color {
-        // 已知分类使用中性色突出图标语义；未知动态分类继续用蓝点提示它来自后端扩展。
-        exploreTopicLocalizationKey(code ?? "") == nil && code != nil ? .accentColor.opacity(0.7) : .secondary
+        // 与活动分类、日报分类同一套系统调色板语义色（2026-11-04 决议：
+        // 发现子分类此前全灰，与其他带色子分组不一致）；未知动态分类继续用蓝点提示后端扩展。
+        switch code {
+        case nil: return .secondary
+        case "ai": return .purple
+        case "privacy": return .blue
+        case "networking": return .cyan
+        case "media": return .pink
+        case "social": return .orange
+        case "reading": return .brown
+        case "tools": return .teal
+        default: return .accentColor.opacity(0.7)
+        }
+    }
+
+    /// 平台来自后端、数量可增长，没有固定语义可逐个指定；
+    /// 按 code 稳定取色板颜色，保证同一平台跨重启颜色不变、不同平台多数可区分。
+    private func explorePlatformIconColor(for code: String?) -> Color {
+        guard let code else { return .secondary }
+        let palette: [Color] = [.blue, .purple, .teal, .orange, .pink, .brown, .cyan, .green]
+        var hash = 5381
+        for scalar in code.unicodeScalars {
+            hash = (hash << 5) &+ hash &+ Int(scalar.value)   // djb2：简单稳定，无需加密
+        }
+        return palette[abs(hash) % palette.count]
     }
 
     private func explorePlatformRow(_ platform: DiscoveryPlatformDTO?) -> some View {
@@ -2027,9 +2207,9 @@ struct SidebarView: View {
             selection: .platform(code),
             count: dependencies.exploreCatalogStore.platformCount(for: code)
         ) {
-            exploreSidebarSystemIcon(
+            exploreDiscoverySidebarIcon(
                 platform?.systemName ?? "square.stack.3d.up",
-                color: .secondary
+                color: explorePlatformIconColor(for: code)
             )
         } title: {
             if let platform {
@@ -2080,6 +2260,16 @@ struct SidebarView: View {
         )
         .foregroundStyle(ExploreSidebarIconStyle(semanticColor: color))
         .frame(width: 16, height: 16)
+    }
+
+    /// 发现的分类、平台图标与每日热点共用 14pt 尺寸；等比缩放避免侧栏字号把符号撑出画布。
+    private func exploreDiscoverySidebarIcon(_ name: String, color: Color) -> some View {
+        Image(systemName: name)
+            .resizable()
+            .scaledToFit()
+            .font(interfaceScale.font(.iconSmall, weight: .semibold))
+            .foregroundStyle(ExploreSidebarIconStyle(semanticColor: color))
+            .frame(width: 14, height: 14)
     }
 
     /// 探索侧栏 SF Symbol：语义色 + 明亮主题选中反白（见 `ExploreSidebarIconStyle`）。
@@ -2312,12 +2502,16 @@ struct SidebarView: View {
                 .frame(width: Self.trailingFixedWidth, alignment: .trailing)
             }
         } icon: {
-            Image(systemName: item.systemImage)
-                .font(interfaceScale.font(.iconSmall, weight: .semibold))
-                .foregroundStyle(
-                    SidebarSemanticIconStyle(semanticColor: item.semanticIconColor ?? .secondary)
-                )
-                .frame(width: 16, height: 16)
+            // 资产与 SF 统一经 BusinessIcon 渲染；沿用探索侧栏「16pt 素材 / 13pt SF」光学匹配规则。
+            BusinessIcon(
+                source: item.iconSource,
+                pointSize: (item.iconSource.isAsset ? 16 : 13) * interfaceScale.multiplier,
+                weight: .semibold
+            )
+            .foregroundStyle(
+                SidebarSemanticIconStyle(semanticColor: item.semanticIconColor ?? .secondary)
+            )
+            .frame(width: 16, height: 16)
         }
         .tag(item)
         // HOM-46 优化：鼠标悬停时预取相邻分类数据，降低点击后的感知延迟
@@ -2372,14 +2566,17 @@ struct SidebarView: View {
                 .frame(width: Self.trailingFixedWidth, alignment: .trailing)
             }
         } icon: {
-            Image(systemName: SidebarItem.myProjects.systemImage)
-                .font(interfaceScale.font(.iconSmall, weight: .semibold))
-                .foregroundStyle(
-                    SidebarSemanticIconStyle(
-                        semanticColor: SidebarItem.myProjects.semanticIconColor ?? .secondary
-                    )
+            BusinessIcon(
+                source: SidebarItem.myProjects.iconSource,
+                pointSize: (SidebarItem.myProjects.iconSource.isAsset ? 16 : 13) * interfaceScale.multiplier,
+                weight: .semibold
+            )
+            .foregroundStyle(
+                SidebarSemanticIconStyle(
+                    semanticColor: SidebarItem.myProjects.semanticIconColor ?? .secondary
                 )
-                .frame(width: 16, height: 16)
+            )
+            .frame(width: 16, height: 16)
         }
         .tag(SidebarItem.myProjects)
         .onHover { isHovering in
@@ -2512,9 +2709,9 @@ struct SidebarView: View {
                 .frame(width: Self.trailingFixedWidth, alignment: .trailing)
             }
         } icon: {
-            // 优先 user-defined SF Symbol；否则 fallback "tag.fill"
-            // 明亮选中反白，避免彩色 icon 叠在系统蓝底上看不清。
-            Image(systemName: tag.icon ?? BusinessIcon.Symbol.tags.systemImage)
+            // 优先 user-defined SF Symbol；否则 fallback "tag.fill"。
+            // tags 注册条目转 Lucide 资产时（批量阶段），此处需一并改为 BusinessIcon 渲染。
+            Image(systemName: tag.icon ?? "tag.fill")
                 .font(interfaceScale.font(.iconSmall, weight: .semibold))
                 .foregroundStyle(
                     SidebarSemanticIconStyle(

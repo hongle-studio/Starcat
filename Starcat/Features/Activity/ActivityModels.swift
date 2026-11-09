@@ -85,19 +85,23 @@ enum ActivityCategory: String, CaseIterable, Identifiable, Sendable {
         Color(hex: iconColorHex) ?? .accentColor
     }
 
-    var systemImage: String {
+    /// 分类对应的业务图标条目；侧栏、MetaBadge 徽标与头像角标共用同一资产。
+    /// 发新版复用 releases（火箭），时间线复用 ungrouped（inbox），建议复用 ai（sparkles）。
+    var symbol: BusinessIcon.Symbol {
         switch self {
-        case .all:          return "tray.full"
-        case .announcement: return "megaphone"
-        case .release:      return "shippingbox"
-        case .star:         return "star"
-        case .repository:   return "folder"
-        case .following:    return "person.2"
-        case .suggestion:   return "sparkles"
-        case .undoStar:     return "arrow.uturn.backward.circle"
-        case .notification: return "bell"
+        case .all:          return .ungrouped
+        case .announcement: return .announcement
+        case .release:      return .releases
+        case .star:         return .stars
+        case .repository:   return .groups
+        case .following:    return .following
+        case .suggestion:   return .ai
+        case .undoStar:     return .undoStar
+        case .notification: return .notifications
         }
     }
+
+    var iconSource: BusinessIcon.Source { .business(symbol) }
 }
 
 extension ActivityCategory {
@@ -141,8 +145,8 @@ enum ActivityTimeSort: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var systemImage: String {
-        "clock"
+    var iconSource: BusinessIcon.Source {
+        .business(.recentUpdate)
     }
 }
 
@@ -226,7 +230,8 @@ struct ActivityAnnouncementPayload: Equatable, Sendable {
 }
 
 /// 通知 inbox 行 / 详情 payload。人名和摘要只在选中 hydrate 后才有。
-struct ActivityNotificationPayload: Equatable, Sendable {
+/// Codable 供 Issue 总结磁盘快照回放 matchesSource 使用；子模型均已 Codable。
+struct ActivityNotificationPayload: Equatable, Codable, Sendable {
     let threadId: String
     let reason: String
     let chip: GitHubNotificationChip

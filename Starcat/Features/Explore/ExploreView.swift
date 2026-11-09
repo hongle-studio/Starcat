@@ -37,6 +37,7 @@ struct ExploreView: View {
     let onLinuxDoRepoCountChange: (Int) -> Void
 
     @Environment(AppDependencies.self) private var dependencies
+    @Environment(AppSettings.self) private var settings
 
     var body: some View {
         Group {
@@ -160,7 +161,8 @@ struct ExploreView: View {
                 api: dependencies.weeklyAPI,
                 selectionService: dependencies.weeklySelectionService,
                 languageStore: dependencies.weeklyLanguageStore,
-                bulkRepository: dependencies.weeklyBulkRepository
+                bulkRepository: dependencies.weeklyBulkRepository,
+                hiddenSources: settings.exploreCatalogPreferences.hiddenWeeklySources
             )
         }
     }
@@ -297,7 +299,7 @@ private struct ExploreDiscoveryListView: View {
                 selection: sortBinding,
                 options: ExploreSortOption.options(for: mode),
                 displayName: { $0.titleKey },
-                systemImage: { $0.systemImage },
+                iconSource: { $0.iconSource },
                 dividerBefore: { option in
                     option == ExploreSortOption.options(for: mode).first(where: \.isModeSpecificSort)
                 }

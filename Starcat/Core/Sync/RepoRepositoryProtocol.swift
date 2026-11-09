@@ -31,13 +31,14 @@ protocol RepoRepositoryProtocol: Sendable {
 
     // MARK: - Upsert / 取消 Star 标记
 
-    /// 批量 upsert 一组 starred repos。
-    func upsertStarred(_ dtos: [StarredRepoDTO], userID: Int64, syncedAt: Date) async throws
+    /// 批量 upsert，跳过本轮同步开始后已被用户修改的仓库，返回实际写入的 ID。
+    @discardableResult
+    func upsertStarred(_ dtos: [StarredRepoDTO], userID: Int64, syncedAt: Date) async throws -> Set<Int64>
 
     /// 将本地存在但不在远端集合中的 repo 标记为 is_starred = false。
     /// - returns: 本次被取消 star 的 repo id，给账本写 Unstar 用。
     @discardableResult
-    func markUnstarredExcept(remoteRepoIDs: Set<Int64>, userID: Int64) async throws -> Set<Int64>
+    func markUnstarredExcept(remoteRepoIDs: Set<Int64>, userID: Int64, syncedAt: Date) async throws -> Set<Int64>
 
     /// W4 B1：把单个 repo 标记为 is_starred = false。
     /// 同时清理 starred_repos 中对应行，并把本地 stars_count 减 1（下限 0）。
@@ -64,6 +65,9 @@ protocol RepoRepositoryProtocol: Sendable {
 
     /// 当前用户已 star 的 repo 总数。
     func starredCount() async throws -> Int
+
+    /// 在同一快照读取总数及半开时间窗内的数量，避免同步写入时两个计数互相矛盾。
+    func starredCounts(in interval: DateInterval) async throws -> (total: Int, withinInterval: Int)
 
     /// Starcat 私有知识库 repo 总数（`repo_notes.library_state = in_library`）。
     func knowledgeCount() async throws -> Int
@@ -245,6 +249,22 @@ protocol RepoRepositoryProtocol: Sendable {
 }
 
 extension RepoRepositoryProtocol {
+    /// 轻量实现及测试替身复用相同口径；生产实现用 SQL 聚合，不为角标加载整库。
+    func starredCounts(in interval: DateInterval) async throws -> (total: Int, withinInterval: Int) {
+        let repos = try await fetchAllStarred().filter(\.isStarred)
+        let formatter = ISO8601DateFormatter()
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let count = repos.filter { repo in
+            guard let timestamp = repo.starredAt,
+                  let date = formatter.date(from: timestamp) ?? fractionalFormatter.date(from: timestamp) else {
+                return false
+            }
+            return date >= interval.start && date < interval.end
+        }.count
+        return (repos.count, count)
+    }
+
     /// 测试替身和轻量实现可复用的兼容实现；生产 GRDB 会用 SQL 下推时间过滤。
     func fetchStarred(since: Date, limit: Int) async throws -> [Repo] {
         let formatter = ISO8601DateFormatter()

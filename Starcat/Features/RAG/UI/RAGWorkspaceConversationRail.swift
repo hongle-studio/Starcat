@@ -33,8 +33,7 @@ struct RAGWorkspaceConversationRail: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 9) {
-                    Image(systemName: BusinessIcon.Symbol.ragWorkspace.systemImage)
-                        .font(iconFont(size: 24, weight: .semibold))
+                    BusinessIcon(.ragWorkspace, pointSize: 28, weight: .semibold)
                         // 左上角品牌标识走独立双主题色（light #0E9488 / dark #2DD4BF），
                         // 不随系统强调色变蓝；其余 accent 高亮保持不变。
                         .foregroundStyle(Color("RAGWorkspaceBrand"))
@@ -185,8 +184,13 @@ struct RAGWorkspaceConversationRail: View {
             ) {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
-                        Label("rag.workspace.status.knowledgeBase", systemImage: BusinessIcon.Symbol.library.systemImage)
-                            .font(ragFont(.callout, weight: .semibold))
+                        // 知识库图标已资产化（Lucide library），Label 的 icon 槽改走 BusinessIcon 渲染。
+                        Label {
+                            Text("rag.workspace.status.knowledgeBase")
+                        } icon: {
+                            BusinessIcon(.library, pointSize: 17)
+                        }
+                        .font(ragFont(.callout, weight: .semibold))
                         Spacer()
                         Image(systemName: viewModel.isKnowledgeBaseEmpty ? "plus.circle" : "arrow.up.right.square")
                             .font(iconFont(size: 13, weight: .medium))

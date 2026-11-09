@@ -114,6 +114,8 @@ struct RepoDetailView: View {
                     // 未 star 显示「star」。从 `Repo.isStarred` 直接派生(同 trailingActions)。
                     starHelpKey: repo.isStarred ? "repo.unstar" : "repo.star",
                     showsRepoHealthEntry: ProjectPrivacyPolicy.allowsPublicService(for: repo),
+                    // Issues 入口（2026-11-01）：仅星标详情开放；私有仓库在 Scaffold 内再隐藏。
+                    showsIssuesEntry: true,
                     onLanguageTapped: { language in
                         viewModel.toggleTemporaryLanguageFilterFromDetail(language)
                     },
@@ -250,8 +252,7 @@ struct RepoDetailView: View {
         } else {
             try await dependencies.starActionService.toggle(repo: repo)
         }
-        await viewModel.refreshSidebar()
-        await viewModel.reloadItems(forceRefresh: true)
+        await viewModel.refreshAfterExternalStarChange()
     }
 
     // R-01 §3.2.3 Phase B3（2026-06-10）：本 view 的 trending 分支全部交给
@@ -771,12 +772,12 @@ struct ReadmeStateView: View {
                 documentID: documentKey,
                 baseURL: documentBaseURL,
                 onScrollReportChange: onScrollReportChange,
-                onOpenInNewWindow: { [html = renderedHtml, baseURL = documentBaseURL, windowTitle, settings, markdownContext] in
+                onOpenInNewWindow: { [html = renderedHtml, baseURL = documentBaseURL, windowTitle, dependencies, markdownContext] in
                     ReadmeWindowController.show(
                         htmlFragment: html,
                         baseURL: baseURL,
                         title: windowTitle,
-                        settings: settings,
+                        dependencies: dependencies,
                         markdownContext: markdownContext
                     )
                 },
@@ -789,7 +790,7 @@ struct ReadmeStateView: View {
                     { target in
                         ReadmeWindowController.showRepositoryMarkdown(
                             target: target,
-                            settings: settings,
+                            dependencies: dependencies,
                             readmeAPI: context.readmeAPI
                         )
                     }
@@ -911,9 +912,10 @@ struct ReadmeStateView: View {
             // 不被「空态藏 footer」挡在缓存门外（与 loaded 的 cacheFooter 同结构）。
             VStack(spacing: 0) {
                 EmptyStateView(
-                    systemImage: BusinessIcon.Symbol.readme.systemImage,
+                    systemImage: "",
                     title: "readme.empty",
-                    subtitle: "readme.emptyDescription"
+                    subtitle: "readme.emptyDescription",
+                    businessIcon: .readme
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 emptyStatusFooter()

@@ -28,26 +28,40 @@
 
 ## 3. 日常更新范围
 
-获得授权后，日常任务只同步修改以下 4 份 Markdown：
+获得授权后，日常任务只同步修改以下 4 份 Markdown（2026-11 起随 `starcat-site` 同仓维护，见 [Starcat#202](https://github.com/starcat-app/Starcat/issues/202)；主仓库根 CHANGELOG 仅剩指针说明）：
 
-- App Store 英文：`CHANGELOG.md`
-- App Store 中文：`CHANGELOG-ZH.md`
-- Direct 英文：`supports/starcat-pro/CHANGELOG.md`
-- Direct 中文：`supports/starcat-pro/CHANGELOG-ZH.md`
+- App Store 英文：`supports/starcat-site/appstore/CHANGELOG.md`
+- App Store 中文：`supports/starcat-site/appstore/CHANGELOG-ZH.md`
+- Direct 英文：`supports/starcat-site/direct/CHANGELOG.md`
+- Direct 中文：`supports/starcat-site/direct/CHANGELOG-ZH.md`
+
+主仓库根目录的 `CHANGELOG.md` / `CHANGELOG-ZH.md` 只是指针文件，不承载条目，日常任务不得写入。
 
 日常更新必须遵守以下约束：
 
 - 写入当前待发布版本，例如 `## 1.2.0-待发布`，不得提前把它标记为正式发布版本。
 - 中英文内容语义保持一致；App Store 与 Direct 的公共功能保持同步，渠道专属内容只写入对应渠道。
 - 只记录对用户有意义的结果，不记录实现过程、测试命令、文件数量或 Agent 工作说明。
-- 不修改 `supports/starcat-site/direct/changelog.html` 或 `supports/starcat-site/direct/changelog-zh.html`。
-- 不运行 `supports/starcat-site/direct/generate-changelog.py`，也不部署官网更新日志页。
+- 不修改 `supports/starcat-site/direct/changelog*.html` 与 `supports/starcat-site/appstore/changelog*.html`。
+- 不运行 `direct/` 或 `appstore/` 的 `generate-changelog.py`，也不部署官网更新日志页。
 
 ### 3.1 与 App 内「更新说明」窗口的关系
 
-- Help → 更新说明（What's New）**只读取主仓库** bundle 内的 `CHANGELOG.md` / `CHANGELOG-ZH.md`（构建脚本拷贝进 App）。
-- `supports/starcat-pro/` 下两份供 Direct 渠道与官网生成脚本使用，**不进** App 内窗口；公共功能条目仍须与 App Store 两份语义一致。
-- 因此主仓库两份 Markdown 的结构与条目写法，优先照顾 App 内扫读；官网 HTML 由同一 Markdown 生成，不另维护第二套文案。
+- Help → 更新说明（What's New）读取 App bundle 内的 `CHANGELOG.md` / `CHANGELOG-ZH.md`；`project.yml` 按 scheme 分别从 `supports/starcat-site/appstore/`（App Store 包）与 `supports/starcat-site/direct/`（Direct 包）拷贝，主仓库根的指针文件严禁进入 bundle。
+- 官网生成脚本读取同目录源文件：`appstore/generate-changelog.py` 与 `direct/generate-changelog.py`。
+- 四份 Markdown 的结构与条目写法，优先照顾 App 内扫读；官网 HTML 由同一 Markdown 生成，不另维护第二套文案。
+
+### 3.2 1.9.x → 2.0.0 过渡期：双渠道写法（临时规则）
+
+> 生效：2026-11-04。Direct 的 1.9.x 是通往 2.0.0 的过渡验证版本；后续预发布统一称 Beta 版，使用 `X.Y.Z-beta.N`，历史 `v1.9.2-dev.1` 保留。App Store 自 1.9.0 后直接随 2.0.0 发布。过渡期内日常写入在 3.1 基础上追加以下规则：
+
+- 新条目一律写入两渠道各自的 `## 2.0.0-待发布` 区段；Direct 侧 1.9.1、1.9.2-待发布 及后续 Beta 区段记录过的用户可见变化，也必须聚合进两渠道 2.0.0，不得只留在 Beta 区段。
+- 准备 Beta 发布时，经授权可从已确认变更提取 Direct `## X.Y.Z-待发布` 快照，在引导语标明 `X.Y.Z Beta N` 与对应 tag；保留完整 `2.0.0-待发布`，以便发布脚本按营销版本读取说明。
+- 两渠道 2.0.0 区段保持同一大集，涵盖自 1.9.0 以来的全部用户可见变化；唯一允许的差异是渠道特有功能——仅 Direct 存在的能力（如 Sparkle 更新窗口、更新通道类设置）只写入 Direct 两份，写入 App Store 前须确认该功能在 App Store 构建中真实存在。
+- 既有 1.9.1（已发布）与 1.9.2-待发布 区段保持原状，不回改、不删除；它们与 2.0.0 的重复条目在正式发版时按第 5 节审计归并。
+- 每次写入后对账：两渠道 2.0.0 条目数之差应恰好等于渠道特有条目数（当前为更新通道开关、更新说明可读性）。
+
+当两个渠道的版本号都更新到 2.0.0 之后，删除本节。
 
 ## 4. 结构与条目写法（App 更新说明友好）
 
@@ -158,7 +172,7 @@ App 解析器仍兼容历史 ` — ` / ` – `，**新写入与整理待发布�
 - [ ] 落在正确的 `###` 分区，标题词表未跑偏
 - [ ] 无句首「新增/优化/修复/Added/…」
 - [ ] 中文用 `：`、英文用 `: ` 分开短标题与说明（不用 em dash）
-- [ ] 主仓库中英文 +（若公共功能）starcat-pro 中英文语义一致
+- [ ] appstore 与 direct 两渠道中英文语义一致（公共功能四份同步，渠道专属只入对应渠道）
 - [ ] 打开 App Help → 更新说明，确认最新版卡片扫读正常（有授权改文案时）
 
 ## 5. 正式发版
@@ -167,14 +181,14 @@ App 解析器仍兼容历史 ` — ` / ` – `，**新写入与整理待发布�
 
 1. 根据实际发布范围审计 4 份 Markdown，补漏、去重并复核中英文表述。
 2. 将目标版本标题从“待发布”状态改为正式版本标题。
-3. 运行 `python3 supports/starcat-site/direct/generate-changelog.py`，生成官网中英文更新日志页。
-4. 检查 `supports/starcat-site/direct/changelog.html` 与 `supports/starcat-site/direct/changelog-zh.html` 只展示已正式发布的版本。
+3. 运行 `python3 supports/starcat-site/direct/generate-changelog.py` 与 `python3 supports/starcat-site/appstore/generate-changelog.py`，生成两渠道官网中英文更新日志页。
+4. 检查 `supports/starcat-site/direct/changelog*.html` 与 `supports/starcat-site/appstore/changelog*.html` 只展示已正式发布的版本。
 5. 是否部署官网仍以 dong4j 的明确指令为准，不得因生成 HTML 而自动执行部署。
 
 ## 6. 验证要求
 
 - 使用 `rg` 检查 4 份 Markdown 的目标版本标题和条目是否同步。
 - 日常任务确认两份 HTML 没有被修改；正式发版时确认两份 HTML 已由生成脚本同步更新。
-- 分别在主仓库和 `supports/starcat-pro` 独立仓库执行 `git diff --check`。
+- 分别在主仓库和 `supports/starcat-site` 独立仓库执行 `git diff --check`。
 - 保留工作区中与当前任务无关的改动，不得顺手整理或覆盖。
 - 新条目符合第 4 节结构与模板（短标题 + 中文 `：` / 英文 `: `，无句首分类动词）。

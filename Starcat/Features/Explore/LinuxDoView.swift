@@ -90,7 +90,7 @@ struct LinuxDoView: View {
                 ),
                 options: [.recommended, .stars],
                 displayName: { $0 == .recommended ? "linuxdo.catalog.recentPromotion" : $0.titleKey },
-                systemImage: { $0 == .recommended ? "clock" : $0.systemImage }
+                iconSource: { $0 == .recommended ? .business(.recentUpdate) : $0.iconSource }
             )
 
             Spacer()
@@ -147,7 +147,11 @@ struct LinuxDoView: View {
             }
             if model.rows.isEmpty {
                 ContentUnavailableView {
-                    Label("linuxdo.catalog.empty", systemImage: BusinessIcon.Symbol.linuxDo.systemImage)
+                    Label {
+                        Text("linuxdo.catalog.empty")
+                    } icon: {
+                        BusinessIcon(.linuxDo, pointSize: 16)
+                    }
                 } description: {
                     // 全自动目录复用已有刷新/筛选提示，不再把正常采集描述为等待审核。
                     Text("weekly.empty.subtitle")
