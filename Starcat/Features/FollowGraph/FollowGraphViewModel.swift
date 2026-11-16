@@ -260,10 +260,11 @@ final class FollowGraphViewModel {
         }
     }
 
-    func select(_ id: String?, expand: Bool) {
+    /// 两种方向的节点选择都只更新资料卡和路径；展开预算只能由“加载更多”修改。
+    func select(_ id: String?) {
         guard id == nil || snapshot?.nodes[id!] != nil else { return }
         selectedID = id
-        if expand, snapshot?.relation == .following, let id, snapshot?.progress[id] == nil, !isLoading { loadMore(id) }
+        if let id { recordDiagnosticState(id, stage: "selection") }
     }
 
     func focus(_ id: String?) {
@@ -273,14 +274,27 @@ final class FollowGraphViewModel {
         viewportRevision += 1
     }
 
-    /// 展示预算与分页完整性分开：缓存尚有隐藏关系时允许展开；人数已满仅隐藏操作，
-    /// 不把根据交叉边或资料人数得出的结论写成“分页完整”。
+    /// 缓存先展开，再以接口的末页标记决定是否继续请求；交叉边和变化中的总数
+    /// 不能代替 hasNextPage，否则人数碰巧达到总数时会提前丢失分页入口。
     func canLoadMore(_ id: String, fallbackTotal: Int? = nil) -> Bool {
         guard let snapshot, let displayedSnapshot, displayedSnapshot.nodes[id] != nil else { return false }
         let visible = displayedRelationCounts[id] ?? 0
         if (cachedRelationCounts[id] ?? 0) > visible { return true }
-        if let total = snapshot.progress[id]?.totalCount ?? fallbackTotal, visible >= total { return false }
-        return snapshot.progress[id]?.complete != true
+        if let progress = snapshot.progress[id] { return !progress.complete }
+        return fallbackTotal.map { visible < $0 } ?? true
+    }
+
+    /// 卡片人数来自 Canvas。末页已到但头像仍在入场时保留禁用入口，
+    /// 避免出现“78 / 87”且按钮已经消失；可请求性仍由 canLoadMore 独立决定。
+    func showsLoadMore(_ id: String, fallbackTotal: Int? = nil) -> Bool {
+        canLoadMore(id, fallbackTotal: fallbackTotal) || isRevealingRelations(for: id)
+    }
+
+    /// 末页仅表示游标用尽，不保证去重后的关系数等于接口总数。
+    /// 保留真实总数并允许显式重读，不能伪造人数或反复请求已结束的游标。
+    func needsRelationReload(_ id: String) -> Bool {
+        guard let progress = snapshot?.progress[id], progress.complete else { return false }
+        return (cachedRelationCounts[id] ?? 0) < progress.totalCount
     }
 
     /// 本批正在逐个入场时不叠加下一批，避免连续点击一次排入数百个头像。
@@ -291,6 +305,7 @@ final class FollowGraphViewModel {
     /// 单页手动加载不会继续递归；优先展示缓存，完成或无效动作不再重复读取第一页。
     func loadMore(_ id: String, fallbackTotal: Int? = nil) {
         guard !isLoading, let snapshot, displayedSnapshot?.nodes[id] != nil else { return }
+        recordDiagnosticState(id, stage: "loadRequested", fallbackTotal: fallbackTotal)
         toastMessage = nil
         guard canLoadMore(id, fallbackTotal: fallbackTotal) else {
             showToast("followGraph.toast.complete")
@@ -299,7 +314,8 @@ final class FollowGraphViewModel {
         let before = displayedSnapshot
         let visibleCount = displayedSnapshot?.relationCount(for: id) ?? 0
         let cachedCount = snapshot.relationCount(for: id)
-        expandedSources[id] = min(10_000, max(expandedSources[id] ?? snapshot.defaultExpansionBudgets[id] ?? 0, visibleCount) + 50)
+        // 每次点击只加一页预算；不再有全局容量上限，最终受 API 配额与本机性能约束。
+        expandedSources[id] = max(expandedSources[id] ?? snapshot.defaultExpansionBudgets[id] ?? 0, visibleCount) + 50
         saveRange()
         if cachedCount > visibleCount {
             rebuildPresentation()
@@ -317,17 +333,40 @@ final class FollowGraphViewModel {
         }
     }
 
+    /// 只重读选中用户的关系，沿用手动展开预算和 Store 的分页、配额及会话保护；
+    /// 不把一次纠错刷新扩大为整个图谱的递归采集。
+    func reloadRelations(_ id: String) {
+        guard !isLoading, needsRelationReload(id), let snapshot,
+              displayedSnapshot?.nodes[id] != nil else { return }
+        let before = displayedSnapshot
+        let budget = max(expandedSources[id] ?? snapshot.defaultExpansionBudgets[id] ?? 0,
+                         displayedRelationCounts[id] ?? 0) + 50
+        expandedSources[id] = budget
+        saveRange()
+        run { session, store in
+            do {
+                let result = try await store.load(userID: id, session: session, count: 100,
+                                                  refresh: true, refreshLimit: budget)
+                guard self.generation == session, !Task.isCancelled else { return }
+                self.publish(result, session: session)
+                self.reportLoadResult(id, before: before)
+            } catch { await self.handle(error, session: session, store: store) }
+        }
+    }
+
     /// 正常新增由节点与动态数字表达；仅无新增头像时解释结果，避免每页成功都弹提示。
     private func reportLoadResult(_ id: String, before: FollowGraphSnapshot?) {
         guard let displayedSnapshot else { return }
+        recordDiagnosticState(id, stage: "pageMerged")
+        if needsRelationReload(id) {
+            showToast("followGraph.status.countMismatch", isError: true)
+            return
+        }
         if displayedSnapshot.nodes.keys.contains(where: { before?.nodes[$0] == nil }) { return }
         if displayedSnapshot.relationCount(for: id) > (before?.relationCount(for: id) ?? 0) {
             showToast("followGraph.toast.relationshipsAdded")
         } else if !canLoadMore(id) {
             showToast("followGraph.toast.complete")
-        } else if (snapshot?.relationCount(for: id) ?? 0) > displayedSnapshot.relationCount(for: id) {
-            // 预算已增加但画布容量不允许新端点进入，不能无反馈地吞掉这次点击。
-            showToast("followGraph.status.limit", isError: true)
         } else {
             showToast("followGraph.toast.alreadyVisible")
         }
@@ -418,10 +457,14 @@ final class FollowGraphViewModel {
         errorText = nil
         statusKey = "followGraph.status.loading"
         task = Task {
+            let diagnostic = DiagnosticOperation(category: "followGraph", name: "expandOrRefresh")
+            defer {
+                diagnostic.finish(Task.isCancelled ? .cancelled : errorText != nil ? .partial : .succeeded)
+            }
             let current = await store.begin(snapshot, session: session)
             guard !Task.isCancelled, generation == session else { return }
             publish(current, session: session)
-            await operation(session, store)
+            await DiagnosticContext.$current.withValue(diagnostic) { await operation(session, store) }
             guard generation == session else { return }
             isLoading = false
             if errorText == nil && statusKey == "followGraph.status.loading" {
@@ -451,7 +494,8 @@ final class FollowGraphViewModel {
                 try Task.checkCancellation()
                 if (snapshot?.nodes.count ?? 0) >= 5_000 {
                     statusKey = "followGraph.status.limit"
-                    showToast(statusKey, isError: true)
+                    // 自动探索软停是正常设计，不是错误；用户仍可通过选中节点继续展开。
+                    showToast(statusKey)
                     return
                 }
                 let batch = Array(firstLevel[start..<min(start + 4, firstLevel.count)])
@@ -461,7 +505,6 @@ final class FollowGraphViewModel {
                         group.addTask {
                             do { _ = try await store.load(userID: id, session: session, count: count); return nil }
                             catch is CancellationError { return nil }
-                            catch FollowGraphStoreError.budget { return "followGraph.status.limit" }
                             catch FollowGraphStoreError.quota { return "followGraph.status.quota" }
                             catch FollowGraphStoreError.authentication { return "network.error.unauthorized" }
                             catch { return "followGraph.status.partial" }
@@ -474,8 +517,12 @@ final class FollowGraphViewModel {
                 guard generation == session, !Task.isCancelled else { return }
                 if let value = await store.read(session: session) { publish(value, session: session) }
                 if let reason = errors.first(where: { $0 != "followGraph.status.partial" }) {
-                    statusKey = reason
-                    showToast(reason, isError: true)
+                    if reason == "followGraph.status.quota" {
+                        await showQuotaToast(store: store)
+                    } else {
+                        statusKey = reason
+                        showToast(reason, isError: true)
+                    }
                     return
                 }
                 if !errors.isEmpty {
@@ -561,6 +608,36 @@ final class FollowGraphViewModel {
               let selectedID, (0...min(edges, displayedRelationCounts[selectedID] ?? 0)).contains(selectedCount)
         else { return }
         if renderedSelectedCount != selectedCount { renderedSelectedCount = selectedCount }
+        if selectedCount == (displayedRelationCounts[selectedID] ?? 0) {
+            recordDiagnosticState(selectedID, stage: "renderConfirmed")
+        }
+    }
+
+    /// 人数差异只保留观测值及按钮判定；账号、用户节点以会话内匿名引用关联。
+    private func recordDiagnosticState(_ id: String, stage: String, fallbackTotal: Int? = nil) {
+        guard let snapshot else { return }
+        let progress = snapshot.progress[id]
+        var fields: [String: DiagnosticValue] = [
+            "stage": .string(stage),
+            "relation": .string(snapshot.relation.rawValue),
+            "cachedCount": .integer(cachedRelationCounts[id] ?? 0),
+            "displayedCount": .integer(displayedRelationCounts[id] ?? 0),
+            "renderedCount": .integer(renderedRelationCount(for: id)),
+            "hasProgress": .boolean(progress != nil),
+            "complete": .boolean(progress?.complete == true),
+            "canLoadMore": .boolean(canLoadMore(id, fallbackTotal: fallbackTotal)),
+            "budget": .integer(expandedSources[id] ?? snapshot.defaultExpansionBudgets[id] ?? 0),
+            "snapshotVersion": .integer(revision),
+            "rendererVersion": .integer(rendererRevision),
+            "selectionVersion": .integer(selectionRevision),
+            "nodeCount": .integer(displayedSnapshot?.nodes.count ?? 0),
+            "edgeCount": .integer(displayedSnapshot?.edges.count ?? 0)
+        ]
+        if let total = progress?.totalCount ?? fallbackTotal { fields["totalCount"] = .integer(total) }
+        DiagnosticLogStore.shared.enqueue(DiagnosticEvent(
+            level: .info, category: "followGraph", operation: "presentation",
+            message: "Graph relation evidence", context: ["user": id], phase: stage, fields: fields
+        ))
     }
 
     private func handle(_ error: Error, session: UUID, store: FollowGraphStore) async {
@@ -569,12 +646,8 @@ final class FollowGraphViewModel {
         // actor 读取期间可能关闭或切换图谱，旧错误也不能在新窗口弹出 Toast。
         guard generation == session, !Task.isCancelled else { return }
         switch error {
-        case FollowGraphStoreError.budget:
-            statusKey = "followGraph.status.limit"
-            showToast(statusKey, isError: true)
-        case FollowGraphStoreError.quota:
-            statusKey = "followGraph.status.quota"
-            showToast(statusKey, isError: true)
+        case FollowGraphStoreError.quota(let resetAt):
+            showQuotaToast(resetAt: resetAt)
         case FollowGraphStoreError.authentication:
             statusKey = "network.error.unauthorized"
             showToast(statusKey, isError: true)
@@ -584,5 +657,30 @@ final class FollowGraphViewModel {
             errorText = error.localizedDescription
             showToast("followGraph.toast.loadFailed", isError: true)
         }
+    }
+
+    /// 探索路径的批量错误把配额错误折叠成状态键，这里再补一次真实恢复时间。
+    private func showQuotaToast(store: FollowGraphStore) async {
+        let resetAt = await store.quotaResetAt
+        showQuotaToast(resetAt: resetAt?.ISO8601Format() ?? "")
+    }
+
+    /// 配额停止必须展示真实恢复时间；解析失败时保留原文，不能伪造时间误导用户。
+    private func showQuotaToast(resetAt: String) {
+        statusKey = "followGraph.status.quota"
+        let locale = LocaleStore.shared.selection.effectiveLocale
+        let date = ISO8601DateFormatter().date(from: resetAt)
+        let time: String
+        if let date {
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            // medium 在所有支持语言里都带完整年份，用户能直接看懂恢复时间。
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            time = formatter.string(from: date)
+        } else {
+            time = resetAt
+        }
+        showToast(String(format: String.l10n("followGraph.toast.quotaReset"), locale: locale, time), isError: true)
     }
 }

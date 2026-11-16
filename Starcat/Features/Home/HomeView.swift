@@ -159,6 +159,8 @@ struct HomeView: View {
     @State private var showsDailyRadarPreview = false
     /// 每日热点目录与分类状态由主窗口持有，左栏二级分类和右侧覆盖层共享同一数据源。
     @State private var dailyRadarModel = DailyRadarWorkspaceViewModel()
+    /// 新功能圆点由主窗口持有一份，让顶部统计入口和 Explore 侧栏共享同一次“首次点击”记录。
+    @State private var newFeatureBadgeStore = NewFeatureBadgeStore()
     /// 图谱模型跨关闭保留；原页面选择不随遮盖层变化。
     @State private var showsFollowGraph = false
     @State private var followGraphModel = FollowGraphViewModel()
@@ -410,7 +412,7 @@ struct HomeView: View {
             .background {
                 FollowGraphWindowOverlay(isPresented: showsFollowGraph, onEscape: {
                     if !followGraphModel.search.isEmpty { followGraphModel.search = "" }
-                    else if followGraphModel.selectedID != nil { followGraphModel.select(nil, expand: false) }
+                    else if followGraphModel.selectedID != nil { followGraphModel.select(nil) }
                     else { showsFollowGraph = false }
                 }) {
                     if let user = authSession.state.user,
@@ -681,7 +683,28 @@ struct HomeView: View {
         // `_anonymous` → 用户库切换。数据库 revision 是切库完成后的确定边沿；在这里
         // 失效 Repo Pin 快照并重载，避免匿名库的空结果屏蔽用户库中的持久化 Pin。
         .task(id: dependencies.databaseScopeRevision) {
+            viewModel.repoSkillStore = dependencies.repoSkillStore
+            await dependencies.repoSkillStore.prepare()
             await handleDatabaseScopeChange(dependencies.databaseScopeRevision)
+        }
+        .onChange(of: dependencies.repoSkillStore.revision) { _, _ in viewModel.skillEvidenceDidChange() }
+        .onChange(of: viewModel.effectiveGlobalFilterState.skillFilter) { _, filter in
+            if filter == .any { dependencies.repoSkillStore.stopBackgroundScan() }
+        }
+        .task(id: "\(dependencies.databaseScopeRevision)-\(selectedSidebarPage)-\(viewModel.selection)-\(viewModel.effectiveGlobalFilterState)-\(viewModel.searchSubmissionID)-\(viewModel.itemsRevision)") {
+            guard selectedSidebarPage == .manage, viewModel.effectiveGlobalFilterState.skillFilter != .any else { return }
+            do {
+                let candidates = try await viewModel.skillScanCandidates()
+                try Task.checkCancellation()
+                dependencies.repoSkillStore.enqueue(
+                    candidates,
+                    scope: "manage-\(viewModel.selection)-\(viewModel.effectiveGlobalFilterState)-\(viewModel.searchSubmissionID)"
+                )
+            } catch {
+                if !Task.isCancelled {
+                    AppLog.network.warning("Skill candidate query failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
         }
         // 知识库入库/移出事件必须挂在 HomeView：空库时空态没有 List，原先挂在
         // RepoListView.List 上会导致 Sidebar「知识库」计数与列表都不能实时刷新。
@@ -1326,8 +1349,10 @@ struct HomeView: View {
         }
     }
 
-    private func openGitHubNotification(threadId: String) {
-        dependencies.githubNotificationInboxService.pendingOpenThreadId = threadId
+    private func openGitHubNotification(threadId: String? = nil) {
+        if let threadId {
+            dependencies.githubNotificationInboxService.pendingOpenThreadId = threadId
+        }
         savedActivityCategory = .notification
         if selectedSidebarPage == .activity {
             selectedActivityCategory = .notification
@@ -1380,6 +1405,7 @@ struct HomeView: View {
             currentActivityTintColor: derivedActivityTintColor,
             dailyRadarPreviewPresentation: dailyRadarPreviewPresentation,
             dailyRadarModel: dailyRadarModel,
+            newFeatureBadgeStore: newFeatureBadgeStore,
             onOpenFollowGraph: { relation in
                 followGraphRelation = relation
                 showsDailyRadarPreview = false
@@ -1863,6 +1889,9 @@ struct HomeView: View {
             viewModel.clearTemporaryGlobalFilters()
             selectSidebarRootPage(.insights)
 
+        case .githubNotifications:
+            openGitHubNotification()
+
         case .repository(let repository):
             // 先消费请求再异步查库/拉 GitHub，避免 HomeView 重挂载时重复发网络请求。
             dependencies.mainWindowNavigationDispatcher.pendingRequest = nil
@@ -2137,6 +2166,7 @@ struct HomeView: View {
         if viewModel.licenseFilter != settings.licenseFilter {
             viewModel.licenseFilter = settings.licenseFilter
         }
+        if viewModel.skillFilter != settings.skillFilter { viewModel.skillFilter = settings.skillFilter }
         if viewModel.interestedLanguages != settings.interestedLanguages {
             viewModel.interestedLanguages = settings.interestedLanguages
         }
